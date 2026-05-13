@@ -56,7 +56,7 @@ Everything written to `debug.log` is already redacted of sensitive material:
 
 When you open an issue at <https://github.com/schneik80/FusionDataCLI/issues>, please include:
 
-1. **Version** — `fusiondatacli` shows the version on the About screen (`a` key). Or check `which fusiondatacli && stat $(which fusiondatacli)`.
+1. **Version** — `fusiondatacli` shows the version on the About screen (`shift+a`). Or check `which fusiondatacli && stat $(which fusiondatacli)`.
 2. **OS and terminal** — e.g. "macOS 14.5, Terminal.app" or "Linux Fedora 40, Ghostty 1.0".
 3. **What you did** — three to five lines is plenty. "Logged in, picked the *IMA* hub, selected the *RC* project, drilled into *Designs*, pressed `2` to load the Uses tab on a 200-component assembly."
 4. **What you expected vs. what happened.**
@@ -114,7 +114,7 @@ A response came back with both useful data and field-level errors. The client ke
 
 ### `OPEN_BROWSER <url>`
 
-The app handed `<url>` to your OS browser handler (for `o`-key actions). If the page errors out (e.g. Autodesk's "WEB SESSION INVALID"), this line is the URL to check or copy manually.
+The app handed `<url>` to your OS browser handler (for `u`-key actions). If the page errors out (e.g. Autodesk's "WEB SESSION INVALID"), this line is the URL to check or copy manually.
 
 ---
 

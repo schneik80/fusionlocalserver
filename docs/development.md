@@ -109,7 +109,7 @@ graph TD
 
     subgraph "ui/ package"
         app["app.go\nModel, Update, View, tabs,\nShow-in-Location orchestration"]
-        keys["keys.go\nkey bindings\n(1-4, Tab, Shift+Tab, Enter)"]
+        keys["keys.go\nkey bindings\n(WASD/arrows, 1-4, Enter)"]
         styles["styles.go\nthemes, Lipgloss styles, tab strip"]
     end
 
@@ -293,7 +293,7 @@ The binary version is set at build time:
 var version = "dev"   // overwritten by ldflag
 ```
 
-The version is displayed in the About screen (`a` key) and passed into the UI model at startup.
+The version is displayed in the About screen (`shift+a`) and passed into the UI model at startup.
 
 ---
 

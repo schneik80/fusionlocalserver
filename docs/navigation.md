@@ -100,24 +100,24 @@ stateDiagram-v2
 
 | Key | Action |
 |-----|--------|
-| `↑` `k` | Move cursor up in active column |
-| `↓` `j` | Move cursor down in active column |
-| `→` `l` `Enter` | Move focus right — load next level or open details |
-| `←` | Move focus left — go back or pop folder from stack |
+| `↑` `w` | Move cursor up in active column |
+| `↓` `s` | Move cursor down in active column |
+| `→` `d` `Enter` | Move focus right — load next level or open details |
+| `←` `a` | Move focus left — go back or pop folder from stack |
 | `h` | Switch hub — re-open the hub picker |
 
 ### Actions
 
 | Key | Action |
 |-----|--------|
-| `o` | Open focused document permalink in system default browser (only after details panel has loaded; no-op on folders/projects or during loading) |
-| `f` | Open focused document in the running Fusion desktop client (via Fusion MCP server) |
+| `u` | Open focused document permalink in system default browser (only after details panel has loaded; no-op on folders/projects or during loading) |
+| `o` | Open focused document in the running Fusion desktop client (via Fusion MCP server) |
 | `i` | Insert focused document as a new occurrence into the active Fusion design (via Fusion MCP server) |
-| `d` | Download STEP file for the selected design (DesignItem only; no-op on drawings, configured designs, or containers) |
+| `shift+d` | Download STEP file for the selected design (DesignItem only; no-op on drawings, configured designs, or containers) |
 | `r` | Refresh current column |
 | `t` | Cycle color theme (Rust → Mono → System → Rust) |
 | `m` | Toggle mouse support on/off (default: on) |
-| `a` | Open About / License screen |
+| `shift+a` | Open About / License screen |
 | `?` | Open debug log overlay |
 | `q` `Ctrl+C` | Quit |
 
@@ -131,9 +131,7 @@ The details panel switches between four tabs that expose cross-references for th
 | `2` | Uses tab |
 | `3` | Where Used tab (DesignItem only) |
 | `4` | Drawings tab (DesignItem only) |
-| `Tab` | Cycle to next available tab |
-| `Shift+Tab` | Cycle to previous available tab |
-| `↑` `↓` / `j` `k` (on a non-Details tab) | Move the tab cursor — *replaces* nav-column cursor while a non-Details tab is active |
+| `↑` `↓` / `w` `s` (on a non-Details tab) | Move the tab cursor — *replaces* nav-column cursor while a non-Details tab is active |
 | `Enter` (on a non-Details tab) | **Show in Location** for the highlighted row |
 
 ### Mouse
@@ -168,7 +166,7 @@ Mouse support is enabled by default and can be toggled with `m`. The footer bar 
 │   ↓ more             │     Housing.f3d      │                           │
 │                      │     ↓ more           │                           │
 ├──────────────────────┴──────────────────────┴────────────────────────────┤
-│ [↑↓/jk] move  [←→/l] navigate  [h] hubs  [o] open  [m] mouse:on  …    │
+│ [↑↓/ws] move  [←→/ad] navigate  [h] hubs  [u] web  [m] mouse:on  …    │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -269,7 +267,7 @@ sequenceDiagram
 
 ## Browser Open Logic
 
-`o` is intentionally narrow: it only opens the per-item permalink from the APS Manufacturing Data Model GraphQL API's `DesignItem.fusionWebUrl` / `DrawingItem.fusionWebUrl` field, and only after the details panel has finished loading. The `[o] web` hint is pinned at the bottom of the details panel so the key appears actionable exactly when it is.
+`u` is intentionally narrow: it only opens the per-item permalink from the APS Manufacturing Data Model GraphQL API's `DesignItem.fusionWebUrl` / `DrawingItem.fusionWebUrl` field, and only after the details panel has finished loading. The `[u] web` hint is pinned at the bottom of the details panel so the key appears actionable exactly when it is.
 
 ```mermaid
 flowchart TD
@@ -287,7 +285,7 @@ The status bar prints the full URL as it's handed to the OS browser handler, and
 
 ## STEP Download
 
-`d` exports the selected design to a STEP file on local disk. Implemented in `api/download.go` and driven from `ui/app.go`'s `downloadStep` / `requestStepCmd` / `pollStepCmdAfter` / `downloadStepFileCmd`.
+`shift+d` exports the selected design to a STEP file on local disk. Implemented in `api/download.go` and driven from `ui/app.go`'s `downloadStep` / `requestStepCmd` / `pollStepCmdAfter` / `downloadStepFileCmd`.
 
 ```mermaid
 flowchart TD
@@ -304,7 +302,7 @@ flowchart TD
 
 **Restrictions:**
 - Only valid on `DesignItem`. Drawings (`DrawingItem`) and configured designs (`ConfiguredDesignItem`) have no `tipRootComponentVersion`, so the API can't generate a STEP — the UI rejects the keypress with a status-bar hint.
-- A second `d` while a download is in flight is rejected so polls don't pile up.
+- A second `shift+d` while a download is in flight is rejected so polls don't pile up.
 - The destination path is `~/Downloads/<sanitised-name>-<YYYYMMDD-HHMMSS>.stp`, falling back to `os.TempDir()` if the home directory cannot be determined.
 
 The signed URL returned by the derivatives query is downloaded **without** an `Authorization` header — APS signed URLs are self-authenticated, and attaching the user's bearer would leak it if the URL were ever poisoned. (Security finding **H2**, fixed in PR #1.)
@@ -313,13 +311,13 @@ The signed URL returned by the derivatives query is downloaded **without** an `A
 
 ## Fusion Desktop Integration
 
-The `f` (open) and `i` (insert) keys talk to the running Fusion desktop client via its local MCP (Model Context Protocol) server, expected at:
+The `o` (open) and `i` (insert) keys talk to the running Fusion desktop client via its local MCP (Model Context Protocol) server, expected at:
 
 ```
 http://127.0.0.1:27182/mcp
 ```
 
-For `f`, the CLI calls the `fusion_mcp_execute` tool with `featureType=document`, `operation=open`, and the item's lineage URN as `fileId`. Fusion opens the document in a new window.
+For `o`, the CLI calls the `fusion_mcp_execute` tool with `featureType=document`, `operation=open`, and the item's lineage URN as `fileId`. Fusion opens the document in a new window.
 
 For `i`, the CLI calls `fusion_mcp_execute` with `featureType=script` and runs a short Python snippet that resolves the lineage URN via `app.data.findFileById(...)` and inserts it into the active design using `rootComponent.occurrences.addByInsert(...)`. Insert requires that a design document already be active in Fusion.
 
@@ -327,7 +325,7 @@ Both operations require Fusion to be running locally with the MCP server enabled
 
 ### Hub Consistency Check
 
-Because FusionDataCLI and the running Fusion client can browse independent hubs, both `f` and `i` first verify that Fusion is on the same hub as the CLI before sending the open/insert call. The check works like this:
+Because FusionDataCLI and the running Fusion client can browse independent hubs, both `o` and `i` first verify that Fusion is on the same hub as the CLI before sending the open/insert call. The check works like this:
 
 1. Call `fusion_mcp_read` with `queryType=projects` — returns the projects in Fusion's currently active hub.
 2. Look up the currently-selected project's Data Management API ID (`NavItem.AltID`, e.g. `20250213876602531`) in the returned list.

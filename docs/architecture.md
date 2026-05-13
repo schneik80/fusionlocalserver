@@ -146,7 +146,7 @@ sequenceDiagram
     BT->>BT: View() → render to terminal
 ```
 
-### Tab activation (1-4, Tab/Shift+Tab)
+### Tab activation (1-4)
 
 ```mermaid
 sequenceDiagram
@@ -244,7 +244,7 @@ FusionDataCLI/
 │
 ├── ui/
 │   ├── app.go               Model, Init, Update, View; nav + tab + Show-in-Location orchestration
-│   ├── keys.go              keyMap, keys var (1-4 tab select, Tab/Shift+Tab cycle, Enter activate)
+│   ├── keys.go              keyMap, keys var (WASD/arrows nav, 1-4 tab select, Enter activate)
 │   └── styles.go            colorTheme, themes[], applyTheme(), cycleTheme(), tab strip styles
 │
 ├── internal/testutil/       Shared test fakes — GraphQLServer, NewMCPServer
