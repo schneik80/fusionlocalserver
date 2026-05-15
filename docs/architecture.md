@@ -47,22 +47,29 @@ C4Container
         Component(main, "main", "Go — main.go", "CLI entry point. Loads config, wires packages, starts BubbleTea event loop with alternate-screen mode.")
         Component(config, "config", "Go package", "Three-layer config loader: env vars → config.json → build-time linker default. Resolves client ID and APS region.")
         Component(auth, "auth", "Go package", "Full OAuth 2.0 PKCE flow. Generates verifier/challenge, opens browser, runs local callback server, exchanges code for tokens, saves and refreshes token data.")
-        Component(api, "api", "Go package", "Typed GraphQL client. Executes cursor-paginated queries for hubs, projects, folders, and items. Fetches rich item metadata and version history.")
-        Component(ui, "ui", "Go package", "BubbleTea Model/Update/View. Three-column ranger-style browser with optional fourth details column. Three color themes. About and debug overlays.")
+        Component(api, "api", "Go package", "Typed GraphQL client. Executes cursor-paginated queries for hubs, projects, folders, items, item details, refs, and async assembly-vs-part classification.")
+        Component(pins, "pins", "Go package", "Per-hub bookmark storage. Load/Save scoped by sanitized hub ID; MigrateLegacy promotes the pre-hub-scoping single-file pins.json on first run.")
+        Component(fusion, "fusion", "Go package", "JSON-RPC client for the running Fusion desktop's local MCP server (open and insert document tools).")
+        Component(ui, "ui", "Go package", "BubbleTea Model/Update/View. Three-column ranger-style browser with optional fourth details column. Pins overlay. Three color themes. About and debug overlays.")
     }
 
     System_Ext(aps_auth, "APS Auth v2", "https://developer.api.autodesk.com/authentication/v2")
     System_Ext(aps_gql, "APS MFG GraphQL v2", "https://developer.api.autodesk.com/mfg/graphql")
+    System_Ext(fusion_mcp, "Fusion MCP", "http://127.0.0.1:27182/mcp")
     SystemDb_Ext(fs, "~/.config/fusiondatacli/")
 
     Rel(main, config, "Loads config")
     Rel(main, ui, "Creates Model, runs program")
     Rel(ui, auth, "Triggers login / token check")
     Rel(ui, api, "Issues data queries")
+    Rel(ui, pins, "Load(hubID) / Save(hubID, pins)")
+    Rel(ui, fusion, "Open / insert document via MCP")
     Rel(auth, aps_auth, "PKCE token exchange + refresh", "HTTPS")
     Rel(auth, fs, "Persists tokens.json", "os.WriteFile 0600")
     Rel(config, fs, "Reads config.json", "os.ReadFile")
+    Rel(pins, fs, "Reads/writes pins-<hubID>.json", "os.WriteFile 0600")
     Rel(api, aps_gql, "GraphQL POST", "HTTPS")
+    Rel(fusion, fusion_mcp, "JSON-RPC", "HTTP")
 ```
 
 ---
@@ -91,8 +98,11 @@ graph TD
     main --> ui
     ui --> api
     ui --> auth
+    ui --> pins
+    ui --> fusion
     auth --> config
     api --> config
+    pins --> config
 
     subgraph stdlib
         net/http
@@ -104,6 +114,7 @@ graph TD
 
     auth --> stdlib
     api --> stdlib
+    pins --> stdlib
 
     subgraph charm["Charm.sh (external)"]
         bubbletea["charmbracelet/bubbletea"]
@@ -174,6 +185,31 @@ sequenceDiagram
 
 See [`docs/navigation.md`](navigation.md#tab-cursor-and-show-in-location) for the user-visible flow; the API-side detail is in [`docs/api.md`](api.md#getitemlocation--show-in-location).
 
+### Async assembly-vs-part classification
+
+After the Contents column loads, each DesignItem is enriched with an "assembly" / "part" subtype derived from whether its tipRootComponentVersion has any sub-component occurrences. The probe is dispatched in parallel under a `tea.Batch` and capped at 8 concurrent calls by a package-level semaphore in `api/classify.go`; each result flows back as an `itemClassifiedMsg` that mutates the matching row's `Subtype` in place. A `contentsGen` counter on the Model is incremented every time the Contents slice is replaced (folder drill, hub switch, project switch, refresh, recovery), and stale `itemClassifiedMsg`s whose gen no longer matches are dropped — late refinements can never stamp state onto a folder the user has already left.
+
+```mermaid
+sequenceDiagram
+    participant Update as Model.Update
+    participant Batch as tea.Batch (N cmds)
+    participant Sem as classifySem (cap 8)
+    participant APS as APS GraphQL
+
+    Note over Update: contentsLoadedMsg lands<br/>m.contentsGen++<br/>gen = m.contentsGen
+    Update->>Batch: classifyContentsCmd(items, gen)<br/>one cmd per DesignItem
+    par 8 concurrent
+        Batch->>Sem: classifySem <- {}
+        Sem-->>Batch: slot acquired
+        Batch->>APS: componentVersion(cvid).occurrences(limit:1)
+        APS-->>Batch: { results: [] | [{...}] }
+        Batch-->>Update: itemClassifiedMsg{gen, itemID, isAssembly}
+    end
+    Update->>Update: if msg.gen != m.contentsGen: drop
+    Update->>Update: else: m.cols[colContents][i].Subtype = "assembly"|"part"
+    Note over Update: View() re-renders that row<br/>with the new suffix
+```
+
 ---
 
 ## Performance Optimisations
@@ -184,6 +220,8 @@ The browser View() runs at spinner rate (~10 Hz) and re-renders every visible ro
 - **Per-tab caches** — `usesCache`, `whereUsedCache`, and `drawingsCache` each memoise their respective queries. Cache keys differ per relationship: Uses/WhereUsed for designs key on the tip root component-version id; Drawings keys on the design's lineage URN; Uses for drawings keys on the drawing's lineage URN. Hub change and refresh clear all of them; arrowing between items preserves them so a "scan Where Used across these designs" workflow doesn't refetch unchanged data.
 - **`styleCache`** — Lipgloss styles are value types but their rules clone on each chained `.Width(...).Foreground(...)` call. The width-applied variants used in `renderColumn` / `viewDetailsColumn` are precomputed and rebuilt only when terminal size or theme changes. The cache is shared by pointer because Bubble Tea passes the Model by value to View(); a local mutation on a copy would not persist. The rendered detail-panel lines are also cached and keyed on `m.details`'s pointer + width + theme version.
 - **Parallel project-contents fetch** — `loadProjectContentsCmd` issues `foldersByProject` and `itemsByProject` concurrently via `sync.WaitGroup` rather than sequentially. Wall-clock latency drops to roughly the slower of the two queries.
+- **Bounded-parallelism assembly classifier** — `api.ClassifyAssembly` calls run under a package-level `classifySem` buffered channel (size 8). A `tea.Batch` of 50 cmds dispatched from `contentsLoadedMsg` translates into at most 8 in-flight HTTPS round-trips against the gateway at a time; the rest queue on the semaphore. Wall-clock for a 50-item folder is roughly `ceil(N/8) × ~150 ms ≈ 1 s` vs the ~5 s a serial extended `itemsByFolder` query would cost.
+- **Contents generation guard** — `m.contentsGen` is incremented whenever the Contents slice is replaced. Async `itemClassifiedMsg`s carry the gen they were dispatched under; mismatches are dropped instead of mutating the new selection. This is the cancellation primitive that makes the classifier safe to fire-and-forget without per-cmd context cancellation plumbing.
 
 ---
 
@@ -229,8 +267,12 @@ FusionDataCLI/
 │   └── tokens.go            LoadTokens(), SaveTokens(), TokenData.Valid()
 │
 ├── api/
-│   ├── client.go            gqlQuery() retry loop + gqlQueryOnce(), NavItem, SetRegion(), SetGraphqlEndpointForTesting()
-│   ├── queries.go           Hierarchy queries — GetHubs/Projects/Folders/Items; allPages() pagination
+│   ├── client.go            gqlQuery() retry loop + gqlQueryOnce(), NavItem (incl. ComponentVersionID
+│   │                        + Subtype), SetRegion(), SetGraphqlEndpointForTesting()
+│   ├── queries.go           Hierarchy queries — GetHubs/Projects/Folders/Items; allPages() pagination;
+│   │                        items queries pull tipRootComponentVersion.id inline for designs so the
+│   │                        async classifier can probe occurrences without a second round-trip
+│   ├── classify.go          ClassifyAssembly(cvid) + classifySem semaphore (cap 8 concurrent)
 │   ├── details.go           GetItemDetails(), ItemDetails, VersionSummary, parseTime()
 │   ├── refs.go              Cross-reference queries: GetOccurrences, GetWhereUsed,
 │   │                        GetDrawingsForDesign, GetDrawingSource (Uses/WhereUsed/Drawings tabs)
@@ -239,25 +281,38 @@ FusionDataCLI/
 │   └── debug.go             dbgLog (in-memory ring + debug.log file + stderr if redirected),
 │                            DebugLines(), DebugEnabled(), DebugLogPath()
 │
+├── pins/
+│   └── pins.go              Hub-scoped bookmark storage (~/.config/fusiondatacli/pins-<hubID>.json);
+│                            Load(hubID), Save(hubID, pins), MigrateLegacy() (one-shot pins.json split
+│                            into per-hub files), sanitizeHubID() for cross-platform filenames
+│
 ├── fusion/
 │   └── mcp.go               Fusion desktop MCP client (open / insert document)
 │
 ├── ui/
-│   ├── app.go               Model, Init, Update, View; nav + tab + Show-in-Location orchestration
-│   ├── keys.go              keyMap, keys var (WASD/arrows nav, 1-4 tab select, Enter activate)
+│   ├── app.go               Model, Init, Update, View; nav + tab + Show-in-Location orchestration;
+│   │                        pins overlay (statePins); async classify dispatch + contentsGen guard
+│   ├── keys.go              keyMap, keys var (WASD/arrows nav, 1-4 tab select, Enter activate,
+│   │                        Shift+P pin toggle, P pins overlay, Delete remove pin)
 │   └── styles.go            colorTheme, themes[], applyTheme(), cycleTheme(), tab strip styles
+│
+├── cmd/
+│   ├── probe-assembly/      One-shot diagnostic — runs the extended itemsByProject query against a
+│   │                        live hub and prints assembly/part distribution. Used to validate the
+│   │                        classifier schema and per-row cost. Safe to delete after decisions land.
+│   └── screenshot/          Generates the README screenshot from a scripted Model state
 │
 ├── internal/testutil/       Shared test fakes — GraphQLServer, NewMCPServer
 │   ├── graphql.go           In-process APS GraphQL fake (httptest.Server)
 │   └── mcp.go               In-process Fusion MCP JSON-RPC fake
 │
 ├── docs/                    User + developer documentation
-│   ├── api.md               GraphQL queries, retry behaviour, debug logging
+│   ├── api.md               GraphQL queries, retry behaviour, classifier, debug logging
 │   ├── architecture.md      This file — C4 diagrams, packages, data flow
 │   ├── authentication.md    OAuth PKCE flow
 │   ├── debugging.md         End-user defect-submission guide
 │   ├── development.md       Build, release, dependencies
-│   ├── navigation.md        Browser, tabs, Show-in-Location, mouse, themes
+│   ├── navigation.md        Browser, tabs, Show-in-Location, pins, mouse, themes
 │   └── testing.md           Three-layer test strategy + how to extend
 │
 ├── SECURITY-TODO.md         Pending security follow-ups (M1, M3, L1–L5)

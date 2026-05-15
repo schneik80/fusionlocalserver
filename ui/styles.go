@@ -106,6 +106,7 @@ var (
 	styleContainerItem   lipgloss.Style
 	styleDocumentItem    lipgloss.Style
 	stylePinnedItem      lipgloss.Style
+	styleSubtypeDim      lipgloss.Style
 	styleTabActive       lipgloss.Style
 	styleTabInactive     lipgloss.Style
 	styleTabSep          lipgloss.Style
@@ -195,6 +196,15 @@ func applyTheme(t colorTheme) {
 		Foreground(t.pinnedFg).
 		Padding(0, 1)
 
+	// Inline foreground-only style for the assembly/part suffix
+	// appended after a design's name in the Contents column. Just a
+	// dim color — no padding, no decorations — so it composes cleanly
+	// inside a row label string while keeping the suffix visually
+	// subordinate to the file name.
+	styleSubtypeDim = lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Faint(true)
+
 	styleTabActive = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(colorAccent)
@@ -215,6 +225,14 @@ func init() {
 // ---------------------------------------------------------------------------
 
 // kindIcon returns a short prefix icon for the item kind.
+//
+// The Fusion-glyph icons (folder, design/configured, drawing, plus
+// the electronics types added in v6) are all rendered in the
+// SymbolsNerdFontMono / Fusion font that the app expects in the
+// terminal; consumers without that font see fallback glyphs. The new
+// electronics types (schematic / pcb / ecad) reuse the design glyph
+// for now — disambiguation comes from the inline subtype suffix
+// (see subtypeSuffix) rather than a unique icon.
 func kindIcon(kind string) string {
 	switch kind {
 	case "hub":
@@ -226,6 +244,8 @@ func kindIcon(kind string) string {
 	case "design", "configured":
 		return "  "
 	case "drawing":
+		return "  "
+	case "schematic", "pcb", "ecad":
 		return "  "
 	default:
 		return "  "

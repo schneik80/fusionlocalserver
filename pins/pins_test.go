@@ -1,0 +1,304 @@
+package pins
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// withTempConfigDir points the config.Dir-backed pins helpers at a
+// temp dir for the duration of the test. The package picks up the home
+// directory via os.UserHomeDir, so we override HOME (and USERPROFILE on
+// Windows runners) and t.Cleanup restores them automatically.
+func withTempConfigDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows fallback used by os.UserHomeDir
+	// Create the expected nested config dir so the pins helpers don't
+	// have to MkdirAll on every call — matches what config.Dir does.
+	dir := filepath.Join(home, ".config", "fusiondatacli")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("setup config dir: %v", err)
+	}
+	return dir
+}
+
+func TestSanitizeHubID(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"alnum passthrough", "abcXYZ123", "abcXYZ123"},
+		{"empty becomes unset", "", "_unset"},
+		{"URN colons replaced", "urn:adsk.ace:prod.scope:abc", "urn_adsk.ace_prod.scope_abc"},
+		{"slashes replaced", "a/b/c", "a_b_c"},
+		{"spaces and special chars replaced", "hello world! @#", "hello_world____"},
+		{"dot/dash/underscore preserved", "ab.cd-ef_gh", "ab.cd-ef_gh"},
+		{"capped at 120 chars", strings.Repeat("x", 200), strings.Repeat("x", 120)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeHubID(tc.in)
+			if got != tc.want {
+				t.Errorf("sanitizeHubID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoad_AbsentFileReturnsEmpty(t *testing.T) {
+	withTempConfigDir(t)
+	got, err := Load("urn:adsk.ace:prod.scope:abc")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %+v", got)
+	}
+}
+
+func TestLoad_CorruptFileReturnsEmpty(t *testing.T) {
+	dir := withTempConfigDir(t)
+	// File exists but isn't valid JSON.
+	if err := os.WriteFile(filepath.Join(dir, "pins-hub_a.json"), []byte("{not json"), 0600); err != nil {
+		t.Fatalf("write corrupt: %v", err)
+	}
+	got, err := Load("hub_a")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty on corrupt, got %+v", got)
+	}
+}
+
+func TestSave_LoadRoundTrip(t *testing.T) {
+	withTempConfigDir(t)
+	const hubID = "urn:adsk.ace:prod.scope:test"
+	in := []Pin{
+		{ID: "urn:item:1", Name: "Design Alpha", Kind: "design", HubID: hubID, ProjectID: "p1", ProjectAltID: "ap1", PinnedAt: time.Now().UTC().Truncate(time.Second)},
+		{ID: "urn:item:2", Name: "Folder Beta", Kind: "folder", HubID: hubID, FolderPath: []FolderRef{{ID: "f1", Name: "Beta"}}, PinnedAt: time.Now().UTC().Truncate(time.Second)},
+	}
+	if err := Save(hubID, in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(hubID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got) != len(in) {
+		t.Fatalf("len = %d, want %d", len(got), len(in))
+	}
+	for i := range in {
+		if got[i].ID != in[i].ID || got[i].Name != in[i].Name || got[i].Kind != in[i].Kind {
+			t.Errorf("pin[%d] = %+v, want %+v", i, got[i], in[i])
+		}
+	}
+}
+
+func TestSave_PerHubIsolation(t *testing.T) {
+	withTempConfigDir(t)
+	hubA := "hub-a"
+	hubB := "hub-b"
+	if err := Save(hubA, []Pin{{ID: "urn:1", Name: "A1", Kind: "design", HubID: hubA}}); err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+	if err := Save(hubB, []Pin{{ID: "urn:2", Name: "B1", Kind: "design", HubID: hubB}}); err != nil {
+		t.Fatalf("save B: %v", err)
+	}
+	gotA, _ := Load(hubA)
+	gotB, _ := Load(hubB)
+	if len(gotA) != 1 || gotA[0].Name != "A1" {
+		t.Errorf("hubA pins = %+v, want one A1", gotA)
+	}
+	if len(gotB) != 1 || gotB[0].Name != "B1" {
+		t.Errorf("hubB pins = %+v, want one B1", gotB)
+	}
+}
+
+func TestSave_FileMode0600(t *testing.T) {
+	dir := withTempConfigDir(t)
+	if err := Save("hub", []Pin{{ID: "x", Name: "x", Kind: "design", HubID: "hub"}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "pins-hub.json"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// Mode bits matter for token-adjacent files. Check the low 9 bits.
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("file mode = %#o, want 0600", perm)
+	}
+}
+
+func TestMigrateLegacy_NoLegacyIsNoOp(t *testing.T) {
+	withTempConfigDir(t)
+	if err := MigrateLegacy(); err != nil {
+		t.Errorf("MigrateLegacy with no legacy file: %v", err)
+	}
+}
+
+func TestMigrateLegacy_SplitsByHub(t *testing.T) {
+	dir := withTempConfigDir(t)
+	legacy := []Pin{
+		{ID: "urn:1", Name: "Alpha", Kind: "design", HubID: "hubA"},
+		{ID: "urn:2", Name: "Beta", Kind: "design", HubID: "hubB"},
+		{ID: "urn:3", Name: "Gamma", Kind: "folder", HubID: "hubA"},
+	}
+	data, _ := json.Marshal(legacy)
+	legacyPath := filepath.Join(dir, "pins.json")
+	if err := os.WriteFile(legacyPath, data, 0600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if err := MigrateLegacy(); err != nil {
+		t.Fatalf("MigrateLegacy: %v", err)
+	}
+	// hubA should have 2, hubB should have 1.
+	gotA, _ := Load("hubA")
+	gotB, _ := Load("hubB")
+	if len(gotA) != 2 {
+		t.Errorf("hubA = %d pins, want 2 (%+v)", len(gotA), gotA)
+	}
+	if len(gotB) != 1 {
+		t.Errorf("hubB = %d pins, want 1 (%+v)", len(gotB), gotB)
+	}
+	// Legacy file must be renamed to .bak.
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Errorf("legacy pins.json still present after migration")
+	}
+	if _, err := os.Stat(legacyPath + ".bak"); err != nil {
+		t.Errorf("pins.json.bak not present after migration: %v", err)
+	}
+}
+
+func TestMigrateLegacy_DropsHubless(t *testing.T) {
+	dir := withTempConfigDir(t)
+	legacy := []Pin{
+		{ID: "urn:has-hub", Name: "Keep", Kind: "design", HubID: "hubA"},
+		{ID: "urn:no-hub", Name: "Drop", Kind: "design", HubID: ""},
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(filepath.Join(dir, "pins.json"), data, 0600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if err := MigrateLegacy(); err != nil {
+		t.Fatalf("MigrateLegacy: %v", err)
+	}
+	got, _ := Load("hubA")
+	if len(got) != 1 || got[0].Name != "Keep" {
+		t.Errorf("hubA pins = %+v, want [Keep]", got)
+	}
+}
+
+func TestMigrateLegacy_CorruptBacksUpAndContinues(t *testing.T) {
+	dir := withTempConfigDir(t)
+	legacyPath := filepath.Join(dir, "pins.json")
+	if err := os.WriteFile(legacyPath, []byte("{not json"), 0600); err != nil {
+		t.Fatalf("write corrupt: %v", err)
+	}
+	if err := MigrateLegacy(); err != nil {
+		t.Fatalf("MigrateLegacy: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Errorf("corrupt legacy still present")
+	}
+	if _, err := os.Stat(legacyPath + ".bak"); err != nil {
+		t.Errorf("expected pins.json.bak after corrupt migration: %v", err)
+	}
+}
+
+func TestMigrateLegacy_MergesIntoExistingHubFile(t *testing.T) {
+	dir := withTempConfigDir(t)
+	// Pre-existing per-hub file with one entry.
+	preExisting := []Pin{{ID: "urn:keep", Name: "PreExisting", Kind: "design", HubID: "hubA"}}
+	if err := Save("hubA", preExisting); err != nil {
+		t.Fatalf("seed hubA: %v", err)
+	}
+	// Legacy with one new + one duplicate of the existing.
+	legacy := []Pin{
+		{ID: "urn:new", Name: "New", Kind: "design", HubID: "hubA"},
+		{ID: "urn:keep", Name: "DuplicateLegacy", Kind: "design", HubID: "hubA"},
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(filepath.Join(dir, "pins.json"), data, 0600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if err := MigrateLegacy(); err != nil {
+		t.Fatalf("MigrateLegacy: %v", err)
+	}
+	got, _ := Load("hubA")
+	if len(got) != 2 {
+		t.Fatalf("hubA = %d pins, want 2 (%+v)", len(got), got)
+	}
+	// Existing entry should win on dedup, so the kept name is "PreExisting".
+	for _, p := range got {
+		if p.ID == "urn:keep" && p.Name != "PreExisting" {
+			t.Errorf("dedup picked %q for urn:keep, want %q", p.Name, "PreExisting")
+		}
+	}
+}
+
+func TestAdd_DedupesByID(t *testing.T) {
+	ps := []Pin{{ID: "x", Name: "First", Kind: "design", HubID: "h"}}
+	ps = Add(ps, Pin{ID: "x", Name: "Second", Kind: "design", HubID: "h"})
+	if len(ps) != 1 {
+		t.Fatalf("len = %d, want 1 after duplicate Add", len(ps))
+	}
+	if ps[0].Name != "First" {
+		t.Errorf("Name = %q, want First (existing wins on dedup)", ps[0].Name)
+	}
+}
+
+func TestAdd_PrependsNew(t *testing.T) {
+	ps := []Pin{{ID: "a", Name: "A", Kind: "design", HubID: "h"}}
+	ps = Add(ps, Pin{ID: "b", Name: "B", Kind: "design", HubID: "h"})
+	if len(ps) != 2 {
+		t.Fatalf("len = %d, want 2", len(ps))
+	}
+	if ps[0].ID != "b" {
+		t.Errorf("most recent should be first, got order %v", []string{ps[0].ID, ps[1].ID})
+	}
+	if ps[0].PinnedAt.IsZero() {
+		t.Errorf("PinnedAt should be set after Add")
+	}
+}
+
+func TestRemove_ByID(t *testing.T) {
+	ps := []Pin{
+		{ID: "a", Kind: "design", HubID: "h"},
+		{ID: "b", Kind: "design", HubID: "h"},
+		{ID: "c", Kind: "design", HubID: "h"},
+	}
+	got := Remove(ps, "b")
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	for _, p := range got {
+		if p.ID == "b" {
+			t.Errorf("Remove kept the target ID")
+		}
+	}
+}
+
+func TestIsPinnable(t *testing.T) {
+	cases := map[string]bool{
+		"project":    true,
+		"folder":     true,
+		"design":     true,
+		"drawing":    true,
+		"configured": true,
+		"hub":        false,
+		"":           false,
+		"unknown":    false,
+	}
+	for kind, want := range cases {
+		if got := IsPinnable(kind); got != want {
+			t.Errorf("IsPinnable(%q) = %v, want %v", kind, got, want)
+		}
+	}
+}

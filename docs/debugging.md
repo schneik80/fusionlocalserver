@@ -116,6 +116,10 @@ A response came back with both useful data and field-level errors. The client ke
 
 The app handed `<url>` to your OS browser handler (for `u`-key actions). If the page errors out (e.g. Autodesk's "WEB SESSION INVALID"), this line is the URL to check or copy manually.
 
+### `ClassifyAssembly` query bursts after a folder load
+
+When the Contents column loads, the app dispatches up to 50 small `componentVersion(...).occurrences(pagination: { limit: 1 })` queries in parallel, capped at 8 concurrent in flight by a semaphore. In `debug.log` this shows up as a burst of similar requests right after the `itemsByFolder` / `itemsByProject` response. Each one returns a single-result list (or empty) and refines a Contents-column row's icon to `· asm` or `· part`. If those queries 401 or get rate-limited, the corresponding rows silently keep their generic design icon — failures here never block navigation. See [`api.md`](api.md#classifyassembly--async-partassembly-subtype) for the query and the concurrency cap, and [`architecture.md`](architecture.md#async-assembly-vs-part-classification) for the cancellation pattern (a `contentsGen` counter on the Model drops late responses when the user has navigated away).
+
 ---
 
 ## When the app crashes

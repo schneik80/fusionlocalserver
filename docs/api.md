@@ -25,11 +25,14 @@ flowchart TD
     caller --> details["Per-item queries\nGetItemDetails"]
     caller --> tabs["Cross-reference queries\nGetOccurrences (Uses)\nGetWhereUsed\nGetDrawingsForDesign\nGetDrawingSource (drawing → design)"]
     caller --> locate["Locate query\nGetItemLocation\n(walks parentFolder chain)"]
+    caller --> classify["ClassifyAssembly\n(occurrences limit:1 probe)\nbounded-parallelism via classifySem"]
 
     hierarchy --> ap["allPages()\npagination loop"]
     tabs --> ap
     details --> gql
     locate --> gql
+    classify --> sem["classifySem\n(buffered chan, cap 8)"]
+    sem --> gql
 
     ap --> gql["gqlQuery()\nretry loop\n(0 → 500ms → 1.5s)"]
     gql --> once["gqlQueryOnce()\nsingle HTTP round-trip\n+ JSON decode"]
@@ -209,10 +212,55 @@ query GetItems($hubId: ID!, $folderId: ID!) {
             __typename
             id
             name
+            ... on DesignItem {
+                tipRootComponentVersion { id }
+            }
         }
     }
 }
 ```
+
+The `... on DesignItem` inline fragment captures `tipRootComponentVersion.id` per design row in the same query, so the async assembly classifier (see [ClassifyAssembly](#classifyassembly--asyncpartassembly-subtype) below) doesn't have to round-trip back to APS just to discover which component-version id to probe for occurrences. Drawings, configured designs, and folders ignore the fragment and the field simply isn't present in their results. `GetProjectItems` uses the same inline fragment for the project-root items.
+
+---
+
+### ClassifyAssembly — async part/assembly subtype
+
+Lightweight probe used to refine each design row's icon from a generic "design" to either `assembly` or `part` after the items list has rendered. Lives in `api/classify.go`.
+
+```graphql
+query ClassifyAssembly($cv: ID!) {
+    componentVersion(componentVersionId: $cv) {
+        occurrences(pagination: { limit: 1 }) {
+            results { id }
+        }
+    }
+}
+```
+
+The query is intentionally cheap — `limit: 1` is the minimum allowed and APS only has to look up a single sub-component (or report empty) to answer. Returning `len(results) > 0` is the entire classification decision: any sub-component means assembly, no sub-component means part. There is no `componentCount` or `hasOccurrences` aggregate on `ComponentVersion` in the current schema (verified via introspection at `cmd/probe-assembly/`), so the limit-1 probe is the cheapest available signal.
+
+**Concurrency cap.** A package-level buffered channel acts as a semaphore so a fan-out of N classification cmds from a single `contentsLoadedMsg` translates into at most 8 simultaneous HTTPS round-trips against the gateway:
+
+```go
+var classifySem = make(chan struct{}, 8)
+
+func ClassifyAssembly(ctx context.Context, token, componentVersionID string) (bool, error) {
+    select {
+    case classifySem <- struct{}{}:
+    case <-ctx.Done():
+        return false, ctx.Err()
+    }
+    defer func() { <-classifySem }()
+    // ... GraphQL call ...
+}
+```
+
+8 was chosen empirically — see `cmd/probe-assembly/` for the latency-vs-parallelism data on a real hub. Higher caps return diminishing throughput per the gateway's per-tenant rate limits; lower caps leave wall-clock latency on the table.
+
+**Cancellation.** `ClassifyAssembly` itself takes a context but does not implement explicit cancellation of in-flight calls when the user navigates away. Instead, the caller-side dispatch flow in `ui/app.go` carries a `contentsGen` counter on the Model that's incremented every time the Contents slice is replaced (folder drill, hub switch, project switch, refresh, error recovery). Each `classifyDesignCmd` captures the gen at dispatch and stamps it on the resulting `itemClassifiedMsg`; the Update handler drops the message when `msg.gen != m.contentsGen`. Late results aren't cancelled mid-flight — they complete, post their message, and get ignored. This is cheap and lock-free; see [`docs/architecture.md`](architecture.md#async-assembly-vs-part-classification) for the full sequence diagram.
+
+The classifier is fire-and-forget; per-row errors keep the row's generic design icon (graceful degradation) and never surface as user-visible noise.
 
 ---
 
@@ -346,20 +394,47 @@ type NavItem struct {
     AltID       string  // dataManagementAPIHubId or dataManagementAPIProjectId
     WebURL      string  // fusionWebUrl if available
     IsContainer bool    // true for hub, project, folder
+
+    // ComponentVersionID is the lineage id of tipRootComponentVersion,
+    // captured by GetItems / GetProjectItems via the
+    // ... on DesignItem inline fragment so the async classifier can
+    // probe occurrences directly without a per-row round-trip.
+    // Populated only for Kind == "design"; empty for everything else.
+    ComponentVersionID string
+
+    // Subtype refines Kind into a displayed type tag in the Contents
+    // column. Two fill paths:
+    //
+    //   - Designs: filled in asynchronously by ClassifyAssembly
+    //     ("assembly" | "part" | "" while in flight)
+    //   - Drawings: filled in synchronously from the filename
+    //     extension at items-list time ("dwg" | "template")
+    //
+    // For Fusion Electronics types (pcb / schematic / ecad) the Kind
+    // itself implies the tag; Subtype is unused. See subtypeSuffix()
+    // in ui/app.go for the full label table.
+    Subtype string
 }
 ```
 
-**Kind mapping from `__typename`:**
+**Kind mapping — combined `__typename` + filename extension:**
 
-| GraphQL `__typename` | `Kind` | `IsContainer` |
-|---|---|---|
-| (hub — set explicitly) | `"hub"` | `true` |
-| (project — set explicitly) | `"project"` | `true` |
-| (folder — set explicitly) | `"folder"` | `true` |
-| `DesignItem` | `"design"` | `false` |
-| `DrawingItem` | `"drawing"` | `false` |
-| `ConfiguredDesignItem` | `"configured"` | `false` |
-| anything else | `"unknown"` | `false` |
+The primary signal is `__typename`. When that comes back as anything outside the table below, `navItemFromResult` falls back to `kindFromExtension(item.name)` so Fusion Electronics rows (whose APS typenames aren't documented and can't be discovered via `__schema` introspection, which APS production blocks) still get a useful Kind.
+
+| Source | Value | `Kind` | `IsContainer` | Notes |
+|---|---|---|---|---|
+| (set explicitly) | hub | `"hub"` | `true` | |
+| (set explicitly) | project | `"project"` | `true` | |
+| `__typename` | `Folder` | `"folder"` | `true` | |
+| `__typename` | `DesignItem` | `"design"` | `false` | `ComponentVersionID` from inline `tipRootComponentVersion.id`; `Subtype` filled async by `ClassifyAssembly` |
+| `__typename` | `DrawingItem` | `"drawing"` | `false` | `Subtype` filled synchronously: `"template"` for `.f2t`, `"dwg"` otherwise |
+| `__typename` | `ConfiguredDesignItem` | `"configured"` | `false` | |
+| extension | `.f3d` | `"design"` | `false` | Fallback when typename is unknown |
+| extension | `.f2d` / `.f2t` | `"drawing"` | `false` | Fallback |
+| extension | `.fsch` | `"schematic"` | `false` | Fusion schematic |
+| extension | `.fbrd` | `"pcb"` | `false` | Fusion PCB board |
+| extension | `.fprj` | `"ecad"` | `false` | Fusion Electronics project archive |
+| (none of the above) | — | `"unknown"` | `false` | Logged at debug; renderer shows the row with the default design icon and no type tag |
 
 ---
 

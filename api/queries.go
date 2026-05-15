@@ -272,22 +272,22 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 		query GetProjectItems($projectId: ID!) {
 			itemsByProject(projectId: $projectId, pagination: { limit: 50 }) {
 				pagination { cursor }
-				results { __typename id name }
+				results {
+					__typename id name
+					... on DesignItem { tipRootComponentVersion { id } }
+				}
 			}
 		}`
 	const qNext = `
 		query GetProjectItemsNext($projectId: ID!, $cursor: String!) {
 			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
-				results { __typename id name }
+				results {
+					__typename id name
+					... on DesignItem { tipRootComponentVersion { id } }
+				}
 			}
 		}`
-
-	type itemResult struct {
-		Typename string `json:"__typename"`
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-	}
 
 	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"projectId": projectID}, func(data json.RawMessage) (string, []itemResult, error) {
 		var r struct {
@@ -309,7 +309,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 
 	items := make([]NavItem, len(all))
 	for i, it := range all {
-		items[i] = navItemFromTypename(it.ID, it.Name, it.Typename)
+		items[i] = navItemFromResult(it)
 	}
 	return items, nil
 }
@@ -323,22 +323,22 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 		query GetItems($hubId: ID!, $folderId: ID!) {
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { limit: 50 }) {
 				pagination { cursor }
-				results { __typename id name }
+				results {
+					__typename id name
+					... on DesignItem { tipRootComponentVersion { id } }
+				}
 			}
 		}`
 	const qNext = `
 		query GetItemsNext($hubId: ID!, $folderId: ID!, $cursor: String!) {
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
-				results { __typename id name }
+				results {
+					__typename id name
+					... on DesignItem { tipRootComponentVersion { id } }
+				}
 			}
 		}`
-
-	type itemResult struct {
-		Typename string `json:"__typename"`
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-	}
 
 	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"hubId": hubID, "folderId": folderID}, func(data json.RawMessage) (string, []itemResult, error) {
 		var r struct {
@@ -360,9 +360,61 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 
 	items := make([]NavItem, len(all))
 	for i, it := range all {
-		items[i] = navItemFromTypename(it.ID, it.Name, it.Typename)
+		items[i] = navItemFromResult(it)
 	}
 	return items, nil
+}
+
+// itemResult is the shared row shape returned by itemsByFolder and
+// itemsByProject. The DesignItem inline fragment fills in TipRoot;
+// drawings, configured designs, and folders leave it nil.
+type itemResult struct {
+	Typename string `json:"__typename"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TipRoot  *struct {
+		ID string `json:"id"`
+	} `json:"tipRootComponentVersion,omitempty"`
+}
+
+// navItemFromResult maps a raw items-list row to a NavItem. Three
+// signals are combined:
+//
+//  1. GraphQL __typename — authoritative when APS recognises the row
+//     (DesignItem, DrawingItem, ConfiguredDesignItem, Folder).
+//  2. Filename extension — refines drawings into dwg/template and
+//     covers Fusion Electronics types that may not be exposed as
+//     distinct typenames (or whose typenames we haven't confirmed
+//     because APS production disables __schema introspection).
+//  3. tipRootComponentVersion.id — captured per design row so the
+//     async assembly classifier can probe occurrences without a
+//     second round-trip.
+func navItemFromResult(it itemResult) NavItem {
+	n := navItemFromTypename(it.ID, it.Name, it.Typename)
+
+	// If the typename mapping fell through to "unknown", try to
+	// recover a Kind from the filename extension. This is how
+	// Electronics items (schematic/PCB/ECAD project) are identified
+	// today — their APS typenames aren't documented and full schema
+	// introspection is blocked, so the file extension is the most
+	// reliable signal we have.
+	if n.Kind == "unknown" {
+		if k := kindFromExtension(it.Name); k != "" {
+			n.Kind = k
+		}
+	}
+
+	// Drawings refine into "dwg" vs "template" via filename
+	// extension (.f2d vs .f2t). APS reports both as DrawingItem so
+	// the typename alone is insufficient.
+	if n.Kind == "drawing" {
+		n.Subtype = drawingSubtypeFromExtension(it.Name)
+	}
+
+	if n.Kind == "design" && it.TipRoot != nil {
+		n.ComponentVersionID = it.TipRoot.ID
+	}
+	return n
 }
 
 // navItemFromTypename maps a GraphQL __typename to a NavItem.
@@ -381,4 +433,56 @@ func navItemFromTypename(id, name, typename string) NavItem {
 		isContainer = true
 	}
 	return NavItem{ID: id, Name: name, Kind: kind, IsContainer: isContainer}
+}
+
+// kindFromExtension maps a Fusion file extension to a NavItem.Kind.
+// Returns "" when the extension isn't recognised so the caller can
+// leave the kind as whatever the typename mapping produced.
+//
+// The Fusion Electronics extensions (.fsch, .fbrd, .fprj) are a
+// best-effort mapping — they're the formats Fusion writes to disk on
+// export, but APS may surface electronics rows under a different
+// extension when stored in the cloud. If electronics items land as
+// "unknown" in the wild, this is the table to update.
+func kindFromExtension(name string) string {
+	switch strings.ToLower(extOf(name)) {
+	case ".f3d":
+		return "design"
+	case ".f2d", ".f2t":
+		return "drawing"
+	case ".fsch":
+		return "schematic"
+	case ".fbrd":
+		return "pcb"
+	case ".fprj":
+		return "ecad"
+	}
+	return ""
+}
+
+// drawingSubtypeFromExtension distinguishes a Fusion drawing template
+// (.f2t) from a regular drawing (.f2d). Anything else gets the
+// "dwg" subtype — drawings without an extension are vanishingly rare
+// and "dwg" is the right default.
+func drawingSubtypeFromExtension(name string) string {
+	if strings.EqualFold(extOf(name), ".f2t") {
+		return "template"
+	}
+	return "dwg"
+}
+
+// extOf returns the lowercased filename extension (including the dot)
+// or "" when name has none. We don't use path/filepath.Ext because the
+// APS item.name field can contain slashes / colons in legitimate names
+// without those being path separators.
+func extOf(name string) string {
+	for i := len(name) - 1; i >= 0; i-- {
+		switch name[i] {
+		case '.':
+			return name[i:]
+		case '/', '\\':
+			return ""
+		}
+	}
+	return ""
 }

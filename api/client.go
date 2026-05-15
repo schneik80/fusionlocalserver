@@ -68,6 +68,21 @@ type NavItem struct {
 	AltID       string // alternativeIdentifier (data management API ID)
 	WebURL      string // direct web URL when provided by the API
 	IsContainer bool   // true if this item can be entered (hub, project, folder)
+
+	// ComponentVersionID is the lineage id of the design's
+	// tipRootComponentVersion, captured at items-list time so the
+	// asynchronous assembly classifier can issue its occurrences probe
+	// without a second per-row round-trip. Populated only for Kind ==
+	// "design"; empty for everything else.
+	ComponentVersionID string
+
+	// Subtype refines Kind for designs after classification: "assembly"
+	// when the design has at least one sub-component, "part" when it
+	// has none, "" while the classification is still in flight (or for
+	// non-design rows). The Contents-column renderer reads this to
+	// pick the icon; an unclassified design falls back to the generic
+	// design icon until the refinement message lands.
+	Subtype string
 }
 
 type gqlRequest struct {

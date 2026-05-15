@@ -693,3 +693,155 @@ func TestUpdate_UsesLoadedMsg_PopulatesCacheAndClearsLoading(t *testing.T) {
 		t.Errorf("cached items = %+v, want one BoltA / PN-1", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Async assembly-vs-part classification
+// ---------------------------------------------------------------------------
+
+// TestUpdate_ItemClassified_UpdatesSubtype confirms that a fresh
+// itemClassifiedMsg whose gen matches m.contentsGen stamps the matching
+// row's Subtype to "assembly" or "part".
+func TestUpdate_ItemClassified_UpdatesSubtype(t *testing.T) {
+	m := Model{
+		state:        stateBrowsing,
+		width:        120,
+		height:       40,
+		contentsGen: 3,
+		cols: [numCols][]api.NavItem{
+			{},
+			{
+				{ID: "d1", Name: "Assembly", Kind: "design"},
+				{ID: "d2", Name: "Part", Kind: "design"},
+			},
+		},
+		spinner:      spinner.New(),
+		styleCache:   &styleCache{},
+		detailsCache: map[string]*api.ItemDetails{},
+	}
+
+	// Mark d1 as an assembly.
+	updated, _ := m.Update(itemClassifiedMsg{gen: 3, itemID: "d1", isAssembly: true})
+	m1 := updated.(Model)
+	if got := m1.cols[colContents][0].Subtype; got != "assembly" {
+		t.Errorf("d1 Subtype = %q, want assembly", got)
+	}
+	if got := m1.cols[colContents][1].Subtype; got != "" {
+		t.Errorf("d2 Subtype should be unchanged, got %q", got)
+	}
+
+	// Mark d2 as a part.
+	updated, _ = m1.Update(itemClassifiedMsg{gen: 3, itemID: "d2", isAssembly: false})
+	m2 := updated.(Model)
+	if got := m2.cols[colContents][1].Subtype; got != "part" {
+		t.Errorf("d2 Subtype = %q, want part", got)
+	}
+}
+
+// TestUpdate_ItemClassified_StaleGenDropped confirms that an
+// itemClassifiedMsg dispatched against a previous folder selection is
+// silently ignored when m.contentsGen has moved on. This is the
+// cancellation primitive for the parallel-classify pipeline.
+func TestUpdate_ItemClassified_StaleGenDropped(t *testing.T) {
+	m := Model{
+		state:       stateBrowsing,
+		width:       120,
+		height:      40,
+		contentsGen: 5, // current
+		cols: [numCols][]api.NavItem{
+			{},
+			{{ID: "d1", Name: "Design", Kind: "design"}},
+		},
+		spinner:      spinner.New(),
+		styleCache:   &styleCache{},
+		detailsCache: map[string]*api.ItemDetails{},
+	}
+
+	updated, _ := m.Update(itemClassifiedMsg{gen: 2 /* stale */, itemID: "d1", isAssembly: true})
+	um := updated.(Model)
+	if got := um.cols[colContents][0].Subtype; got != "" {
+		t.Errorf("stale-gen msg should not mutate Subtype, got %q", got)
+	}
+}
+
+// TestUpdate_ItemClassified_ErrorDropped: a per-row classify failure
+// keeps the generic design icon (graceful degradation) rather than
+// surfacing as a user-visible error. The renderer treats an empty
+// Subtype on a design as "not yet classified" — same as in-flight.
+func TestUpdate_ItemClassified_ErrorDropped(t *testing.T) {
+	m := Model{
+		state:       stateBrowsing,
+		width:       120,
+		height:      40,
+		contentsGen: 1,
+		cols: [numCols][]api.NavItem{
+			{},
+			{{ID: "d1", Name: "Design", Kind: "design"}},
+		},
+		spinner:      spinner.New(),
+		styleCache:   &styleCache{},
+		detailsCache: map[string]*api.ItemDetails{},
+	}
+
+	updated, _ := m.Update(itemClassifiedMsg{gen: 1, itemID: "d1", err: errors.New("flaky")})
+	um := updated.(Model)
+	if got := um.cols[colContents][0].Subtype; got != "" {
+		t.Errorf("err msg should not mutate Subtype, got %q", got)
+	}
+}
+
+// TestClassifyContentsCmd_OnlyDesigns asserts that the fan-out cmd
+// skips non-designs and unclassifiable designs (no componentVersion
+// id). Drawings, folders, and already-classified rows must not produce
+// extra round-trips.
+func TestClassifyContentsCmd_OnlyDesigns(t *testing.T) {
+	items := []api.NavItem{
+		{ID: "d1", Kind: "design", ComponentVersionID: "cv1"},   // classify
+		{ID: "d2", Kind: "design", ComponentVersionID: ""},      // skip (no cv)
+		{ID: "d3", Kind: "design", ComponentVersionID: "cv3", Subtype: "part"}, // skip (already classified)
+		{ID: "dw", Kind: "drawing"},                              // skip (non-design)
+		{ID: "f1", Kind: "folder", IsContainer: true},            // skip (container)
+	}
+	cmd := classifyContentsCmd("tok", items, 1)
+	if cmd == nil {
+		t.Fatal("expected a batch cmd when at least one design is classifiable, got nil")
+	}
+
+	// All non-classifiables should also short-circuit to nil.
+	if classifyContentsCmd("tok", []api.NavItem{
+		{ID: "dw", Kind: "drawing"},
+		{ID: "f1", Kind: "folder", IsContainer: true},
+	}, 1) != nil {
+		t.Errorf("expected nil cmd when no designs need classifying")
+	}
+}
+
+// TestSubtypeSuffix covers the inline-tag display for every supported
+// Kind/Subtype combo, including the new Fusion Electronics types
+// (schematic / pcb / ecad) and the drawing template/dwg split.
+func TestSubtypeSuffix(t *testing.T) {
+	cases := []struct {
+		name string
+		item api.NavItem
+		want string
+	}{
+		{"design unclassified", api.NavItem{Kind: "design"}, ""},
+		{"design assembly", api.NavItem{Kind: "design", Subtype: "assembly"}, "  · asm"},
+		{"design part", api.NavItem{Kind: "design", Subtype: "part"}, "  · part"},
+		{"drawing dwg", api.NavItem{Kind: "drawing", Subtype: "dwg"}, "  · dwg"},
+		{"drawing template", api.NavItem{Kind: "drawing", Subtype: "template"}, "  · template"},
+		{"drawing unset is no suffix", api.NavItem{Kind: "drawing"}, ""},
+		{"pcb", api.NavItem{Kind: "pcb"}, "  · pcb"},
+		{"schematic", api.NavItem{Kind: "schematic"}, "  · schem"},
+		{"ecad", api.NavItem{Kind: "ecad"}, "  · ecad"},
+		{"configured has no suffix", api.NavItem{Kind: "configured"}, ""},
+		{"folder has no suffix", api.NavItem{Kind: "folder"}, ""},
+		{"project has no suffix", api.NavItem{Kind: "project"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := subtypeSuffix(tc.item); got != tc.want {
+				t.Errorf("subtypeSuffix(%+v) = %q, want %q", tc.item, got, tc.want)
+			}
+		})
+	}
+}

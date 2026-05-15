@@ -151,6 +151,18 @@ type (
 		path string
 		err  error
 	}
+	// itemClassifiedMsg refines a single Contents-column row's design
+	// subtype (assembly vs part) after the async ClassifyAssembly probe
+	// returns. gen carries the contentsGen value at dispatch time so
+	// late-arriving refinements that belong to a folder the user has
+	// already navigated away from are dropped on the floor instead of
+	// stamping stale state onto the new selection.
+	itemClassifiedMsg struct {
+		gen        int
+		itemID     string
+		isAssembly bool
+		err        error
+	}
 )
 
 // ---------------------------------------------------------------------------
@@ -265,6 +277,16 @@ type Model struct {
 	pinsCursor int
 	pinsScroll int
 
+	// contentsGen is incremented every time the Contents column's
+	// underlying selection changes — folder drill, hub switch,
+	// refresh, Show-in-Location, or any other path that swaps the
+	// items slice. Async itemClassifiedMsg responses carry the gen
+	// they were dispatched under and are dropped on mismatch, so a
+	// classification answer that comes back after the user has
+	// already moved on can't stamp stale "assembly" / "part" onto
+	// the new selection.
+	contentsGen int
+
 	// For column 2: when drilling into a subfolder, track the stack so we can go back.
 	folderStack []breadcrumbEntry
 
@@ -374,7 +396,12 @@ func New(cfg *config.Config, cfgErr error, version string) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = styleLoading
 
-	loadedPins, _ := pins.Load()
+	// Promote any legacy single-file pins.json into per-hub files.
+	// Idempotent (renames the legacy file on success). Pins are then
+	// loaded lazily once a hub is selected — see the hubsLoadedMsg /
+	// selectHub paths for the actual Load(hubID) call.
+	_ = pins.MigrateLegacy()
+	var loadedPins []pins.Pin
 
 	if cfgErr != nil {
 		return Model{
@@ -530,6 +557,41 @@ func loadItemsCmd(token, hubID, folderID string) tea.Cmd {
 		}
 		return contentsLoadedMsg{items}
 	}
+}
+
+// classifyDesignCmd runs api.ClassifyAssembly off the main goroutine and
+// posts an itemClassifiedMsg back to Update when it completes. The gen
+// argument is captured at dispatch time and echoed in the response so a
+// late refinement after the user has navigated away can be ignored — see
+// the itemClassifiedMsg handler in Update for the gen check. The API
+// call itself rate-limits via a package-level semaphore (8 concurrent),
+// so a fanout of 50 cmds here doesn't translate into 50 simultaneous
+// HTTPS connections against the gateway.
+func classifyDesignCmd(token, itemID, componentVersionID string, gen int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), navRequestTimeout)
+		defer cancel()
+		isAsm, err := api.ClassifyAssembly(ctx, token, componentVersionID)
+		return itemClassifiedMsg{gen: gen, itemID: itemID, isAssembly: isAsm, err: err}
+	}
+}
+
+// classifyContentsCmd fans out classifyDesignCmd over every DesignItem
+// in items that has a known componentVersionID. Returns nil when nothing
+// needs classifying so Update can return (m, nil) cleanly. The cmds run
+// concurrently under tea.Batch; the gateway-side concurrency cap lives
+// in api.ClassifyAssembly's semaphore.
+func classifyContentsCmd(token string, items []api.NavItem, gen int) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, it := range items {
+		if it.Kind == "design" && it.ComponentVersionID != "" && it.Subtype == "" {
+			cmds = append(cmds, classifyDesignCmd(token, it.ID, it.ComponentVersionID, gen))
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func loadDetailsCmd(token, hubID, itemID string) tea.Cmd {
@@ -777,6 +839,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedHubAltID = msg.items[0].AltID
 			m.selectedHubNameCache = msg.items[0].Name
 			m.loading[colProjects] = true
+			m.loadPinsForCurrentHub()
 			return m, loadProjectsCmd(m.token, msg.items[0].ID)
 		}
 		m.state = stateHubSelect
@@ -788,10 +851,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cols[colProjects] = msg.items
 		m.cursors[colProjects] = 0
 		m.scrolls[colProjects] = 0
-		// Clear stale contents
+		// Clear stale contents and bump the contents generation so any
+		// classification cmds in flight for the previous project's
+		// items don't paint state onto an empty / different selection
+		// when they return.
 		m.cols[colContents] = nil
+		m.contentsGen++
 		m.folderStack = nil
 		m.selectedProjectAltID = ""
+		return m, nil
+
+	case itemClassifiedMsg:
+		// Late refinements that belong to a folder the user has
+		// already navigated away from are silently dropped — the gen
+		// check is the canonical cancellation mechanism. We also
+		// swallow per-row errors here: a failed classification just
+		// means the row keeps its generic design icon, which is the
+		// graceful-degradation we want.
+		if msg.gen != m.contentsGen || msg.err != nil {
+			return m, nil
+		}
+		for i, it := range m.cols[colContents] {
+			if it.ID == msg.itemID {
+				if msg.isAssembly {
+					m.cols[colContents][i].Subtype = "assembly"
+				} else {
+					m.cols[colContents][i].Subtype = "part"
+				}
+				break
+			}
+		}
 		return m, nil
 
 	case contentsLoadedMsg:
@@ -799,6 +888,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cols[colContents] = msg.items
 		m.cursors[colContents] = 0
 		m.scrolls[colContents] = 0
+		// Bump the contents generation so any in-flight classifier
+		// responses for the previous folder fail their gen check and
+		// get dropped — see itemClassifiedMsg handler.
+		m.contentsGen++
 
 		// Show-in-Location orchestration. When pendingNav is set we are
 		// in a multi-step nav: each contentsLoadedMsg either drills the
@@ -815,6 +908,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.folderStack = append(m.folderStack, breadcrumbEntry{id: target.ID, name: target.Name})
 						m.cols[colContents] = nil
 						m.loading[colContents] = true
+						// Skip classification on intermediate hops:
+						// these items are about to be replaced by the
+						// next folder's contents anyway.
 						return m, loadItemsCmd(m.token, m.selectedHubID, target.ID)
 					}
 				}
@@ -836,6 +932,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Fire assembly-vs-part classification for every DesignItem in
+		// the freshly-loaded items. Cmds run concurrently under
+		// tea.Batch; api.ClassifyAssembly's package-level semaphore
+		// caps real parallelism so we don't stampede the gateway.
+		classifyCmd := classifyContentsCmd(m.token, msg.items, m.contentsGen)
+
 		// Auto-load details for whatever item the cursor now points at.
 		// Without pendingNav this is index 0 (the original behavior);
 		// with pendingNav it's the located target.
@@ -846,14 +948,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cached, ok := m.detailsCache[msg.items[cur].ID]; ok && cached != nil {
 				m.details = cached
 				m.detailsLoading = false
-				return m, m.maybeLoadActiveTab()
+				return m, tea.Batch(m.maybeLoadActiveTab(), classifyCmd)
 			}
 			m.detailsLoading = true
 			m.details = nil
-			return m, loadDetailsCmd(m.token, m.selectedHubID, msg.items[cur].ID)
+			return m, tea.Batch(loadDetailsCmd(m.token, m.selectedHubID, msg.items[cur].ID), classifyCmd)
 		}
 		m.details = nil
-		return m, nil
+		return m, classifyCmd
 
 	case itemLocationLoadedMsg:
 		return m.handleItemLocation(msg)
@@ -1094,6 +1196,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case m.state == statePins && key.Matches(msg, keys.PinDelete):
 		return m.removePinnedItem()
+
+	case m.state == statePins && key.Matches(msg, keys.OpenDesktop):
+		return m.openPinnedInDesktop()
+
+	case m.state == statePins && key.Matches(msg, keys.Insert):
+		return m.insertPinnedInDesktop()
 
 	case m.state == statePins:
 		// any other key closes the pins overlay
@@ -1977,6 +2085,71 @@ func (m Model) insertInDesktop() (Model, tea.Cmd) {
 	return m, insertInFusionCmd(item.ID, m.selectedProjectAltID, projName, m.selectedHubName())
 }
 
+// openPinnedInDesktop and insertPinnedInDesktop dispatch the same Fusion
+// MCP calls as openInDesktop / insertInDesktop, but sourced from the pin
+// under the pins-overlay cursor instead of the active browser selection.
+// Only document pins (design / drawing / configured) are valid; folder and
+// project pins are no-ops with a status hint. The overlay stays open so
+// the user can chain actions across multiple pins; the action result
+// shows in the status line under the list.
+func (m Model) openPinnedInDesktop() (Model, tea.Cmd) {
+	if len(m.pins) == 0 {
+		return m, nil
+	}
+	p := m.pins[m.pinsCursor]
+	if !isDocumentPinKind(p.Kind) {
+		m.statusMsg = "Open in Fusion only works on documents"
+		return m, nil
+	}
+	if p.HubID != "" && m.selectedHubID != "" && p.HubID != m.selectedHubID {
+		m.statusMsg = "Pin is in another hub: " + p.Name
+		return m, nil
+	}
+	m.statusMsg = "Opening " + p.Name + " in Fusion…"
+	return m, openInFusionCmd(p.ID, p.ProjectAltID, m.projectNameByID(p.ProjectID), m.selectedHubName())
+}
+
+func (m Model) insertPinnedInDesktop() (Model, tea.Cmd) {
+	if len(m.pins) == 0 {
+		return m, nil
+	}
+	p := m.pins[m.pinsCursor]
+	if !isDocumentPinKind(p.Kind) {
+		m.statusMsg = "Insert only works on documents"
+		return m, nil
+	}
+	if p.HubID != "" && m.selectedHubID != "" && p.HubID != m.selectedHubID {
+		m.statusMsg = "Pin is in another hub: " + p.Name
+		return m, nil
+	}
+	m.statusMsg = "Inserting " + p.Name + " in Fusion…"
+	return m, insertInFusionCmd(p.ID, p.ProjectAltID, m.projectNameByID(p.ProjectID), m.selectedHubName())
+}
+
+func isDocumentPinKind(kind string) bool {
+	switch kind {
+	case "design", "drawing", "configured":
+		return true
+	}
+	return false
+}
+
+// projectNameByID looks up the display name of the project with the
+// given lineage URN in the currently-loaded Projects column. Returns ""
+// when the project isn't in the active hub — the Fusion MCP call still
+// succeeds; only the hub-mismatch error message loses its friendly name.
+func (m Model) projectNameByID(projectID string) string {
+	if projectID == "" {
+		return ""
+	}
+	for _, p := range m.cols[colProjects] {
+		if p.ID == projectID {
+			return p.Name
+		}
+	}
+	return ""
+}
+
 // downloadStep starts the STEP-translation + download workflow for the
 // currently selected design. Like [o], it requires the details panel to
 // be loaded so we have the tipRootComponentVersion id needed to ask the
@@ -2077,9 +2250,11 @@ func (m Model) selectHub() (Model, tea.Cmd) {
 	m.activeCol = colProjects
 	m.cols[colProjects] = nil
 	m.cols[colContents] = nil
+	m.contentsGen++
 	m.loading[colProjects] = true
 	m.details = nil
 	m.folderStack = nil
+	m.loadPinsForCurrentHub()
 	// Reset details-pane tabs on hub change. The component-version IDs in
 	// the per-tab caches belong to the previous hub's projects and aren't
 	// reachable from the new hub anyway.
@@ -2148,7 +2323,7 @@ func (m Model) togglePin() (Model, tea.Cmd) {
 		m.pins = pins.Add(m.pins, pin)
 		m.statusMsg = "Pinned: " + item.Name
 	}
-	if err := pins.Save(m.pins); err != nil {
+	if err := pins.Save(m.selectedHubID, m.pins); err != nil {
 		m.statusMsg = "Pin save failed: " + err.Error()
 	}
 	return m, nil
@@ -2163,8 +2338,26 @@ func (m Model) removePinnedItem() (Model, tea.Cmd) {
 		m.pinsCursor--
 	}
 	m.adjustPinsScroll()
-	_ = pins.Save(m.pins)
+	_ = pins.Save(m.selectedHubID, m.pins)
 	return m, nil
+}
+
+// loadPinsForCurrentHub refreshes m.pins from disk for the
+// currently-selected hub and resets the overlay's cursor/scroll. Called
+// whenever m.selectedHubID changes — on auto-select after hubsLoaded,
+// from the hub picker, or after a hub-recovery flow — so the pins
+// overlay always reflects exactly the active hub's bookmarks.
+func (m *Model) loadPinsForCurrentHub() {
+	if m.selectedHubID == "" {
+		m.pins = nil
+		m.pinsCursor = 0
+		m.pinsScroll = 0
+		return
+	}
+	loaded, _ := pins.Load(m.selectedHubID)
+	m.pins = loaded
+	m.pinsCursor = 0
+	m.pinsScroll = 0
 }
 
 func (m Model) navigateToPinnedItem() (Model, tea.Cmd) {
@@ -2376,7 +2569,7 @@ func (m Model) viewHubSelect() string {
 
 func (m Model) viewPins() string {
 	header := styleHeader.Render("FusionDataCLI — Pins") +
-		styleStatus.Render("  [↑↓/jk] move  [Enter] go to item  [del] remove  [p] close")
+		styleStatus.Render("  [↑↓/ws] move  [Enter] go to item  [o] Fusion  [i] insert  [del] remove  [p] close")
 
 	if len(m.pins) == 0 {
 		body := "\n" + styleItemDim.Render("  No pins yet.") + "\n" +
@@ -2430,6 +2623,9 @@ func (m Model) viewPins() string {
 	}
 	if end < len(m.pins) {
 		sb.WriteString("\n" + styleItemDim.Render("  ↓ more"))
+	}
+	if m.statusMsg != "" {
+		sb.WriteString("\n\n" + styleStatus.Render("  "+m.statusMsg))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, sb.String())
@@ -2656,6 +2852,8 @@ func (m Model) recoverFromError() (Model, tea.Cmd) {
 	m.selectedHubNameCache = ""
 	m.selectedProjectAltID = ""
 	m.folderStack = nil
+	m.contentsGen++
+	m.loadPinsForCurrentHub()
 	m.cols = [numCols][]api.NavItem{}
 	m.cursors = [numCols]int{}
 	m.scrolls = [numCols]int{}
@@ -2848,7 +3046,18 @@ func (m Model) renderColumn(col int, title string, width, height int, sc *styleC
 
 			for i := scroll; i < end; i++ {
 				item := items[i]
-				label := itemLabel(item, innerWidth-2)
+				name, suffix := itemLabel(item, innerWidth-2)
+				// styledSuffix is rendered inline with a dim foreground
+				// so the asm/part tag reads as secondary metadata next
+				// to the row's primary name. lipgloss preserves the
+				// inner ANSI codes when the outer row style is applied
+				// over the concatenated string, so each segment keeps
+				// its own color.
+				styledSuffix := ""
+				if suffix != "" {
+					styledSuffix = styleSubtypeDim.Render(suffix)
+				}
+				label := name + styledSuffix
 
 				active := col == m.activeCol
 				selected := i == cursor
@@ -2862,11 +3071,11 @@ func (m Model) renderColumn(col int, title string, width, height int, sc *styleC
 				default:
 					if pins.IsPinned(m.pins, item.ID) {
 						icon := kindIcon(item.Kind)
-						name := item.Name
+						pname := item.Name
 						if item.Kind == "folder" {
-							name += "/"
+							pname += "/"
 						}
-						pinnedLabel := "★ " + truncate(icon+name, innerWidth-4)
+						pinnedLabel := "★ " + truncate(icon+pname, innerWidth-4-displayWidth(suffix)) + styledSuffix
 						line = sc.pinnedItemNav.Render(pinnedLabel)
 					} else if item.IsContainer {
 						line = sc.containerItemNav.Render(label)
@@ -3371,15 +3580,85 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// itemLabel builds the display label for a nav item with a given max display width.
-// Folders get a trailing "/" to distinguish them from documents.
-func itemLabel(item api.NavItem, maxWidth int) string {
+// itemLabel builds the display label for a nav item with a given max
+// display width, returned as (name, suffix). The caller is expected to
+// concatenate them — possibly with a different style applied to suffix —
+// so the row's primary text and the dimmer assembly/part tag can render
+// in different colors without losing the truncation budget that
+// itemLabel computed.
+//
+// Folders get a trailing "/" appended to name to distinguish them from
+// documents.
+//
+// For design items, the async assembly classifier (see ClassifyAssembly +
+// classifyContentsCmd) refines item.Subtype to "assembly" or "part" a
+// short time after the items list lands; suffix carries the inline tag
+// so the document type is visible at a glance. An unclassified design
+// (Subtype == "") returns suffix = "" — the row falls back to the
+// generic design icon until the refinement arrives.
+//
+// suffix already includes its leading spacer; do not add extra padding
+// when concatenating. displayWidth(suffix) is the visual column count
+// reserved out of maxWidth before truncating name.
+func itemLabel(item api.NavItem, maxWidth int) (name, suffix string) {
 	icon := kindIcon(item.Kind)
+	suffix = subtypeSuffix(item)
 	if item.Kind == "folder" {
-		return truncate(icon+item.Name, maxWidth-1) + "/"
+		// Reserve 1 col for the trailing slash.
+		name = truncate(icon+item.Name, maxWidth-1-displayWidth(suffix)) + "/"
+		return name, suffix
 	}
-	return truncate(icon+item.Name, maxWidth)
+	name = truncate(icon+item.Name, maxWidth-displayWidth(suffix))
+	return name, suffix
 }
+
+// subtypeSuffix returns the inline tag appended to a Contents-row
+// label after the file name. The tag distinguishes file types at a
+// glance and is rendered in a dimmer color (see styleSubtypeDim in
+// ui/styles.go) so it reads as secondary metadata.
+//
+// Design rows pick up "asm" / "part" asynchronously after the
+// classifier returns — an empty Subtype on a design means
+// "not yet classified," and the renderer falls back to the generic
+// design icon until the refinement message lands.
+//
+// Drawing rows are sub-typed at items-list time via the filename
+// extension (.f2t → template, otherwise dwg) — see
+// drawingSubtypeFromExtension in api/queries.go.
+//
+// PCB / Schematic / ECAD rows carry their type via Kind itself, so
+// the tag falls out of Kind alone — Subtype is unused for those.
+func subtypeSuffix(item api.NavItem) string {
+	switch item.Kind {
+	case "design":
+		switch item.Subtype {
+		case "assembly":
+			return "  · asm"
+		case "part":
+			return "  · part"
+		}
+	case "drawing":
+		switch item.Subtype {
+		case "template":
+			return "  · template"
+		case "dwg":
+			return "  · dwg"
+		}
+	case "pcb":
+		return "  · pcb"
+	case "schematic":
+		return "  · schem"
+	case "ecad":
+		return "  · ecad"
+	}
+	return ""
+}
+
+// displayWidth approximates the visual column width of an ASCII suffix.
+// We use byte count because the only suffixes produced by
+// subtypeSuffix are ASCII; if we ever switch to non-ASCII chars this
+// needs a real width function.
+func displayWidth(s string) int { return len(s) }
 
 func truncate(s string, max int) string {
 	if max <= 0 {

@@ -58,12 +58,16 @@ On first run the app opens your browser for Autodesk sign-in. After authenticati
 | `o` | Open in Fusion desktop (via Fusion MCP) |
 | `i` | Insert into active Fusion design (via Fusion MCP) |
 | `shift+d` | Download STEP file for the selected design |
+| `shift+p` | Pin / unpin the selected project, folder, or document |
+| `p` | Open the pins overlay |
 | `t` | Cycle color theme |
 | `m` | Toggle mouse support on/off |
 | `shift+a` | About / license |
 | `r` | Refresh |
 | `?` | Debug log |
 | `q` | Quit |
+
+Inside the pins overlay, `Enter` jumps to the pin's location, `delete`/`backspace` removes the pin, and `o` / `i` open or insert the pinned document directly into the running Fusion desktop client (document pins only — project and folder pins ignore those keys with a hint). The overlay stays open so multiple pins can be acted on in sequence; press `p` to close.
 
 ### Details-pane tabs
 

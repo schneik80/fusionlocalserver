@@ -114,6 +114,8 @@ stateDiagram-v2
 | `o` | Open focused document in the running Fusion desktop client (via Fusion MCP server) |
 | `i` | Insert focused document as a new occurrence into the active Fusion design (via Fusion MCP server) |
 | `shift+d` | Download STEP file for the selected design (DesignItem only; no-op on drawings, configured designs, or containers) |
+| `shift+p` | Pin / unpin the focused project, folder, or document (hubs cannot be pinned) |
+| `p` | Open the pins overlay (close again with `p` or any unbound key) |
 | `r` | Refresh current column |
 | `t` | Cycle color theme (Rust → Mono → System → Rust) |
 | `m` | Toggle mouse support on/off (default: on) |
@@ -210,6 +212,41 @@ The breadcrumb bar at the top shows the current navigation path: Hub > Project >
 - Details open: details panel = `(terminalWidth × 2) / 5`, nav columns split the remaining `3/5`
 - Details closed: nav columns split the full terminal width equally
 - Minimum column height: 3 rows
+
+### Inline type tags
+
+Document rows in the Contents column carry an inline type tag after the file name, rendered in a dimmer foreground so it reads as secondary metadata. Tags fall into two groups by how they're resolved:
+
+**Synchronous (decided at items-list time)** — derived from `__typename` and filename extension as part of `api.GetItems` / `GetProjectItems`:
+
+| Extension | Kind | Tag |
+|---|---|---|
+| `.f2d` | drawing | `· dwg` |
+| `.f2t` | drawing | `· template` |
+| `.fbrd` | pcb | `· pcb` |
+| `.fsch` | schematic | `· schem` |
+| `.fprj` | ecad | `· ecad` |
+
+**Asynchronous (settled in over ~1 s after the folder lands)** — design rows pick up `· asm` or `· part` once the parallel `componentVersion.occurrences` classifier returns. See [`docs/architecture.md`](architecture.md#async-assembly-vs-part-classification) for the dispatch flow and cancellation pattern.
+
+```
+> ▸ Designs/
+  ▸ Archive/
+    Assembly v7.f3d         · asm
+    Housing.f3d             · part
+    BasePlate.f3d           · part
+    Plan-A1.f2d             · dwg
+    StandardBorder.f2t      · template
+    PowerStage.fsch         · schem
+    MainBoard.fbrd          · pcb
+    RobotECAD.fprj          · ecad
+```
+
+Configured designs, folders, and projects never get a tag — their icon already conveys their type.
+
+Classification is fire-and-forget; per-row probe failures keep the row's generic design label rather than surfacing as user-visible errors. Navigating away from the folder cancels the visual effect of any still-in-flight probes via the `contentsGen` counter on the Model — late results posted after a folder change are silently dropped.
+
+Filename-extension detection is the source of truth for the Electronics types (PCB / Schematic / ECAD) and the dwg/template split. APS production blocks `__schema` introspection, so we can't enumerate the gateway's typenames; if you have an electronics item that displays as `· dwg` or no tag at all, file a bug with the file's name and the `__typename` from `debug.log` — the extension table in `api/queries.go::kindFromExtension` is the place to add a new mapping.
 
 ---
 
@@ -323,6 +360,10 @@ For `i`, the CLI calls `fusion_mcp_execute` with `featureType=script` and runs a
 
 Both operations require Fusion to be running locally with the MCP server enabled. If Fusion is not reachable or returns an error, the status bar shows the error message.
 
+### From the Pins Overlay
+
+`o` and `i` are also bound inside the pins overlay (`p`). With a document pin under the cursor, they fire the same `openInFusionCmd` / `insertInFusionCmd` paths as in the browser, sourcing the lineage URN and project Data Management ID from the pin record (`p.ID`, `p.ProjectAltID`) rather than the current selection. The project's display name is recovered from `m.cols[colProjects]` so the hub-mismatch error message stays friendly. Project and folder pins are ignored with a status hint (the underlying MCP calls only accept documents). The overlay stays open so multiple pins can be acted on in sequence — the status line under the pin list reflects the in-flight call.
+
 ### Hub Consistency Check
 
 Because FusionDataCLI and the running Fusion client can browse independent hubs, both `o` and `i` first verify that Fusion is on the same hub as the CLI before sending the open/insert call. The check works like this:
@@ -337,6 +378,40 @@ Because FusionDataCLI and the running Fusion client can browse independent hubs,
    ```
 
 This prevents accidentally opening or inserting a file from one hub into a window that is showing content from another hub.
+
+---
+
+## Pins
+
+The pins overlay (`p`) is a fast-recall list of bookmarked projects, folders, and documents that survives across sessions. Pinned items show with a gold `★` marker in the regular browser view; the overlay is the entry point for navigating to them or acting on them directly.
+
+### Pinning
+
+Press `shift+p` while a project, folder, or document is focused to toggle its pin. Hubs cannot be pinned. The pin record captures enough context to navigate without an API call later — for projects and folders that's the project ID, the parent project ID, and the root-to-leaf folder chain; for documents that's the lineage URN plus its parent project. The action's status appears in the status bar (`Pinned: …` / `Unpinned: …` / `Pin save failed: …`).
+
+### Per-hub scope
+
+Pins are stored per hub at `~/.config/fusiondatacli/pins-<sanitized-hubID>.json` (mode 0600). Switching hubs reloads the pin list for the new hub and resets the overlay cursor — pins from hub A are invisible while you're in hub B, but persist on disk so they reappear when you return. The hub ID is sanitized into a filesystem-safe slug (any character outside `[A-Za-z0-9_.\-]` becomes `_`) so URN-format identifiers round-trip cleanly across macOS, Linux, and Windows.
+
+A pre-hub-scoping single-file `pins.json` from earlier versions is migrated automatically on first run: entries are grouped by `HubID`, merged into each hub's file (dedup by item ID — existing entries win), and the legacy file is renamed `pins.json.bak`. Pins from the legacy file that lack a `HubID` are dropped (they pre-date the field and can't be located deterministically).
+
+### Overlay key bindings
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` / `w` `s` | Move pin cursor |
+| `Enter` | **Show in Location** for the pin — navigates the browser to the project + folder + item it points at |
+| `o` | Open the pinned document in the running Fusion desktop client (document pins only) |
+| `i` | Insert the pinned document as an occurrence into the active Fusion design (document pins only) |
+| `delete` / `backspace` | Remove the pin |
+| `p` | Close the overlay |
+| any other key | Close the overlay |
+
+`o` and `i` are useful when you want to act on a pin without leaving the overlay — the call dispatches asynchronously and the status line under the pin list updates, so multiple pins can be acted on in sequence. Project and folder pins ignore `o` / `i` with a status hint (the underlying MCP calls only accept documents).
+
+### Cross-hub safety
+
+`navigateToPinnedItem` re-checks that `pin.HubID` matches `m.selectedHubID` before navigating. Per-hub storage means the overlay only ever shows pins from the current hub, so this check is defensive — it covers the rare case where a hub switch is mid-flight when Enter lands. Mismatches surface as `Pin is in another hub: <name>` in the status bar.
 
 ---
 

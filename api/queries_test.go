@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -260,6 +261,205 @@ func TestGetItems_TypenameMapping(t *testing.T) {
 		}
 		if got[i].IsContainer != w.isContainer {
 			t.Errorf("items[%d].IsContainer = %v, want %v", i, got[i].IsContainer, w.isContainer)
+		}
+	}
+}
+
+func TestGetItems_RequestsTipRootComponentVersion(t *testing.T) {
+	// The async classifier needs tipRootComponentVersion.id per design
+	// row to issue its occurrences probe without a second round-trip.
+	// This test pins the inline fragment into the request so a future
+	// query refactor can't silently strip it.
+	var sawFragment bool
+	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
+		if strings.Contains(req.Query, "... on DesignItem") &&
+			strings.Contains(req.Query, "tipRootComponentVersion") {
+			sawFragment = true
+		}
+		return testutil.GraphQLResponse{Data: map[string]any{
+			"itemsByFolder": map[string]any{
+				"pagination": map[string]any{"cursor": ""},
+				"results":    []map[string]any{},
+			},
+		}}
+	})
+	swapEndpoint(t, srv.URL)
+
+	if _, err := GetItems(context.Background(), "tok", "h1", "f1"); err != nil {
+		t.Fatalf("GetItems: %v", err)
+	}
+	if !sawFragment {
+		t.Errorf("query did not include ... on DesignItem { tipRootComponentVersion { id } }")
+	}
+}
+
+func TestGetItems_PopulatesComponentVersionID(t *testing.T) {
+	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
+		return testutil.GraphQLResponse{Data: map[string]any{
+			"itemsByFolder": map[string]any{
+				"pagination": map[string]any{"cursor": ""},
+				"results": []map[string]any{
+					// Design with tipRoot present.
+					{
+						"__typename":               "DesignItem",
+						"id":                       "i1",
+						"name":                     "WithRoot",
+						"tipRootComponentVersion":  map[string]any{"id": "urn:cv:1"},
+					},
+					// Design without tipRoot (milestone-less, mid-translation, etc.)
+					{
+						"__typename": "DesignItem",
+						"id":         "i2",
+						"name":       "NoRoot",
+					},
+					// Drawing: inline fragment doesn't apply.
+					{"__typename": "DrawingItem", "id": "i3", "name": "Drawing"},
+				},
+			},
+		}}
+	})
+	swapEndpoint(t, srv.URL)
+
+	got, err := GetItems(context.Background(), "tok", "h", "f")
+	if err != nil {
+		t.Fatalf("GetItems: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3 (%+v)", len(got), got)
+	}
+	if got[0].ComponentVersionID != "urn:cv:1" {
+		t.Errorf("design[0].ComponentVersionID = %q, want urn:cv:1", got[0].ComponentVersionID)
+	}
+	if got[1].ComponentVersionID != "" {
+		t.Errorf("design[1].ComponentVersionID = %q, want empty (no tipRoot)", got[1].ComponentVersionID)
+	}
+	if got[2].ComponentVersionID != "" {
+		t.Errorf("drawing.ComponentVersionID = %q, want empty", got[2].ComponentVersionID)
+	}
+	// Designs start with empty Subtype — the async classifier fills
+	// it in later. Drawings, by contrast, are sub-typed synchronously
+	// from the filename extension. The test row "Drawing" has no
+	// extension so it falls through to the default "dwg".
+	if got[0].Subtype != "" || got[1].Subtype != "" {
+		t.Errorf("designs[].Subtype = %q/%q before classification, want empty", got[0].Subtype, got[1].Subtype)
+	}
+	if got[2].Subtype != "dwg" {
+		t.Errorf("drawing.Subtype = %q, want \"dwg\" (default)", got[2].Subtype)
+	}
+}
+
+func TestKindFromExtension(t *testing.T) {
+	cases := map[string]string{
+		"Assembly.f3d":     "design",
+		"Plan-A1.f2d":      "drawing",
+		"BlankTitle.f2t":   "drawing",
+		"PowerStage.fsch":  "schematic",
+		"MainBoard.fbrd":   "pcb",
+		"RobotECAD.fprj":    "ecad",
+		"Untitled":         "",       // no extension
+		"Folder/name.f3d":  "design", // last . wins, path separators ignored
+		"weird/name":       "",
+		"MixedCase.F3D":    "design", // case-insensitive
+		"":                 "",
+	}
+	for name, want := range cases {
+		if got := kindFromExtension(name); got != want {
+			t.Errorf("kindFromExtension(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestDrawingSubtypeFromExtension(t *testing.T) {
+	cases := map[string]string{
+		"Plan-A1.f2d":     "dwg",
+		"Standard.f2t":    "template",
+		"STANDARD.F2T":    "template", // case-insensitive
+		"Untitled":        "dwg",      // default
+		"weird.txt":       "dwg",      // unknown extensions still get "dwg"
+	}
+	for name, want := range cases {
+		if got := drawingSubtypeFromExtension(name); got != want {
+			t.Errorf("drawingSubtypeFromExtension(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestNavItemFromResult_ExtensionRefinement(t *testing.T) {
+	cases := []struct {
+		name        string
+		it          itemResult
+		wantKind    string
+		wantSubtype string
+	}{
+		{
+			name:        "drawing → dwg via .f2d",
+			it:          itemResult{Typename: "DrawingItem", ID: "1", Name: "Plan-A1.f2d"},
+			wantKind:    "drawing",
+			wantSubtype: "dwg",
+		},
+		{
+			name:        "drawing → template via .f2t",
+			it:          itemResult{Typename: "DrawingItem", ID: "2", Name: "BlankTitle.f2t"},
+			wantKind:    "drawing",
+			wantSubtype: "template",
+		},
+		{
+			name:        "unknown typename + .fsch → schematic",
+			it:          itemResult{Typename: "MysteryItem", ID: "3", Name: "Power.fsch"},
+			wantKind:    "schematic",
+			wantSubtype: "",
+		},
+		{
+			name:        "unknown typename + .fbrd → pcb",
+			it:          itemResult{Typename: "MysteryItem", ID: "4", Name: "MainBoard.fbrd"},
+			wantKind:    "pcb",
+			wantSubtype: "",
+		},
+		{
+			name:        "unknown typename + .fprj → ecad",
+			it:          itemResult{Typename: "MysteryItem", ID: "5", Name: "Robot.fprj"},
+			wantKind:    "ecad",
+			wantSubtype: "",
+		},
+		{
+			name:        "design stays empty subtype (classifier fills later)",
+			it:          itemResult{Typename: "DesignItem", ID: "6", Name: "Assembly.f3d"},
+			wantKind:    "design",
+			wantSubtype: "",
+		},
+		{
+			name:        "typename wins when recognised even if extension differs",
+			it:          itemResult{Typename: "ConfiguredDesignItem", ID: "7", Name: "Variant.f3d"},
+			wantKind:    "configured",
+			wantSubtype: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := navItemFromResult(tc.it)
+			if got.Kind != tc.wantKind {
+				t.Errorf("Kind = %q, want %q", got.Kind, tc.wantKind)
+			}
+			if got.Subtype != tc.wantSubtype {
+				t.Errorf("Subtype = %q, want %q", got.Subtype, tc.wantSubtype)
+			}
+		})
+	}
+}
+
+func TestExtOf(t *testing.T) {
+	cases := map[string]string{
+		"file.txt":          ".txt",
+		"file.tar.gz":       ".gz",
+		"noext":             "",
+		"":                  "",
+		"a/b/c.f3d":         ".f3d",
+		"weird/no.ext/name": "", // ext lookup stops at separator
+		".hidden":           ".hidden",
+	}
+	for in, want := range cases {
+		if got := extOf(in); got != want {
+			t.Errorf("extOf(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

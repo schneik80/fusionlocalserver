@@ -60,6 +60,7 @@ graph TD
 | `auth` | 70% | 73.9% |
 | `fusion` | 75% | 84.2% |
 | `api` | 65% | ~70% |
+| `pins` | 70% | ~85% |
 | `ui` | 30% | ~40% |
 
 UI is intentionally lower because View() rendering is exercised by humans; the L3 tests cover the state-machine transitions that *drive* View() but don't assert on the styled output. Don't chase UI coverage by writing pixel-snapshot tests — they break on every theme tweak and don't catch logic bugs.
@@ -142,10 +143,10 @@ This returns a closure that restores the prior value, so parallel-safe `t.Cleanu
 
 | Pattern | Used for | Example |
 |---|---|---|
-| `TestThing_DoesX` | Pure unit on `Thing` | `TestNavItemFromTypename` |
-| `TestFunc_HappyPath` | The clean success path | `TestGqlQuery_HappyPath` |
-| `TestFunc_<Edge>` | A specific edge case | `TestGqlQuery_401_Wraps`, `TestGqlQuery_EmptyData_Errors` |
-| `TestUpdate_<Msg>_<Effect>` | Bubble Tea Update on a specific message | `TestUpdate_TabSelect_DispatchesLoad`, `TestUpdate_UsesLoadedMsg_PopulatesCacheAndClearsLoading` |
+| `TestThing_DoesX` | Pure unit on `Thing` | `TestNavItemFromTypename`, `TestSanitizeHubID` |
+| `TestFunc_HappyPath` | The clean success path | `TestGqlQuery_HappyPath`, `TestClassifyAssembly_Part` |
+| `TestFunc_<Edge>` | A specific edge case | `TestGqlQuery_401_Wraps`, `TestClassifyAssembly_EmptyID`, `TestMigrateLegacy_DropsHubless` |
+| `TestUpdate_<Msg>_<Effect>` | Bubble Tea Update on a specific message | `TestUpdate_TabSelect_DispatchesLoad`, `TestUpdate_ItemClassified_StaleGenDropped`, `TestUpdate_ContentsLoaded_FansOutClassifyCmds` |
 | `TestHandle<X>_<Effect>` | A direct call to a handler method | `TestHandleItemLocation_CrossHub`, `TestHandleItemLocation_DrillsFolders` |
 | `TestView_<Scenario>_NoCrash` | Render-doesn't-panic tests across terminal sizes | `TestView_AfterHubSelect_NoCrash` |
 
