@@ -43,3 +43,4 @@ fusiondatacli.zip
 
 # Test coverage output
 coverage.out
+.claude/settings.local.json
