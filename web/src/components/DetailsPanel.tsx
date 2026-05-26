@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import {
+  useClassify,
   useDrawings,
   useItemDetails,
   useProperties,
@@ -98,6 +99,10 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
 
   const detailsQ = useItemDetails(hubId, item.id)
   const cvId = item.componentVersionId || detailsQ.data?.rootComponentVersionId
+  // Lazy assembly/part classification (cached, shared with the Contents column);
+  // used to refine the Type label to "3D Design — Assembly" / "… — Part".
+  const classifyQ = useClassify(cvId)
+  const subtype = classifyQ.data?.subtype || item.subtype
 
   return (
     <>
@@ -111,6 +116,8 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <DetailsSummary
               query={detailsQ.data}
+              kind={item.kind}
+              subtype={subtype}
               loading={detailsQ.isLoading}
               error={detailsQ.error as Error | null}
             />
@@ -215,6 +222,22 @@ function fmtDate(s?: string): string {
   return isNaN(d.getTime()) ? s : d.toLocaleString()
 }
 
+// typeLabel renders a friendly document type, appending the lazily-classified
+// Part/Assembly to designs — e.g. "3D Design — Assembly". Falls back to the raw
+// GraphQL typename for kinds we don't have a friendly name for.
+function typeLabel(kind: string, typename?: string, subtype?: string): string {
+  const base =
+    kind === 'design'
+      ? '3D Design'
+      : kind === 'configured'
+        ? 'Configured Design'
+        : kind === 'drawing'
+          ? 'Drawing'
+          : typename || kind || 'Document'
+  const sub = subtype === 'assembly' ? 'Assembly' : subtype === 'part' ? 'Part' : ''
+  return sub ? `${base} — ${sub}` : base
+}
+
 // LabelGrid renders a two-column label/value grid, dropping empty rows.
 function LabelGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
   const present = rows.filter(([, v]) => v !== undefined && v !== '' && v !== null)
@@ -246,10 +269,14 @@ function LabelGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
 // the Details tab).
 function DetailsSummary({
   query,
+  kind,
+  subtype,
   loading,
   error,
 }: {
   query?: Details
+  kind: string
+  subtype?: string
   loading: boolean
   error: Error | null
 }) {
@@ -258,13 +285,12 @@ function DetailsSummary({
   if (!query) return <TabEmpty text="No details" />
 
   const rows: Array<[string, ReactNode]> = [
-    ['Type', query.typename],
+    ['Type', typeLabel(kind, query.typename, subtype)],
     ['Part number', query.partNumber],
     ['Description', query.partDesc],
     ['Material', query.material],
     ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
     ['Size', query.size],
-    ['MIME', query.mimeType],
     ['Extension', query.extensionType],
     ['Created', query.createdOn ? `${fmtDate(query.createdOn)} · ${query.createdBy ?? ''}` : undefined],
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
