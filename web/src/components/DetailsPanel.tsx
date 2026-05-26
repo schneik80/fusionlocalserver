@@ -1,11 +1,9 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons'
+import { faLocationArrow } from '@fortawesome/free-solid-svg-icons'
 import {
   Box,
-  Button,
   CircularProgress,
-  Divider,
-  Link,
+  IconButton,
   List,
   ListItem,
   ListItemText,
@@ -16,31 +14,39 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { api } from '../api/client'
 import {
   useDrawings,
   useItemDetails,
+  useProperties,
+  useThumbnail,
   useUses,
   useWhereUsed,
 } from '../api/queries'
-import type { ComponentRef, Details, DrawingRef, Item } from '../api/types'
+import type { ComponentRef, Details, DrawingRef, Item, Measure } from '../api/types'
 import { useNav } from '../state/nav'
 
-type TabKey = 'details' | 'uses' | 'whereUsed' | 'drawings'
+// The Details metadata is now always shown (in the header, beside the
+// thumbnail), so it is no longer a tab. The remaining tabs:
+type TabKey = 'history' | 'properties' | 'uses' | 'whereUsed' | 'drawings'
 
 const TAB_LABEL: Record<TabKey, string> = {
-  details: 'Details',
+  history: 'History',
+  properties: 'Properties',
   uses: 'Uses',
   whereUsed: 'Where Used',
   drawings: 'Drawings',
 }
 
-// Tab availability mirrors the TUI: designs get all four; drawings get Details
-// + Uses (the source design); everything else is Details only.
+// Designs get the full set; configured designs add Properties; drawings get
+// Uses (the source design); everything else is History only.
 function tabsFor(kind: string): TabKey[] {
-  if (kind === 'design') return ['details', 'uses', 'whereUsed', 'drawings']
-  if (kind === 'drawing') return ['details', 'uses']
-  return ['details']
+  if (kind === 'design') return ['history', 'properties', 'uses', 'whereUsed', 'drawings']
+  if (kind === 'configured') return ['history', 'properties']
+  if (kind === 'drawing') return ['history', 'uses']
+  return ['history']
 }
 
 export function DetailsPanel() {
@@ -52,7 +58,7 @@ export function DetailsPanel() {
       square
       variant="outlined"
       sx={{
-        flex: '0 0 35%',
+        flex: 1,
         minWidth: 320,
         display: 'flex',
         flexDirection: 'column',
@@ -85,13 +91,12 @@ export function DetailsPanel() {
 
 function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) {
   const available = useMemo(() => tabsFor(item.kind), [item.kind])
-  const [tab, setTab] = useState<TabKey>('details')
+  const [tab, setTab] = useState<TabKey>('history')
 
   // Reset to a valid tab whenever the selected item (and thus its tab set)
-  // changes. key={item.id} on this component already remounts it, but guard
-  // anyway in case the kind set shrinks.
+  // changes. key={item.id} already remounts this, but guard anyway.
   useEffect(() => {
-    if (!available.includes(tab)) setTab('details')
+    if (!available.includes(tab)) setTab('history')
   }, [available, tab])
 
   const detailsQ = useItemDetails(hubId, item.id)
@@ -99,11 +104,22 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
 
   return (
     <>
-      <Box sx={{ px: 2, pt: 1.5, pb: 1, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="h6" noWrap title={item.name}>
+      {/* Header: name, then the always-visible details metadata (left) beside
+          the thumbnail (right). The metadata shows regardless of active tab. */}
+      <Box sx={{ px: 2, pt: 1.5, pb: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+        <Typography variant="h6" noWrap title={item.name} gutterBottom>
           {item.name}
         </Typography>
-        <StubActions details={detailsQ.data} />
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <DetailsSummary
+              query={detailsQ.data}
+              loading={detailsQ.isLoading}
+              error={detailsQ.error as Error | null}
+            />
+          </Box>
+          <Thumbnail cvId={cvId} name={item.name} />
+        </Box>
       </Box>
 
       <Tabs
@@ -119,9 +135,10 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
       </Tabs>
 
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 2 }}>
-        {tab === 'details' && (
-          <DetailsTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
+        {tab === 'history' && (
+          <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
+        {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
         {tab === 'uses' && (
           <UsesTab kind={item.kind} hubId={hubId} itemId={item.id} cvId={cvId} active />
         )}
@@ -132,45 +149,66 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
   )
 }
 
-// Disabled placeholders for the stubbed Fusion + STEP actions.
-function StubActions({ details }: { details?: Details }) {
+// THUMBNAIL_POLL_TIMEOUT_MS bounds how long we wait on a still-generating
+// (PENDING) thumbnail before giving up — APS generates thumbnails on demand and
+// some never resolve, so without this a stuck design spins and re-polls APS
+// every 2s forever.
+const THUMBNAIL_POLL_TIMEOUT_MS = 30_000
+
+// Thumbnail renders the component's preview image, sitting to the right of the
+// details metadata. Only designs (and configured designs) carry a
+// componentVersionId, so for everything else cvId is undefined and nothing is
+// shown (the metadata then takes the full width). Capped at 200×200.
+function Thumbnail({ cvId, name }: { cvId?: string; name: string }) {
+  // Give up on a perpetually-PENDING thumbnail after a window. Disabling the
+  // query via `enabled` also stops its 2s polling.
+  const [gaveUp, setGaveUp] = useState(false)
+  const q = useThumbnail(cvId, !!cvId && !gaveUp)
+  const status = q.data?.status
+
+  useEffect(() => {
+    setGaveUp(false)
+    if (!cvId || status === 'SUCCESS' || status === 'FAILED') return
+    const timer = window.setTimeout(() => setGaveUp(true), THUMBNAIL_POLL_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [cvId, status])
+
+  if (!cvId) return null
+  // No image to show: a hard error, a failed/absent thumbnail, or we gave up
+  // waiting for a still-generating one.
+  if (q.isError || status === 'FAILED' || gaveUp) return null
+
+  const ready = status === 'SUCCESS'
+
   return (
-    <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', gap: 1 }}>
-      {details?.fusionWebUrl && (
-        <Button
-          size="small"
-          variant="outlined"
-          component={Link}
-          href={details.fusionWebUrl}
-          target="_blank"
-          rel="noopener"
-          startIcon={<FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: 12 }} />}
-        >
-          Open on web
-        </Button>
+    <Box
+      sx={{
+        flexShrink: 0,
+        width: 200,
+        maxWidth: 200,
+        aspectRatio: '1 / 1',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        bgcolor: 'action.hover',
+        borderRadius: 1,
+        overflow: 'hidden',
+      }}
+    >
+      {ready ? (
+        <Box
+          component="img"
+          // Same-origin proxy: the server caches the bytes (usually pre-warmed
+          // by the classify probe) and streams them, avoiding a cross-origin
+          // fetch to the APS CDN on every view.
+          src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId)}`}
+          alt={`${name} thumbnail`}
+          sx={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        />
+      ) : (
+        <CircularProgress size={28} />
       )}
-      <Tooltip title="Coming soon">
-        <span>
-          <Button size="small" variant="outlined" disabled>
-            Open in Fusion
-          </Button>
-        </span>
-      </Tooltip>
-      <Tooltip title="Coming soon">
-        <span>
-          <Button size="small" variant="outlined" disabled>
-            Insert
-          </Button>
-        </span>
-      </Tooltip>
-      <Tooltip title="Coming soon">
-        <span>
-          <Button size="small" variant="outlined" disabled>
-            Download STEP
-          </Button>
-        </span>
-      </Tooltip>
-    </Stack>
+    </Box>
   )
 }
 
@@ -180,7 +218,36 @@ function fmtDate(s?: string): string {
   return isNaN(d.getTime()) ? s : d.toLocaleString()
 }
 
-function DetailsTab({
+// LabelGrid renders a two-column label/value grid, dropping empty rows.
+function LabelGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
+  const present = rows.filter(([, v]) => v !== undefined && v !== '' && v !== null)
+  if (present.length === 0) return null
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(84px, auto) 1fr',
+        columnGap: 2,
+        rowGap: 0.75,
+      }}
+    >
+      {present.map(([label, value]) => (
+        <Box key={label} sx={{ display: 'contents' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ pt: 0.25 }}>
+            {label}
+          </Typography>
+          <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+            {value}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+// DetailsSummary is the always-visible metadata block in the header (formerly
+// the Details tab).
+function DetailsSummary({
   query,
   loading,
   error,
@@ -206,52 +273,85 @@ function DetailsTab({
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
     ['Milestone', query.isMilestone ? 'Yes' : undefined],
   ]
+  return <LabelGrid rows={rows} />
+}
+
+// PropertiesTab shows the component version's physical (mass) properties from
+// the v2 API. Generation is async, so it polls while computing.
+function PropertiesTab({ cvId, active }: { cvId?: string; active: boolean }) {
+  const q = useProperties(cvId, active)
+  if (q.isLoading) return <TabSpinner />
+  if (q.error) return <TabError error={q.error as Error} />
+  const p = q.data
+  if (!p) return <TabEmpty text="No properties" />
+
+  if (p.status !== 'COMPLETED') {
+    return q.isFetching ? (
+      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+        <CircularProgress size={18} />
+        <Typography variant="body2" color="text.secondary">
+          Computing physical properties…
+        </Typography>
+      </Stack>
+    ) : (
+      <TabEmpty text="Physical properties not available" />
+    )
+  }
+
+  // APS returns full-precision floats (e.g. "25.68624402467584"); round to 4
+  // significant figures for display, leaving non-numeric values untouched.
+  const round = (s: string) => {
+    const n = Number(s)
+    return Number.isFinite(n) ? String(Number(n.toPrecision(4))) : s
+  }
+  const fmt = (m: Measure) =>
+    m.display ? `${round(m.display)}${m.units ? ` ${m.units}` : ''}` : undefined
+  const bbox =
+    p.bboxLength.display && p.bboxWidth.display && p.bboxHeight.display
+      ? `${round(p.bboxLength.display)} × ${round(p.bboxWidth.display)} × ${round(p.bboxHeight.display)}${
+          p.bboxLength.units ? ` ${p.bboxLength.units}` : ''
+        }`
+      : undefined
+
+  const rows: Array<[string, ReactNode]> = [
+    ['Mass', fmt(p.mass)],
+    ['Volume', fmt(p.volume)],
+    ['Surface area', fmt(p.area)],
+    ['Density', fmt(p.density)],
+    ['Bounding box', bbox],
+  ]
+  if (!rows.some(([, v]) => !!v)) return <TabEmpty text="No physical properties" />
+  return <LabelGrid rows={rows} />
+}
+
+// HistoryTab lists the item's version history (most recent first).
+function HistoryTab({
+  query,
+  loading,
+  error,
+}: {
+  query?: Details
+  loading: boolean
+  error: Error | null
+}) {
+  if (loading) return <TabSpinner />
+  if (error) return <TabError error={error} />
+  const versions = query?.versions ?? []
+  if (versions.length === 0) return <TabEmpty text="No version history" />
 
   return (
-    <Box>
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(90px, auto) 1fr',
-          columnGap: 2,
-          rowGap: 0.75,
-        }}
-      >
-        {rows
-          .filter(([, v]) => v !== undefined && v !== '' && v !== null)
-          .map(([label, value]) => (
-            <Box key={label} sx={{ display: 'contents' }}>
-              <Typography variant="caption" color="text.secondary" sx={{ pt: 0.25 }}>
-                {label}
-              </Typography>
-              <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
-                {value}
-              </Typography>
-            </Box>
-          ))}
-      </Box>
-
-      {query.versions.length > 0 && (
-        <>
-          <Divider sx={{ my: 2 }} />
-          <Typography variant="subtitle2" gutterBottom>
-            Version history
-          </Typography>
-          <List dense disablePadding>
-            {query.versions.map((v) => (
-              <ListItem key={v.number} disablePadding sx={{ py: 0.25 }}>
-                <ListItemText
-                  primary={`v${v.number}${v.comment ? ` — ${v.comment}` : ''}`}
-                  secondary={`${fmtDate(v.createdOn)}${v.createdBy ? ` · ${v.createdBy}` : ''}`}
-                  primaryTypographyProps={{ variant: 'body2' }}
-                  secondaryTypographyProps={{ variant: 'caption' }}
-                />
-              </ListItem>
-            ))}
-          </List>
-        </>
-      )}
-    </Box>
+    <List dense disablePadding>
+      {versions.map((v) => (
+        <ListItem key={v.number} disablePadding sx={{ py: 0.25 }}>
+          <ListItemText
+            primary={`v${v.number}${v.comment ? ` — ${v.comment}` : ''}`}
+            secondary={`${fmtDate(v.createdOn)}${v.createdBy ? ` · ${v.createdBy}` : ''}`}
+            primaryTypographyProps={{ variant: 'body2' }}
+            secondaryTypographyProps={{ variant: 'caption' }}
+          />
+        </ListItem>
+      ))}
+    </List>
   )
 }
 
@@ -345,16 +445,90 @@ function RefList({
   return (
     <List dense disablePadding>
       {list.map((r) => (
-        <ListItem key={r.id || r.designItemId || r.name} disablePadding sx={{ py: 0.5 }}>
-          <ListItemText
-            primary={r.designItemName || r.name}
-            secondary={[r.partNumber, r.material].filter(Boolean).join(' · ') || undefined}
-            primaryTypographyProps={{ variant: 'body2', noWrap: true }}
-            secondaryTypographyProps={{ variant: 'caption' }}
-          />
-        </ListItem>
+        <RefRow key={r.id || r.designItemId || r.name} r={r} />
       ))}
     </List>
+  )
+}
+
+// RefRow is one Uses / Where Used row. Hovering reveals a "go to" action that
+// navigates the browser to that document — it resolves the design's location
+// (project + folder path) and selects it, the same flow the Pins dialog uses.
+function RefRow({ r }: { r: ComponentRef }) {
+  const nav = useNav()
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const canNav = !!r.designItemId && !!nav.hubId
+
+  const goTo = async () => {
+    if (!canNav || busy) return
+    setBusy(true)
+    try {
+      const loc = await qc.fetchQuery({
+        queryKey: ['location', nav.hubId, r.designItemId],
+        queryFn: () => api.itemLocation(nav.hubId!, r.designItemId!),
+        staleTime: 5 * 60 * 1000,
+      })
+      const project: Item = {
+        id: loc.projectId,
+        name: loc.projectName,
+        kind: 'project',
+        altId: loc.projectAltId,
+        isContainer: true,
+      }
+      const folderStack: Item[] = loc.folderPath.map((f) => ({
+        id: f.id,
+        name: f.name,
+        kind: 'folder',
+        isContainer: true,
+      }))
+      const selected: Item = {
+        id: r.designItemId!,
+        name: r.designItemName || r.name,
+        kind: 'design',
+        componentVersionId: r.id,
+        isContainer: false,
+      }
+      nav.navigate(project, folderStack, selected)
+    } catch {
+      /* couldn't resolve the location — leave the user where they are */
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ListItem
+      sx={{ py: 0.5, '&:hover .goto-action': { opacity: 1 } }}
+      secondaryAction={
+        canNav ? (
+          <Tooltip title="Go to document">
+            <IconButton
+              className="goto-action"
+              size="small"
+              edge="end"
+              onClick={goTo}
+              disabled={busy}
+              sx={{ opacity: 0, transition: 'opacity 120ms' }}
+            >
+              {busy ? (
+                <CircularProgress size={14} />
+              ) : (
+                <FontAwesomeIcon icon={faLocationArrow} style={{ fontSize: 12 }} />
+              )}
+            </IconButton>
+          </Tooltip>
+        ) : undefined
+      }
+    >
+      <ListItemText
+        primary={r.designItemName || r.name}
+        secondary={[r.partNumber, r.material].filter(Boolean).join(' · ') || undefined}
+        primaryTypographyProps={{ variant: 'body2', noWrap: true }}
+        secondaryTypographyProps={{ variant: 'caption' }}
+        sx={{ pr: 4 }}
+      />
+    </ListItem>
   )
 }
 

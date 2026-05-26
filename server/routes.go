@@ -26,6 +26,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/where-used", s.handleWhereUsed)
 	mux.HandleFunc("GET /api/items/drawings", s.handleDrawings)
 	mux.HandleFunc("GET /api/items/classify", s.handleClassify)
+	mux.HandleFunc("GET /api/items/thumbnail", s.handleThumbnail)
+	mux.HandleFunc("GET /api/items/thumbnail/image", s.handleThumbnailImage)
+	mux.HandleFunc("GET /api/items/properties", s.handleProperties)
+
+	// Settings.
+	mux.HandleFunc("POST /api/settings/port", s.handleSetPort)
 
 	// Pins.
 	mux.HandleFunc("GET /api/pins", s.handlePinsList)

@@ -12,7 +12,10 @@ import type {
   Item,
   Location,
   Meta,
+  PhysicalProperties,
   Pin,
+  SetPortResponse,
+  Thumbnail,
 } from './types'
 
 export class ApiError extends Error {
@@ -56,6 +59,12 @@ const qs = (params: Record<string, string | undefined>): string => {
 export const api = {
   meta: () => request<Meta>('/api/meta'),
 
+  setPort: (port: number) =>
+    request<SetPortResponse>('/api/settings/port', {
+      method: 'POST',
+      body: JSON.stringify({ port }),
+    }),
+
   hubs: () => request<Item[]>('/api/hubs'),
 
   projects: (hubId: string) => request<Item[]>(`/api/projects${qs({ hubId })}`),
@@ -83,6 +92,12 @@ export const api = {
 
   classify: (cvId: string) =>
     request<Classify>(`/api/items/classify${qs({ cvId })}`),
+
+  thumbnail: (cvId: string) =>
+    request<Thumbnail>(`/api/items/thumbnail${qs({ cvId })}`),
+
+  properties: (cvId: string) =>
+    request<PhysicalProperties>(`/api/items/properties${qs({ cvId })}`),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

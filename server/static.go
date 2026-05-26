@@ -1,7 +1,6 @@
 package server
 
 import (
-	"embed"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -11,13 +10,18 @@ import (
 	"strings"
 )
 
-// webdistFS holds the built React/MUI SPA. The `all:` prefix embeds files whose
-// names start with `_` or `.` (Vite emits hashed asset chunks under assets/ and
-// the bundler may produce such names). A committed webdist/index.html
-// placeholder ensures a fresh checkout compiles before Vite has ever run.
+// The built React/MUI SPA is provided by embeddedFS(), whose implementation is
+// selected at compile time by a build tag:
 //
-//go:embed all:webdist
-var webdistFS embed.FS
+//   - static_embed.go (//go:build embed_ui) — embeds server/webdist via
+//     go:embed. `make build` runs `vite build` first, then `go build -tags
+//     embed_ui`, so the binary ships the real UI.
+//   - static_stub.go (//go:build !embed_ui) — serves a tiny "not built yet"
+//     shell from an in-memory FS, so a plain `go build` (and `go test`/`go vet`)
+//     compiles without server/webdist existing and without committing a
+//     placeholder that the build would clobber.
+//
+// The whole server/webdist/ tree is gitignored as pure build output.
 
 // defaultViteDevServer is the origin the dev reverse-proxy targets when
 // VITE_DEV_SERVER is unset.
@@ -38,7 +42,7 @@ func (s *Server) staticHandler() http.Handler {
 // (deep links) resolve to the SPA shell. /api routes never reach here — they
 // match more specific patterns on the mux.
 func (s *Server) embeddedHandler() http.Handler {
-	dist, err := fs.Sub(webdistFS, "webdist")
+	dist, err := embeddedFS()
 	if err != nil {
 		s.logger.Error("static: cannot open embedded webdist", "err", err)
 		return http.NotFoundHandler()

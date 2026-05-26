@@ -49,6 +49,26 @@ export function makeTheme(mode: ColorMode): Theme {
     },
     shape: { borderRadius: 6 },
     components: {
+      MuiCssBaseline: {
+        styleOverrides: {
+          // Theme the scrollbars so they match the palette instead of the OS
+          // default (desktop Chrome renders chunky light-grey bars otherwise).
+          // Firefox and Chromium 121+ honor the standard properties; the
+          // ::-webkit-* rules cover older/desktop Chrome and Safari.
+          '*': {
+            scrollbarColor: `${t.border} transparent`,
+            scrollbarWidth: 'thin',
+          },
+          '*::-webkit-scrollbar': { width: 10, height: 10 },
+          '*::-webkit-scrollbar-track': { backgroundColor: 'transparent' },
+          '*::-webkit-scrollbar-thumb': {
+            backgroundColor: t.border,
+            borderRadius: 8,
+          },
+          '*::-webkit-scrollbar-thumb:hover': { backgroundColor: t.textMuted },
+          '*::-webkit-scrollbar-corner': { backgroundColor: 'transparent' },
+        },
+      },
       MuiAppBar: {
         styleOverrides: {
           colorPrimary: { backgroundColor: t.bgPanel, color: t.textPrimary },

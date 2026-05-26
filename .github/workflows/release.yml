@@ -51,6 +51,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build embedded web UI
+        run: make web
+
       - name: Import signing certificate
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
@@ -94,9 +102,9 @@ jobs:
 
           mkdir -p build
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-            go build -ldflags "${LDFLAGS}" -o build/fusiondatacli-arm64 .
+            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusiondatacli-arm64 .
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
-            go build -ldflags "${LDFLAGS}" -o build/fusiondatacli-amd64 .
+            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusiondatacli-amd64 .
 
           lipo -create -output build/fusiondatacli \
             build/fusiondatacli-arm64 build/fusiondatacli-amd64

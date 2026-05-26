@@ -6,6 +6,13 @@ export interface Meta {
   region: string
   fusionEnabled: boolean
   stepEnabled: boolean
+  port: number
+  portConfigurable: boolean
+}
+
+export interface SetPortResponse {
+  port: number
+  restarting: boolean
 }
 
 export type ItemKind =
@@ -62,6 +69,31 @@ export interface Details {
   isMilestone: boolean
   rootComponentVersionId?: string
   versions: VersionSummary[]
+}
+
+// Thumbnail mirrors server.ThumbnailDTO. status is the async generation state
+// ("PENDING" | "SUCCESS" | "FAILED"); signedUrl is set only once SUCCESS.
+export interface Thumbnail {
+  status: string
+  signedUrl?: string
+}
+
+// Measure / PhysicalProperties mirror the v2 physical-properties DTOs.
+// status is "COMPLETED" | "FAILED" | (computing).
+export interface Measure {
+  display?: string
+  units?: string
+}
+
+export interface PhysicalProperties {
+  status: string
+  area: Measure
+  volume: Measure
+  mass: Measure
+  density: Measure
+  bboxLength: Measure
+  bboxWidth: Measure
+  bboxHeight: Measure
 }
 
 export interface ComponentRef {

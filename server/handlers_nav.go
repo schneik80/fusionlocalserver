@@ -11,10 +11,12 @@ import (
 // stubbed Fusion/STEP features are enabled (always false this iteration).
 func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MetaDTO{
-		Version:       s.opts.Version,
-		Region:        regionLabel(s.region),
-		FusionEnabled: false,
-		StepEnabled:   false,
+		Version:          s.opts.Version,
+		Region:           regionLabel(s.region),
+		FusionEnabled:    false,
+		StepEnabled:      false,
+		Port:             s.currentPort(),
+		PortConfigurable: s.portConfigurable,
 	})
 }
 

@@ -13,6 +13,10 @@ builds:
   - id: fusiondatacli
     main: .
     binary: fusiondatacli
+    # Embed the web UI (built by the `make web` before-hook above). Without this
+    # tag the binary compiles against the static_stub.go "not built" shell.
+    flags:
+      - -tags=embed_ui
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}

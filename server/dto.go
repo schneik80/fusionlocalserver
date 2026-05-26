@@ -18,6 +18,23 @@ type MetaDTO struct {
 	Region        string `json:"region"`
 	FusionEnabled bool   `json:"fusionEnabled"`
 	StepEnabled   bool   `json:"stepEnabled"`
+	// Port is the currently bound listen port. PortConfigurable reports whether
+	// it can be changed at runtime via POST /api/settings/port (false when
+	// -addr was passed explicitly or in dev mode).
+	Port             int  `json:"port"`
+	PortConfigurable bool `json:"portConfigurable"`
+}
+
+// SetPortRequest is the POST /api/settings/port body.
+type SetPortRequest struct {
+	Port int `json:"port"`
+}
+
+// SetPortResponse acknowledges a port change. Restarting is always true on
+// success — the listener rebinds, so the client must reconnect on the new port.
+type SetPortResponse struct {
+	Port       int  `json:"port"`
+	Restarting bool `json:"restarting"`
 }
 
 // ItemDTO mirrors api.NavItem — a navigable node (hub/project/folder/design/…).
@@ -112,9 +129,53 @@ type ClassifyDTO struct {
 	Subtype            string `json:"subtype"` // "assembly" | "part"
 }
 
+// ThumbnailDTO is the GET /api/items/thumbnail result. Generation is async, so
+// status is "PENDING" | "SUCCESS" | "FAILED"; signedUrl is populated only once
+// status is SUCCESS. The frontend polls while status is PENDING.
+type ThumbnailDTO struct {
+	Status    string `json:"status"`
+	SignedURL string `json:"signedUrl,omitempty"`
+}
+
+// MeasureDTO is one physical-property value (display string + unit).
+type MeasureDTO struct {
+	Display string `json:"display,omitempty"`
+	Units   string `json:"units,omitempty"`
+}
+
+// PhysicalPropertiesDTO mirrors api.PhysicalProperties — the GET
+// /api/items/properties result. Status is "COMPLETED" | "FAILED" | (computing).
+type PhysicalPropertiesDTO struct {
+	Status     string     `json:"status"`
+	Area       MeasureDTO `json:"area"`
+	Volume     MeasureDTO `json:"volume"`
+	Mass       MeasureDTO `json:"mass"`
+	Density    MeasureDTO `json:"density"`
+	BBoxLength MeasureDTO `json:"bboxLength"`
+	BBoxWidth  MeasureDTO `json:"bboxWidth"`
+	BBoxHeight MeasureDTO `json:"bboxHeight"`
+}
+
 // ---------------------------------------------------------------------------
 // Mappers
 // ---------------------------------------------------------------------------
+
+func measureDTO(m api.Measure) MeasureDTO {
+	return MeasureDTO{Display: m.Display, Units: m.Units}
+}
+
+func physicalPropertiesDTO(p *api.PhysicalProperties) PhysicalPropertiesDTO {
+	return PhysicalPropertiesDTO{
+		Status:     p.Status,
+		Area:       measureDTO(p.Area),
+		Volume:     measureDTO(p.Volume),
+		Mass:       measureDTO(p.Mass),
+		Density:    measureDTO(p.Density),
+		BBoxLength: measureDTO(p.BBoxLength),
+		BBoxWidth:  measureDTO(p.BBoxWidth),
+		BBoxHeight: measureDTO(p.BBoxHeight),
+	}
+}
 
 // fmtTime renders a timestamp as RFC3339, or "" when zero.
 func fmtTime(t time.Time) string {

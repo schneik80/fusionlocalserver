@@ -70,8 +70,11 @@ Package `server`, zero TUI deps, imports `api`/`auth`/`config`/`pins`.
 | `dto.go` | JSON DTOs + mappers from `api.*` (the api structs have no json tags). |
 | `respond.go` | `writeJSON`, `writeError`, status mapping. |
 | `middleware.go` | request logging, panic recovery, dev CORS. |
-| `static.go` | `go:embed all:webdist`, SPA fallback, dev disk/proxy mode. |
-| `webdist/` | embed target; commit a placeholder `index.html` so plain `go build` compiles. |
+| `static.go` | SPA fallback + dev disk/proxy mode; gets the SPA FS from `embeddedFS()`. |
+| `static_embed.go` / `static_stub.go` | build-tag split: `embed_ui` embeds `webdist` via `go:embed`; the default tag serves an in-memory "not built" stub so plain `go build` needs no `webdist/`. |
+| `webdist/` | `vite build` output; embedded only by `-tags embed_ui`. Entirely gitignored — nothing committed here. |
+| `settings.go` | `server.json` (port) load/save, separate from `config.json`. |
+| `handlers_settings.go` | `POST /api/settings/port` — persist port + trigger listener rebind. |
 
 ### A3. `TokenManager` (token.go) — the critical concurrency piece
 Reuses existing `auth` funcs (confirmed signatures): `auth.LoadTokens() (*TokenData, error)`
@@ -124,12 +127,17 @@ DTOs in `dto.go` mirror `api.NavItem`/`ItemDetails`/`VersionSummary`/`ComponentR
 and the inline `· asm`/`· part`/`· dwg` type tags. Reuse `pins.Pin` (already a JSON
 type) for pin responses.
 
-### A5. Static embedding (static.go)
-`//go:embed all:webdist` (the `all:` prefix embeds `_`/`.`-prefixed asset files).
-Production: serve embedded FS with SPA fallback (unknown non-`/api` path → `index.html`).
-`-dev`: serve `web/dist` from disk or reverse-proxy the Vite dev server (`:5173`) for HMR.
-Commit `server/webdist/index.html` placeholder so a fresh checkout compiles without
-running Vite; gitignore only the built `assets/`.
+### A5. Static embedding (build-tag split)
+The `//go:embed all:webdist` lives in `static_embed.go` behind `//go:build embed_ui`
+(the `all:` prefix embeds `_`/`.`-prefixed asset files). `static_stub.go` (`!embed_ui`)
+supplies an in-memory `index.html` stub instead, so plain `go build` / `go test` / `go vet`
+compile with **no** `server/webdist/` present and **nothing committed** there.
+`static.go` is tag-agnostic: it gets the SPA FS from `embeddedFS()`, serves it with SPA
+fallback (unknown non-`/api` path → `index.html`), and in `-dev` reverse-proxies the Vite
+dev server (`:5173`) for HMR. `make build`/`install` run `vite build` then
+`go build -tags embed_ui`; the whole `server/webdist/` tree is gitignored build output.
+This removes the old committed-placeholder dance (the placeholder and the build output
+were the same path, so every build dirtied the tree and had to be reverted before commit).
 
 ### A6. Logging (middleware.go)
 Use stdlib **`log/slog`** (text handler → stdout; no new deps). Request middleware logs
@@ -179,14 +187,17 @@ keyboard nav.
 
 ## Part C — Build system
 
-- Makefile: add `web` target (`cd web && npm install && npm run build`); make `build`
-  and `install` depend on `web`; keep existing `CLIENT_ID`/`REGION`/`VERSION` ldflags.
-- `dev` target stays Go-only (compiles against the committed `webdist/index.html`
-  placeholder); pair `./fusiondatacli -server -dev` with `cd web && npm run dev` for HMR.
-- `.gitignore`: ignore `server/webdist/assets/` and built artifacts, but **commit**
-  `server/webdist/index.html`. Verify no broad `**/dist` glob accidentally catches
-  `server/webdist`.
-- If releases use `.goreleaser.yaml`, add a `before` hook running `make web`.
+- Makefile: `web` target (`cd web && npm install && npm run build`); `build` and `install`
+  depend on `web` and compile with `-tags embed_ui`; keep existing
+  `CLIENT_ID`/`REGION`/`VERSION` ldflags.
+- `run` target: `build` then `./fusiondatacli -server` (binds `0.0.0.0:8080`; startup logs
+  the reachable LAN URLs). `make run ARGS="-addr 0.0.0.0:9000"` to override.
+- `dev` target stays Go-only and **untagged** (serves the stub UI); pair
+  `./fusiondatacli -server -dev` with `cd web && npm run dev` for HMR.
+- `.gitignore`: ignore the whole `server/webdist/` tree (pure build output); nothing is
+  committed there. Verify no broad `**/dist` glob misbehaves.
+- If releases use `.goreleaser.yaml`, the build hook must run `make web` and pass
+  `-tags embed_ui` to the Go build.
 
 ---
 
@@ -219,13 +230,27 @@ keyboard nav.
   the LAN (open-network decision) and that the no-auth warning is logged.
 - **TUI regression**: `./fusiondatacli` (no flag) still launches the TUI unchanged.
 
+## Follow-ups / TODO
+- **Thumbnail image proxy (fallback).** The Details panel thumbnail
+  (`GET /api/items/thumbnail` → `componentVersion.thumbnail{status,signedUrl}`,
+  in `api/thumbnail.go`) currently hands the APS **signed URL** straight to the
+  browser `<img>`, which loads it cross-origin from Autodesk's CDN. If that ever
+  fails (CORS/Referer rejection, signed-URL expiry while a tab stays open, or a
+  locked-down deployment), add a server-side proxy: a handler that fetches the
+  signed URL and streams the PNG bytes back through the Go server (reuse the
+  `DownloadFile` no-bearer pattern — signed URLs are self-authenticated, so the
+  user token must NOT be attached). The frontend would then point `<img>` at
+  `/api/items/thumbnail/image?cvId=…` instead of the raw signed URL.
+
 ## Critical files
 - `main.go` — add `-server`/`-addr`/`-dev` flag branch.
 - `auth/oauth.go`, `auth/tokens.go` — `Login`/`Refresh`/`LoadTokens`/`TokenData.Valid` wrapped by TokenManager.
 - `api/client.go` (+ `queries.go`, `details.go`, `refs.go`, `locate.go`, `classify.go`) — shared `httpClient`, `SetRegion`, wrapped funcs/types.
 - `pins/pins.go` — slice-functional pins API the pins endpoints wrap.
 - `Makefile` — `web` build target before `go build`, preserve ldflags.
-- New: `server/*.go`, `server/webdist/index.html` (placeholder), `web/` (Vite project).
+- New: `server/*.go` (incl. `static_embed.go`/`static_stub.go` build-tag split,
+  `settings.go`, `handlers_settings.go`), `web/` (Vite project). `server/webdist/` is
+  gitignored build output — nothing committed there.
 
 ## Notes to verify during implementation
 - Exact name of the drawing-source fetch func used by the polymorphic Uses tab (the TUI's Uses tab is `GetOccurrences` for designs, drawing-source for drawings) — confirm in `api/refs.go`.

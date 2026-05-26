@@ -14,7 +14,9 @@ import type {
   Item,
   Location,
   Meta,
+  PhysicalProperties,
   Pin,
+  Thumbnail,
 } from './types'
 
 // Data fetched here is effectively static for a browsing session, so cache
@@ -24,6 +26,12 @@ const STALE = 5 * 60 * 1000
 
 export const useMeta = (): UseQueryResult<Meta> =>
   useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity })
+
+// useSetPort persists a new listen port and triggers a server restart. There's
+// nothing to invalidate — the server rebinds and the caller reconnects on the
+// new port.
+export const useSetPort = () =>
+  useMutation({ mutationFn: (port: number) => api.setPort(port) })
 
 export const useHubs = (): UseQueryResult<Item[]> =>
   useQuery({ queryKey: ['hubs'], queryFn: api.hubs, staleTime: STALE })
@@ -77,6 +85,45 @@ export const useClassify = (cvId: string | undefined): UseQueryResult<Classify> 
     queryFn: () => api.classify(cvId!),
     enabled: !!cvId,
     staleTime: Infinity,
+  })
+
+// useThumbnail fetches a component version's thumbnail. APS generates it
+// asynchronously, so the first response may be PENDING with no URL; poll every
+// 2s until the status settles on SUCCESS or FAILED.
+export const useThumbnail = (
+  cvId: string | undefined,
+  enabled: boolean,
+): UseQueryResult<Thumbnail> =>
+  useQuery({
+    queryKey: ['thumbnail', cvId],
+    queryFn: () => api.thumbnail(cvId!),
+    enabled: enabled && !!cvId,
+    staleTime: Infinity,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      return s === 'SUCCESS' || s === 'FAILED' ? false : 2000
+    },
+  })
+
+// useProperties fetches a component version's physical (mass) properties.
+// Like thumbnails, generation is async, so poll every 2s until the status is
+// COMPLETED/FAILED — capped at ~15 polls so a stuck computation doesn't poll
+// forever.
+export const useProperties = (
+  cvId: string | undefined,
+  enabled: boolean,
+): UseQueryResult<PhysicalProperties> =>
+  useQuery({
+    queryKey: ['properties', cvId],
+    queryFn: () => api.properties(cvId!),
+    enabled: enabled && !!cvId,
+    staleTime: Infinity,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      if (s === 'COMPLETED' || s === 'FAILED') return false
+      if (q.state.dataUpdateCount >= 15) return false
+      return 2000
+    },
   })
 
 export const useUses = (args: {

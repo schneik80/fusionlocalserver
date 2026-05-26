@@ -20,20 +20,31 @@ var version = "dev"
 func main() {
 	var (
 		serverMode = flag.Bool("server", false, "run an HTTP server (web UI + JSON API) instead of the TUI")
-		addr       = flag.String("addr", "0.0.0.0:8080", "address to bind the server to (with -server)")
+		addr       = flag.String("addr", "0.0.0.0:8080", "bind address (with -server); overrides the configurable port setting")
 		dev        = flag.Bool("dev", false, "dev mode: proxy the web UI to the Vite dev server for HMR (with -server)")
 	)
 	flag.Parse()
+
+	// Whether -addr was given explicitly. When it was, it is authoritative and
+	// the runtime port setting is locked; otherwise the server derives the bind
+	// address from the persisted port (server.json), defaulting to :8080.
+	addrExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "addr" {
+			addrExplicit = true
+		}
+	})
 
 	cfg, cfgErr := config.Load()
 
 	if *serverMode {
 		if err := server.Run(server.Options{
-			Addr:    *addr,
-			Dev:     *dev,
-			Config:  cfg,
-			CfgErr:  cfgErr,
-			Version: version,
+			Addr:         *addr,
+			AddrExplicit: addrExplicit,
+			Dev:          *dev,
+			Config:       cfg,
+			CfgErr:       cfgErr,
+			Version:      version,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 			os.Exit(1)

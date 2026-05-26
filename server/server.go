@@ -6,12 +6,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -24,11 +26,15 @@ import (
 // Options configures a server run. Config may be nil when CfgErr is set (no
 // usable APS configuration); Bootstrap then fails fast with a clear message.
 type Options struct {
-	Addr    string
-	Dev     bool
-	Config  *config.Config
-	CfgErr  error
-	Version string
+	// Addr is the bind address from the -addr flag. It is authoritative only
+	// when AddrExplicit is true; otherwise the bind address is derived from the
+	// persisted port setting (server.json), defaulting to 0.0.0.0:8080.
+	Addr         string
+	AddrExplicit bool
+	Dev          bool
+	Config       *config.Config
+	CfgErr       error
+	Version      string
 }
 
 // Server holds the runtime state shared across handlers.
@@ -38,9 +44,38 @@ type Server struct {
 	tm     *TokenManager
 	region string // resolved APS region ("" == US)
 
+	// portConfigurable gates the runtime port-change endpoint. The port is
+	// only owned by the server when it derives the address itself — i.e. when
+	// -addr was not given explicitly and we are not in dev mode (where the
+	// Vite proxy is pinned to 8080).
+	portConfigurable bool
+
+	// restartCh signals the bind loop to drain the current listener and rebind
+	// from the updated port setting. Buffered (cap 1) so the handler never
+	// blocks; a pending restart coalesces.
+	restartCh chan struct{}
+
+	// addrMu guards addr, the currently bound address, read by handleMeta.
+	addrMu sync.RWMutex
+	addr   string
+
 	// pinsMu serialises the non-atomic Load->mutate->Save pin cycle.
 	pinsMu sync.Mutex
+
+	// thumbs caches thumbnail status/URLs and image bytes by component version
+	// id, shared across all clients. warmSem bounds background image prefetches
+	// kicked off from the classify probe.
+	thumbs  *thumbCache
+	warmSem chan struct{}
 }
+
+// serveReason explains why the inner serve loop returned.
+type serveReason int
+
+const (
+	reasonShutdown serveReason = iota // lifecycle context cancelled (SIGINT/TERM)
+	reasonRestart                     // port changed; rebind the listener
+)
 
 // Run starts the HTTP server and blocks until it shuts down (SIGINT/SIGTERM)
 // or fails to start. It performs the one-time interactive auth bootstrap
@@ -66,10 +101,14 @@ func Run(opts Options) error {
 	}
 
 	s := &Server{
-		opts:   opts,
-		logger: logger,
-		tm:     NewTokenManager(clientID, clientSecret, logger),
-		region: region,
+		opts:             opts,
+		logger:           logger,
+		tm:               NewTokenManager(clientID, clientSecret, logger),
+		region:           region,
+		portConfigurable: !opts.AddrExplicit && !opts.Dev,
+		restartCh:        make(chan struct{}, 1),
+		thumbs:           newThumbCache(512, 10*time.Minute),
+		warmSem:          make(chan struct{}, 12),
 	}
 
 	// Authenticate before serving. A generous window covers an interactive
@@ -86,39 +125,159 @@ func Run(opts Options) error {
 
 	s.tm.StartRefresher(ctx)
 
-	srv := &http.Server{
-		Addr:              opts.Addr,
-		Handler:           s.routes(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	logger.Info("server starting",
-		"addr", opts.Addr,
-		"version", opts.Version,
-		"region", regionLabel(region),
-		"dev", opts.Dev,
-	)
-	warnOpenNetwork(logger, opts.Addr)
-
-	// Trigger graceful shutdown when the lifecycle context is cancelled.
-	shutdownDone := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		logger.Info("shutdown signal received, draining connections")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logger.Error("graceful shutdown failed", "err", err)
+	// Listener (re)bind loop. Auth + the token refresher above are set up once
+	// and span restarts; only the HTTP listener is recreated. A runtime port
+	// change (POST /api/settings/port) writes server.json and signals
+	// restartCh, dropping us out of serveUntil with reasonRestart so we rebind
+	// on the new port.
+	var prevAddr string // last successfully-served address; "" until first bind
+	for {
+		// If shutdown was requested (possibly while a restart was also pending,
+		// where select could have picked the restart), bail before rebinding.
+		select {
+		case <-ctx.Done():
+			logger.Info("server stopped")
+			return nil
+		default:
 		}
-		close(shutdownDone)
+
+		addr := s.resolveAddr()
+		s.setAddr(addr)
+
+		srv := &http.Server{
+			Addr:              addr,
+			Handler:           s.routes(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+
+		logger.Info("server starting",
+			"addr", addr,
+			"version", opts.Version,
+			"region", regionLabel(region),
+			"dev", opts.Dev,
+			"portConfigurable", s.portConfigurable,
+		)
+		warnOpenNetwork(logger, addr)
+		for _, u := range lanURLs(addr) {
+			logger.Info("reachable on the LAN", "url", u)
+		}
+
+		reason, err := s.serveUntil(ctx, srv)
+		if err != nil {
+			if prevAddr == "" {
+				return fmt.Errorf("http server: %w", err) // initial bind failed → fatal
+			}
+			// A runtime rebind failed — most likely the new port was taken in
+			// the TOCTOU window after the handler's bind pre-check. Revert the
+			// persisted port and keep serving on the previous one rather than
+			// killing the server out from under the operator. The previous port
+			// is free again (its listener was drained when the restart fired).
+			logger.Error("rebind failed; reverting to previous port",
+				"failed_addr", addr, "prev_addr", prevAddr, "err", err)
+			if p, perr := portFromAddr(prevAddr); perr == nil {
+				if serr := SaveSettings(Settings{Port: p}); serr != nil {
+					logger.Error("reverting persisted port failed", "err", serr)
+				}
+			}
+			continue
+		}
+		if reason == reasonShutdown {
+			logger.Info("server stopped")
+			return nil
+		}
+		prevAddr = addr
+		logger.Info("port changed — restarting listener", "next_addr", s.resolveAddr())
+	}
+}
+
+// serveUntil runs srv until the lifecycle context is cancelled (shutdown) or a
+// restart is requested, draining connections gracefully in both cases. A
+// ListenAndServe failure (e.g. the port is already in use) is returned as a
+// terminal error.
+func (s *Server) serveUntil(ctx context.Context, srv *http.Server) (serveReason, error) {
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errCh <- err
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("http server: %w", err)
+	select {
+	case <-ctx.Done():
+		s.drain(srv)
+		return reasonShutdown, <-errCh
+	case <-s.restartCh:
+		s.drain(srv)
+		return reasonRestart, <-errCh
+	case err := <-errCh:
+		// ListenAndServe returned on its own — a bind failure or other fatal
+		// error (a clean shutdown would have come via the cases above).
+		return reasonShutdown, err
 	}
-	<-shutdownDone
-	logger.Info("server stopped")
-	return nil
+}
+
+// drain gracefully shuts down srv, waiting up to 10s for in-flight requests
+// (including the just-sent port-change response) to complete.
+func (s *Server) drain(srv *http.Server) {
+	s.logger.Info("draining connections")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		s.logger.Error("graceful shutdown failed", "err", err)
+	}
+}
+
+// resolveAddr computes the bind address. The persisted port (server.json) is
+// consulted only when the server owns the port — i.e. portConfigurable. When
+// -addr was explicit, or in dev mode (where the Vite proxy is pinned to the
+// flag's :8080), the flag value is used verbatim and server.json is ignored.
+func (s *Server) resolveAddr() string {
+	if !s.portConfigurable {
+		return s.opts.Addr
+	}
+	port := defaultPort
+	if set, err := LoadSettings(); err != nil {
+		s.logger.Warn("settings load failed; using default port", "err", err, "port", defaultPort)
+	} else if set.Port != 0 {
+		port = set.Port
+	}
+	return fmt.Sprintf("0.0.0.0:%d", port)
+}
+
+func (s *Server) setAddr(addr string) {
+	s.addrMu.Lock()
+	s.addr = addr
+	s.addrMu.Unlock()
+}
+
+// currentPort returns the port of the currently bound address, or 0 if it
+// can't be parsed.
+func (s *Server) currentPort() int {
+	s.addrMu.RLock()
+	addr := s.addr
+	s.addrMu.RUnlock()
+	p, _ := portFromAddr(addr)
+	return p
+}
+
+// portFromAddr extracts the numeric port from a host:port address.
+func portFromAddr(addr string) (int, error) {
+	_, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(p)
+}
+
+// requestRestart asks the bind loop to rebind. Non-blocking: a pending restart
+// coalesces rather than queuing.
+func (s *Server) requestRestart() {
+	select {
+	case s.restartCh <- struct{}{}:
+	default:
+	}
 }
 
 // regionLabel renders the region for display/logging; empty maps to "US".
@@ -127,6 +286,41 @@ func regionLabel(region string) string {
 		return "US"
 	}
 	return region
+}
+
+// lanURLs returns the browser URLs the server is reachable at. When bound to a
+// wildcard host it enumerates the machine's non-loopback IPv4 interface
+// addresses so an operator can copy a LAN URL straight from the startup log.
+func lanURLs(addr string) []string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return []string{"http://" + addr}
+	}
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		return []string{"http://" + net.JoinHostPort(host, port)}
+	}
+
+	urls := []string{"http://" + net.JoinHostPort("localhost", port)}
+	ifaceAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return urls
+	}
+	for _, a := range ifaceAddrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			urls = append(urls, "http://"+net.JoinHostPort(ip4.String(), port))
+		}
+	}
+	return urls
 }
 
 // warnOpenNetwork emits a visible warning when the server is bound to a

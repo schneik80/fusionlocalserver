@@ -1,0 +1,67 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/schneik80/FusionDataCLI/config"
+)
+
+// defaultPort is the bind port when none is configured and -addr is not set.
+const defaultPort = 8080
+
+// Settings holds web-server runtime preferences that a user can change at
+// runtime (currently just the listen port). It is stored separately from
+// config.json — that file holds the APS identity (client_id/region) and has
+// strict load rules — so persisting a port never entangles with auth config,
+// and the TUI ignores it entirely.
+type Settings struct {
+	Port int `json:"port,omitempty"`
+}
+
+// settingsPath is ~/.config/fusiondatacli/server.json. config.Dir creates the
+// directory if needed.
+func settingsPath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "server.json"), nil
+}
+
+// LoadSettings reads server.json. A missing file is not an error — it returns
+// the zero Settings (Port 0 → caller falls back to defaultPort).
+func LoadSettings() (Settings, error) {
+	var s Settings
+	path, err := settingsPath()
+	if err != nil {
+		return s, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return s, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return s, nil
+}
+
+// SaveSettings writes server.json (0600, owner-only).
+func SaveSettings(s Settings) error {
+	path, err := settingsPath()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
