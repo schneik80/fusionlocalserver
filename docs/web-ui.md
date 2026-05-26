@@ -68,7 +68,9 @@ same-origin, so repeat views are instant.
 
 ## Hubs, Pins, Settings
 
-- **Hubs** (rail or the header chip) — switch the active hub.
+- **Hubs** (rail or the header chip) — switch the active hub. Your last hub is
+  remembered in this browser and reselected on return (if you still have access
+  to it).
 - **Pins** — bookmark a project, folder, or document for fast access; pins are
   scoped per hub and persisted on the server.
 - **Settings** — Light/Dark/System **theme** (stored in your browser), the APS

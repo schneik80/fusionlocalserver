@@ -113,9 +113,12 @@ request context. Handlers read it via the unchanged `s.token(ctx, …)` helper. 
   concurrent requests on the same session perform **at most one** refresh and
   the rest observe the freshly-minted token. Unrelated sessions never block each
   other.
-- **In-memory only.** A full process restart logs everyone out; a runtime port
-  rebind does not (the store outlives the listener). Persistence is deferred —
-  see [`SECURITY-TODO.md`](../SECURITY-TODO.md).
+- **Persisted, encrypted.** The store is mirrored to
+  `~/.config/fusionlocalserver/sessions.enc` (AES-256-GCM, key in `session.key`
+  mode 0600), written on create/delete/sweep and after a refresh and reloaded at
+  startup — so a restart no longer logs everyone out (expired sessions are
+  dropped on load). This is encryption-at-rest of refresh tokens, not OS-keychain
+  storage; see [`SECURITY-TODO.md`](../SECURITY-TODO.md).
 
 ```mermaid
 sequenceDiagram
@@ -147,9 +150,10 @@ sequenceDiagram
   cross-site navigation from `autodesk.com`, which `Strict` would drop.
 - **`Secure`** — set from `r.TLS` (or `X-Forwarded-Proto: https`). Over plain HTTP
   it is therefore **off**, because browsers refuse to store `Secure` cookies on
-  `http://`. The same binary auto-hardens when reached over HTTPS. Until then a
-  wire sniffer on the LAN could capture a cookie and hijack a session — run on a
-  trusted LAN or front with TLS.
+  `http://`. Run with **`-tls`** (or behind a TLS-terminating proxy) and the same
+  binary auto-hardens — the cookie becomes `Secure` and the redirect_uri scheme
+  becomes `https`. On plain HTTP a wire sniffer on the LAN could capture a cookie
+  and hijack a session, so run on a trusted LAN or enable TLS.
 
 ---
 

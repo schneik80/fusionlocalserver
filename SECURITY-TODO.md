@@ -18,13 +18,18 @@ obviated most of the rest. This file tracks what remains.
   TUI dropped the last third-party dependency. The module is now pure Go
   standard library (no `go.sum`).
 - [x] **L4. Bump the `go` directive.** Now `go 1.23`.
+- [x] **TLS / `Secure` cookie.** `-tls` serves HTTPS (self-signed cert
+  auto-generated/cached, or bring your own via `-tls-cert`/`-tls-key`); the
+  session cookie's `Secure` flag is driven by `r.TLS`, so it is set whenever a
+  request arrives over HTTPS. Closes the plaintext-cookie-sniffing exposure on
+  the LAN when `-tls` (or a TLS-terminating front) is used.
+- [x] **Session persistence across restarts.** Sessions are mirrored to
+  `~/.config/fusionlocalserver/sessions.enc`, AES-256-GCM encrypted under a key
+  file (`session.key`, 0600). This is encryption-at-rest of the refresh tokens,
+  not OS-keychain storage (see below).
 
 ## Obviated by the architecture change
 
-- **L1. Tokens at rest.** There is no longer an on-disk token file. Each user's
-  tokens live only in the server's in-memory session store, so the
-  keychain-vs-plaintext question no longer applies. (See the new "session
-  persistence" item below.)
 - **L2 / L5. `OpenBrowser` URL-scheme validation / error surfacing.** The server
   no longer opens a browser on the host (`OpenBrowser` was deleted with the
   loopback login). Each user authenticates in their own browser.
@@ -34,15 +39,12 @@ obviated most of the rest. This file tracks what remains.
 - [ ] **APS app callback registration.** The login flow derives `redirect_uri`
   from the request origin (`<scheme>://<host>/api/auth/callback`). APS requires
   each such origin to be registered as an exact-match Callback URL (no
-  wildcards), and the runtime port-change feature multiplies the set. Tracked
-  with the broader "APS client_id/secret provisioning" work, which is out of
-  scope for the refactor.
-- [ ] **TLS / `Secure` cookie.** The LAN listener is plain HTTP, so the session
-  cookie cannot be `Secure` (browsers drop `Secure` cookies over `http://`) and
-  a wire sniffer could hijack a session. The cookie already sets `Secure` from
-  `r.TLS`, so fronting the server with TLS (or adding a TLS listener) closes
-  this with no code change to the cookie logic.
-- [ ] **Session persistence across restarts.** Sessions are in-memory, so a full
-  process restart logs everyone out (a runtime port rebind does not). Encrypted
-  at-rest session persistence would survive restarts; weigh against the added
-  complexity of protecting tokens on disk.
+  wildcards): `localhost` ≠ `127.0.0.1`, each LAN IP is separate, and the
+  runtime port-change and `-tls` (https) features multiply the set. Tracked with
+  the broader "APS client_id/secret provisioning" work, which is out of scope
+  for the refactor.
+- [ ] **Stronger token-at-rest (L1).** Persisted sessions are AES-256-GCM
+  encrypted, but the key sits beside the data (`session.key`, 0600) — this
+  defends a casual file read, not an attacker with the user's home directory. OS
+  keychain / DPAPI / secret-service storage of the key (or the sessions) would
+  be stronger.

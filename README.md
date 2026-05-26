@@ -23,7 +23,7 @@ reachable on the LAN  url=http://192.168.1.50:8080
 
 Open one of those URLs in a browser and click **Sign in with Autodesk**. Each visitor authenticates with their own Autodesk account; the server holds their tokens in a per-session store keyed by an `HttpOnly` cookie, and proxies their data calls under their own identity. Tokens never reach the browser's JavaScript.
 
-> ⚠️ **Plain HTTP on the LAN.** The session cookie is not marked `Secure` (browsers drop `Secure` cookies over `http://`), so anyone able to sniff the wire could capture a cookie and hijack that user's session until it expires. Run on a trusted LAN, or put a TLS-terminating proxy in front (the cookie auto-upgrades to `Secure` when the request arrives over HTTPS). A warning is logged whenever the server binds a non-loopback address.
+> ⚠️ **Plain HTTP on the LAN.** Without `-tls` the session cookie is not marked `Secure` (browsers drop `Secure` cookies over `http://`), so anyone able to sniff the wire could capture a cookie and hijack that user's session until it expires. Use **`-tls`** (below) or front the server with a TLS-terminating proxy; the cookie automatically becomes `Secure` once requests arrive over HTTPS. A warning is logged when the server binds a non-loopback address over plain HTTP.
 
 ### Flags & settings
 
@@ -31,8 +31,11 @@ Open one of those URLs in a browser and click **Sign in with Autodesk**. Each vi
 |------|---------|---------|
 | `-v` | off | Verbose logging: debug level to the console **and** the log file, including a line per request and (redacted) upstream API traces |
 | `-dev` | off | Developer mode: reverse-proxy the web UI to the Vite dev server for HMR instead of serving the embedded build |
+| `-tls` | off | Serve over HTTPS so the session cookie is `Secure`. With no cert given, a self-signed one is generated and cached under `~/.config/fusionlocalserver/` (browsers warn once); use `-tls-cert`/`-tls-key` to supply your own PEM pair. The OAuth callback then becomes `https://…/api/auth/callback` — register it on the APS app. |
 
 The listen **port is configurable at runtime** from the web UI's Settings dialog (persisted to `~/.config/fusionlocalserver/server.json`). Changing it restarts the listener in place; the page then reconnects on the new port. The port field is read-only in `-dev` mode (where the Vite proxy is pinned to the default port).
+
+Sessions are kept in an encrypted file (`~/.config/fusionlocalserver/sessions.enc`), so a server restart no longer logs everyone out. Each browser also remembers its last-used hub.
 
 Logs go to the console and to `~/.config/fusionlocalserver/server.log`. The default level is essential-only; `-v` adds the per-request and upstream-trace detail.
 
