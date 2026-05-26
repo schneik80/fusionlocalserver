@@ -4,10 +4,19 @@
 export interface Meta {
   version: string
   region: string
-  fusionEnabled: boolean
-  stepEnabled: boolean
   port: number
   portConfigurable: boolean
+}
+
+// AuthMe mirrors server.AuthMeDTO (GET /api/auth/me): the login-state probe.
+export interface AuthUser {
+  name: string
+  email: string
+}
+
+export interface AuthMe {
+  authenticated: boolean
+  user?: AuthUser
 }
 
 export interface SetPortResponse {

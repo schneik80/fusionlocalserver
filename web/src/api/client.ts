@@ -4,6 +4,7 @@
 // always travel as query params, never path segments.
 
 import type {
+  AuthMe,
   Classify,
   ComponentRef,
   Contents,
@@ -27,9 +28,21 @@ export class ApiError extends Error {
   }
 }
 
+// redirectToLogin sends the browser into the OAuth flow when a data call comes
+// back 401 (session lost or expired). Guarded so a burst of parallel 401s only
+// navigates once. A full navigation (not fetch) is required so the browser
+// follows the server's 302 to Autodesk and accepts the Set-Cookie.
+let redirecting = false
+function redirectToLogin() {
+  if (redirecting) return
+  redirecting = true
+  window.location.assign('/api/auth/login')
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     ...init,
   })
   if (!res.ok) {
@@ -40,6 +53,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* non-JSON error body — keep the generic message */
     }
+    // A 401 on a data call means the session is gone; bounce to login. The
+    // /api/auth/me probe never 401s (it returns 200 with authenticated:false),
+    // so this can't loop on the login gate.
+    if (res.status === 401) redirectToLogin()
     throw new ApiError(res.status, msg)
   }
   // 204/empty bodies shouldn't happen on our GET endpoints, but guard anyway.
@@ -58,6 +75,10 @@ const qs = (params: Record<string, string | undefined>): string => {
 
 export const api = {
   meta: () => request<Meta>('/api/meta'),
+
+  authMe: () => request<AuthMe>('/api/auth/me'),
+
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
   setPort: (port: number) =>
     request<SetPortResponse>('/api/settings/port', {

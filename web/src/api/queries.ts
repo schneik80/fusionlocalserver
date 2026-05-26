@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-query'
 import { api } from './client'
 import type {
+  AuthMe,
   Classify,
   ComponentRef,
   Contents,
@@ -26,6 +27,12 @@ const STALE = 5 * 60 * 1000
 
 export const useMeta = (): UseQueryResult<Meta> =>
   useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity })
+
+// useAuthMe drives the login gate. It is volatile (logout / session expiry),
+// so unlike the browsing data it isn't cached long and doesn't retry — a clean
+// "not authenticated" answer should render the login screen immediately.
+export const useAuthMe = (): UseQueryResult<AuthMe> =>
+  useQuery({ queryKey: ['authMe'], queryFn: api.authMe, staleTime: 0, retry: false })
 
 // useSetPort persists a new listen port and triggers a server restart. There's
 // nothing to invalidate — the server rebinds and the caller reconnects on the

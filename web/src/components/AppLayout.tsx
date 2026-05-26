@@ -1,5 +1,10 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCubes, faMoon, faSun } from '@fortawesome/free-solid-svg-icons'
+import {
+  faCubes,
+  faMoon,
+  faRightFromBracket,
+  faSun,
+} from '@fortawesome/free-solid-svg-icons'
 import {
   AppBar,
   Box,
@@ -10,7 +15,8 @@ import {
   Typography,
 } from '@mui/material'
 import { useState } from 'react'
-import { useMeta } from '../api/queries'
+import { api } from '../api/client'
+import { useAuthMe, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { useNav } from '../state/nav'
 import { BreadcrumbBar } from './BreadcrumbBar'
@@ -26,7 +32,18 @@ export function AppLayout() {
   const [dialog, setDialog] = useState<DialogKind>(null)
   const nav = useNav()
   const metaQ = useMeta()
+  const authQ = useAuthMe()
   const { mode, toggle } = useColorMode()
+
+  // logout drops the server session, then reloads at the root so the gate
+  // re-evaluates and shows the login screen.
+  const logout = async () => {
+    try {
+      await api.logout()
+    } finally {
+      window.location.assign('/')
+    }
+  }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -54,6 +71,16 @@ export function AppLayout() {
           <Tooltip title={mode === 'dark' ? 'Switch to light' : 'Switch to dark'}>
             <IconButton aria-label="Toggle theme" onClick={toggle} sx={{ color: 'text.secondary' }}>
               <FontAwesomeIcon icon={mode === 'dark' ? faSun : faMoon} style={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+          {authQ.data?.user && (authQ.data.user.name || authQ.data.user.email) && (
+            <Typography variant="caption" color="text.secondary">
+              {authQ.data.user.name || authQ.data.user.email}
+            </Typography>
+          )}
+          <Tooltip title="Sign out">
+            <IconButton aria-label="Sign out" onClick={logout} sx={{ color: 'text.secondary' }}>
+              <FontAwesomeIcon icon={faRightFromBracket} style={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         </Toolbar>
