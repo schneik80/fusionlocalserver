@@ -81,11 +81,8 @@ const (
 // or fails to start. It performs the one-time interactive auth bootstrap
 // before binding the listener, so any browser login happens up front.
 func Run(opts Options) error {
-	level := slog.LevelInfo
-	if opts.Verbose {
-		level = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	logger, closeLog := setupLogging(opts.Verbose)
+	defer closeLog()
 
 	var clientID, clientSecret, region string
 	if opts.Config != nil {

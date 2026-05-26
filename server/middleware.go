@@ -46,7 +46,9 @@ func (sr *statusRecorder) Flush() {
 	}
 }
 
-// logRequest logs one structured line per request after it completes.
+// logRequest logs one structured line per request after it completes. It logs
+// at debug level, so the per-request stream is off by default and appears only
+// under -v; essential lines (startup, warnings, errors) stay at info and above.
 func (s *Server) logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -55,7 +57,7 @@ func (s *Server) logRequest(next http.Handler) http.Handler {
 		if rec.status == 0 {
 			rec.status = http.StatusOK
 		}
-		s.logger.Info("request",
+		s.logger.Debug("request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"query", r.URL.RawQuery,
