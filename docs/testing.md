@@ -2,7 +2,7 @@
 
 How the fusionlocalserver test suite is structured, how to run it, and how to add a new test that fits the existing pattern.
 
-The suite is small (finishes under five seconds with `-race`) but covers the full vertical slice from pure helpers up through Bubble Tea state-machine transitions driven against a fake APS server. The `-server` package adds its own focused tests (settings persistence, the token manager, the thumbnail cache, and a thumbnail handler) alongside the shared layers it reuses.
+The suite is small (finishes under five seconds with `-race`) but covers the full vertical slice from pure helpers up through HTTP integration against a fake APS server. The `server` package adds its own focused tests (per-user auth and session lifecycle, settings persistence, the thumbnail cache, and a thumbnail handler) alongside the shared layers it reuses.
 
 ---
 
@@ -29,48 +29,43 @@ flowchart LR
 
 ---
 
-## Three-layer architecture
+## Two-layer architecture
 
-Tests live alongside the code they exercise (`*_test.go` files) and fall into three layers. Each layer answers a different question; together they cover the same flow at different fidelities so failures point at the smallest broken piece.
+Tests live alongside the code they exercise (`*_test.go` files) and fall into two layers. Each layer answers a different question; together they cover the same flow at different fidelities so failures point at the smallest broken piece.
 
 | Layer | Question it answers | Example |
 |-------|--------------------|---------|
-| **L1 — pure unit** | "Does this helper return the right output for the right input?" | `formatSize`, `truncate`, `parseTime`, `verifierToChallenge`, `navItemFromTypename` |
-| **L2 — HTTP integration** | "Does this code make the right HTTP request and parse the response correctly?" | `gqlQuery` against a fake GraphQL server, `Login` against a fake auth server, MCP retry against a fake MCP server |
-| **L3 — TUI flow** | "When the user does X, does the right state transition happen and the right Cmd fire?" | `Update(KeyMsg{Right})` produces a `loadProjectContentsCmd` that flows through `api.GetFolders` + `api.GetProjectItems` against a mocked APS endpoint and yields a `contentsLoadedMsg` with the right items |
+| **L1 — pure unit** | "Does this helper return the right output for the right input?" | `formatSize`, `truncate`, `parseTime`, `verifierToChallenge`, `navItemFromTypename`, `randToken`, `redactSignedURLs` |
+| **L2 — HTTP integration** | "Does this code make the right HTTP request / handle the right HTTP request and parse the response correctly?" | `gqlQuery` against the fake APS GraphQL server, `ExchangeCode`/`Refresh` against a fake token endpoint, the server's `requireAuth`, login-redirect, and OAuth-callback handlers driven through `httptest` |
 
-L1 tests are the bulk of the suite. L2 tests catch wire-format bugs (wrong field name, wrong query shape, wrong header). L3 tests catch state-machine bugs (wrong command fired, wrong message handled). Each L3 test typically replaces what would otherwise be a manual test session.
+L1 tests are the bulk of the suite. L2 tests catch wire-format bugs (wrong field name, wrong query shape, wrong header) on the outbound side and request-handling bugs (wrong status, missing cookie, state mismatch) on the inbound `server` side.
 
 ```mermaid
 graph TD
-    L1["L1: pure unit\n~50 tests · plain testing.T"]
-    L2["L2: HTTP integration\n~25 tests · httptest fakes"]
-    L3["L3: TUI flow\n~10 tests · Update / View"]
+    L1["L1: pure unit\nplain testing.T"]
+    L2["L2: HTTP integration\nhttptest fakes (outbound + inbound)"]
 
-    L1 --> Cov[total ~43% line coverage]
+    L1 --> Cov[total line coverage]
     L2 --> Cov
-    L3 --> Cov
 ```
 
 ### Coverage expectations
 
-| Package | Floor (CI fails below) | Current |
+| Package | Floor (CI fails below) | What it covers |
 |---|---|---|
-| `config` | 80% | 90.6% |
-| `auth` | 70% | 73.9% |
-| `fusion` | 75% | 84.2% |
-| `api` | 65% | ~70% |
-| `pins` | 70% | ~85% |
-| `ui` | 30% | ~40% |
-<!-- TODO(rebrand): add a `server` coverage row once a floor/current figure is established for the new server package. -->
+| `config` | 80% | config dir/path resolution, region + legacy migration |
+| `auth` | 60% | PKCE generation, auth-URL building, code exchange (public + confidential clients), token refresh, token validity |
+| `api` | 65% | GraphQL client (queries, refs, classify, details, locate, thumbnail, properties), retry loop, signed-URL redaction |
+| `pins` | 70% | pin add/remove/list persistence |
+| `server` | 25% | per-user auth + session lifecycle (`requireAuth`, login/callback/logout, single-flight token refresh), settings persistence, thumbnail cache + handler |
 
-UI is intentionally lower because View() rendering is exercised by humans; the L3 tests cover the state-machine transitions that *drive* View() but don't assert on the styled output. Don't chase UI coverage by writing pixel-snapshot tests — they break on every theme tweak and don't catch logic bugs.
+The `server` floor is intentionally lower than the data-layer packages: a large fraction of its statements are the SPA file-serving / dev-proxy plumbing and the top-level serve loop, which are exercised by hand rather than in unit tests. The tested *logic* (auth, sessions, settings, thumbcache) is well-covered; don't chase the package number by asserting on static-asset wiring.
 
 ---
 
 ## Shared fixtures: `internal/testutil/`
 
-Two helpers live in `internal/testutil/`. Both auto-clean via `t.Cleanup`, so callers don't have to defer anything.
+A single helper lives in `internal/testutil/` (`graphql.go`). It auto-cleans via `t.Cleanup`, so callers don't have to defer anything.
 
 ### `GraphQLServer(t, handler)` — fake APS GraphQL endpoint
 
@@ -93,23 +88,9 @@ swapEndpoint(t, srv.URL)   // helper inside api/ that overwrites graphqlEndpoint
 
 `GraphQLRequest` exposes the decoded `{Query, Variables}` plus the captured `Authorization` and `X-Ads-Region` headers. `GraphQLResponse` lets you set `Data`, `Errors`, `Status`, or `RawBody` (raw body wins, used for malformed-response tests). The server defaults to `200 OK` on the response; use the `Status` field to send `401`, `5xx`, etc.
 
-Used by `auth/oauth_test.go`, every `api/*_test.go`, and `ui/app_test.go` (via `api.SetGraphqlEndpointForTesting`).
+Used by every `api/*_test.go` (the `api` package's same-package tests write `graphqlEndpoint` directly).
 
-### `NewMCPServer(t, scenario)` — fake Fusion MCP JSON-RPC server
-
-```go
-mcp := testutil.NewMCPServer(t, testutil.MCPScenario{
-    SessionID: "sid-123",
-    Tools: map[string]testutil.MCPHandler{
-        "fusion_mcp_execute": func(args map[string]any) testutil.MCPResponse {
-            return testutil.MCPResponse{ContentText: `{"success": true}`}
-        },
-    },
-})
-client := fusion.NewClientForTesting(mcp.URL)
-```
-
-Tracks per-tool call counts, init counts, and session-ID arrival order so tests can assert on session-cache and retry behaviour. Used by `fusion/mcp_test.go` and `ui/app_test.go` for the open/insert flows.
+The fake APS token / userinfo endpoints used by `auth/*_test.go` and the fake auth indirections used by `server/*_test.go` are plain `httptest.Server`s spun up inline in those test files rather than shared helpers; the `server` tests more commonly swap the `authExchange` / `authRefresh` / `authUserInfo` package vars (see below) so they never touch the network at all.
 
 ---
 
@@ -121,15 +102,17 @@ Several production endpoints and clock dependencies are declared as package-leve
 |--------|---------|---------------|
 | `graphqlEndpoint` | `api/client.go` | Point at `httptest.Server.URL` |
 | `retryBackoffs` | `api/client.go` | Replace with millisecond delays so retry tests run instantly |
-| `authEndpoint`, `tokenEndpoint`, `authScope` | `auth/oauth.go` | Point at fake auth server |
-| `callbackPort`, `CallbackURL` | `auth/callback.go` | Set to `0` so the kernel assigns an ephemeral port; rewrite `CallbackURL` to the resolved address |
-| `userHomeDir`, `nowFunc` | `api/download.go` | Stub home dir to `t.TempDir()`; freeze the clock for deterministic STEP-path output |
+| `tokenEndpoint`, `authEndpoint`, `authScope` | `auth/oauth.go` | Point at a fake token endpoint for code-exchange / refresh tests |
+| `userInfoEndpoint` | `auth/userinfo.go` | Point at a fake userinfo endpoint for `FetchUserProfile` tests |
+| `authExchange`, `authRefresh`, `authUserInfo` | `server/auth.go` | Indirections over the `auth` package (`auth.ExchangeCode` / `auth.Refresh` / `auth.FetchUserProfile`) — swap to stubs so handler and session tests exercise the callback/refresh logic without hitting the network |
+
+Time is injected where it matters rather than via a global clock: the `SessionStore`'s expiry check takes an explicit `now time.Time`, and session/pending tests construct entries with chosen timestamps and short TTLs to drive idle / absolute expiry and the single-use pending path deterministically.
 
 This is the convention to follow when adding a new external dependency or non-deterministic input that needs to be mockable.
 
 ### Cross-package endpoint swapping
 
-Same-package tests can write the `var` directly. Cross-package tests (notably `ui/` flow tests that drive a `tea.Cmd` which calls into `api`) must use the exported helper:
+Same-package tests can write the `var` directly. Cross-package callers use the exported helper:
 
 ```go
 restore := api.SetGraphqlEndpointForTesting(srv.URL)
@@ -144,12 +127,11 @@ This returns a closure that restores the prior value, so parallel-safe `t.Cleanu
 
 | Pattern | Used for | Example |
 |---|---|---|
-| `TestThing_DoesX` | Pure unit on `Thing` | `TestNavItemFromTypename`, `TestSanitizeHubID` |
-| `TestFunc_HappyPath` | The clean success path | `TestGqlQuery_HappyPath`, `TestClassifyAssembly_Part` |
-| `TestFunc_<Edge>` | A specific edge case | `TestGqlQuery_401_Wraps`, `TestClassifyAssembly_EmptyID`, `TestMigrateLegacy_DropsHubless` |
-| `TestUpdate_<Msg>_<Effect>` | Bubble Tea Update on a specific message | `TestUpdate_TabSelect_DispatchesLoad`, `TestUpdate_ItemClassified_StaleGenDropped`, `TestUpdate_ContentsLoaded_FansOutClassifyCmds` |
-| `TestHandle<X>_<Effect>` | A direct call to a handler method | `TestHandleItemLocation_CrossHub`, `TestHandleItemLocation_DrillsFolders` |
-| `TestView_<Scenario>_NoCrash` | Render-doesn't-panic tests across terminal sizes | `TestView_AfterHubSelect_NoCrash` |
+| `TestThing_DoesX` | Pure unit on `Thing` | `TestNavItemFromTypename`, `TestRandToken_UniqueAndNonEmpty` |
+| `TestFunc_HappyPath` | The clean success path | `TestGqlQuery_HappyPath`, `TestClassifyAssembly_Part`, `TestHandleAuthCallback_HappyPath` |
+| `TestFunc_<Edge>` | A specific edge case | `TestGqlQuery_401_Wraps`, `TestClassifyAssembly_EmptyID`, `TestRequireAuth_UnknownSession`, `TestHandleAuthCallback_StateMismatch` |
+| `TestHandle<X>_<Effect>` | A direct call to an HTTP handler | `TestHandleAuthMe`, `TestHandleAuthLogin_RedirectAndPending`, `TestHandleThumbnailImage_ServesCachedBytes` |
+| `Test<Store>_<Behaviour>` | A store / lifecycle assertion | `TestSessionStore_IdleExpiry`, `TestSessionStore_Sweep`, `TestPendingStore_TakeIsSingleUse` |
 
 Subtests via `t.Run(name, func(t *testing.T) { ... })` are encouraged for table-driven tests. Sub-test names should be human-readable (`"empty stays empty"`), not just numbers.
 
@@ -165,10 +147,10 @@ The cheapest way to land a useful test is to copy the closest existing one and a
 2. Use a table-driven shape if there's more than one case. The pattern from `api/queries_test.go::TestNavItemFromTypename` is the canonical example.
 3. Avoid I/O — that's L2's job.
 
-### A new HTTP-integration test
+### A new outbound HTTP-integration test (the `api` / `auth` client side)
 
-1. Spin up a `testutil.GraphQLServer` that captures the fields you want to assert on.
-2. Use `swapEndpoint(t, srv.URL)` if you're inside the `api` package, or `api.SetGraphqlEndpointForTesting(srv.URL)` if you're outside it.
+1. Spin up a `testutil.GraphQLServer` (or, for `auth`, a plain `httptest.Server`) that captures the fields you want to assert on.
+2. Write `graphqlEndpoint` (or `tokenEndpoint` / `userInfoEndpoint`) directly inside the package, or `api.SetGraphqlEndpointForTesting(srv.URL)` from outside `api`.
 3. Drive the function under test directly. Assert on both the request shape (via the captured `GraphQLRequest`) and the decoded result.
 
 For retry tests, also override `retryBackoffs`:
@@ -179,32 +161,33 @@ retryBackoffs = []time.Duration{0, 1 * time.Millisecond, 1 * time.Millisecond}
 t.Cleanup(func() { retryBackoffs = prev })
 ```
 
-### A new TUI flow test
+### A new inbound handler / session test (the `server` side)
 
-1. Build a Model directly (don't go through `New()`; supply only the fields the test needs).
-2. Call `m.Update(msg)` and inspect the returned `(Model, tea.Cmd)`.
-3. If the cmd should fire a follow-up, invoke `cmd()` and assert on the resulting message.
+1. Construct a `*Server` (or just the `SessionStore` / `PendingStore`) with only the fields the test needs.
+2. Swap `authExchange` / `authRefresh` / `authUserInfo` to stubs so the handler never hits the network, and use `quietLogger()` (from `server/helpers_test.go`) to keep test output clean.
+3. Drive the handler through `httptest.NewRequest` + `httptest.NewRecorder`, then assert on the status, `Set-Cookie`, redirect `Location`, or the token injected into the request context.
 
-Look at `ui/app_test.go::TestUpdate_NavigateRight_LoadsContents` for the canonical end-to-end shape (KeyMsg → Update → tea.Cmd → mocked APS → contentsLoadedMsg → assert).
+Look at `server/auth_test.go::TestHandleAuthCallback_HappyPath` for the canonical end-to-end shape, and `TestSessionToken_RefreshesExactlyOnce` for the concurrency contract (a session refreshes at most once under load).
 
 ---
 
 ## Anti-patterns to avoid
 
-- **No `time.Sleep` in tests.** If you find yourself reaching for it, the test is racy. Either inject a clock (see `nowFunc`) or use channels / `t.Cleanup` to coordinate.
-- **No real network.** Every HTTP call goes to a `testutil.GraphQLServer` or `NewMCPServer`. A test that hits `developer.api.autodesk.com` will fail in CI (no token) and is non-deterministic anyway.
+- **No `time.Sleep` in tests.** If you find yourself reaching for it, the test is racy. Either inject the clock (pass an explicit `now` / use short TTLs, as the session tests do) or use channels / `t.Cleanup` to coordinate.
+- **No real network.** Every outbound HTTP call goes to a `testutil.GraphQLServer` or an inline `httptest.Server`; `server` handler tests swap `authExchange` / `authRefresh` / `authUserInfo` to stubs. A test that hits `developer.api.autodesk.com` will fail in CI (no token) and is non-deterministic anyway.
 - **No skips for "flaky" tests.** If a test is flaky, find the race and fix it. Adding `t.Skip` masks the bug.
 - **No fixture files for response payloads.** Inline the JSON shape into the test handler. The shape is part of the contract under test; hiding it in a `testdata/foo.json` file makes the test harder to read.
-- **No pixel-snapshot tests for the TUI.** Lipgloss styling changes too often; a snapshot test against `View()` becomes maintenance overhead with no real signal.
+- **Never log or assert on secrets.** Tokens are never written to logs, and `signedUrl` values are redacted before tracing (`redactSignedURLs`); tests assert the redaction, not the raw credential.
 
 ---
 
 ## Manual / exploratory testing
 
-Some things are hard to assert on automatically — colour rendering, breadcrumb mouse hits across resizes, the look of the tab strip on different terminals. The development workflow for those is:
+Some things are hard to assert on automatically — the look and feel of the React/MUI SPA, OAuth login against the real APS tenant, hover/select theming, thumbnail rendering across real designs. The development workflow for those is:
 
-1. `make build CLIENT_ID=…` to produce a binary with your APS client ID embedded.
-2. Run it interactively across the terminal sizes you care about (80×24 minimum, plus your preferred wide layout).
-3. If a regression is found, capture it as a new L3 flow test if possible (most state-machine bugs are catchable that way), or as an L1 layout-math test (e.g. `TestFitFooterLineNeverWraps`).
+1. `make build CLIENT_ID=…` to produce a binary with your APS client ID embedded, or run with `-dev` to proxy the web UI to the Vite dev server for HMR.
+2. Open the SPA in a browser, log in through the real OAuth flow, and exercise the feature end to end.
+3. Run with `-v` when you need request/response traces (console + `~/.config/fusionlocalserver/server.log`); `signedUrl` values are redacted and tokens are never logged.
+4. If a regression is found, capture it as a new test at the layer that most directly proves it works — an `api` decode test (L2) for a wire-format bug, a `server` handler test (L2) for an auth/session bug, or a pure-unit test (L1) for a helper.
 
-The general rule: every new feature gets at least one test at the layer that most directly proves it works. Show-in-Location got an API decode test (L2) and a `handleItemLocation` test (L3); the tab cursor got a key-dispatch test (L3) and a navigation test for cross-hub fall-through (L3). Don't ship a feature without one.
+The general rule: every new feature gets at least one test at the layer that most directly proves it works. Don't ship a feature without one.

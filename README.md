@@ -2,16 +2,11 @@
 
 [![test](https://github.com/schneik80/fusionlocalserver/actions/workflows/test.yml/badge.svg)](https://github.com/schneik80/fusionlocalserver/actions/workflows/test.yml)
 
-A local server and web UI — plus a terminal browser — for the [Autodesk Platform Services (APS)](https://aps.autodesk.com) Manufacturing Data Model. Browse your Fusion hubs, projects, folders, and designs from a browser on your LAN or straight from the command line.
+A local server and web UI for the [Autodesk Platform Services (APS)](https://aps.autodesk.com) Manufacturing Data Model. Run it on your LAN and let people browse your Fusion hubs, projects, folders, and designs from a browser — **each user signs in with their own Autodesk account**.
 
-One binary, two front ends over the same data/auth core:
+One Go binary: an HTTP server that exposes a JSON API and serves an embedded React/MUI single-page web UI. There are no external dependencies — it's pure Go standard library.
 
-- **`fusionlocalserver -server`** — an HTTP server that exposes a JSON API and an embedded React/MUI web UI. Bind it to your LAN and browse Fusion data from any device.
-- **`fusionlocalserver`** — a Bubble Tea terminal UI (the original interface).
-
-Both share the same APS Manufacturing Data Model client, OAuth token cache, and pins, so they behave identically and reuse one sign-in.
-
-## Quick start (web server)
+## Quick start
 
 ```sh
 echo "your-aps-client-id" > .aps-client-id   # one time; see "Building from source"
@@ -26,70 +21,36 @@ reachable on the LAN  url=http://localhost:8080
 reachable on the LAN  url=http://192.168.1.50:8080
 ```
 
-Open one of those URLs in a browser. On first run the server completes the Autodesk sign-in (a browser window on the host); after that it reuses the cached token.
+Open one of those URLs in a browser and click **Sign in with Autodesk**. Each visitor authenticates with their own Autodesk account; the server holds their tokens in a per-session store keyed by an `HttpOnly` cookie, and proxies their data calls under their own identity. Tokens never reach the browser's JavaScript.
 
-> ⚠️ **No auth gate.** Anyone who can reach the bound address browses as the server's APS identity. Run it on a trusted LAN only. A warning is logged whenever it binds a non-loopback address.
+> ⚠️ **Plain HTTP on the LAN.** The session cookie is not marked `Secure` (browsers drop `Secure` cookies over `http://`), so anyone able to sniff the wire could capture a cookie and hijack that user's session until it expires. Run on a trusted LAN, or put a TLS-terminating proxy in front (the cookie auto-upgrades to `Secure` when the request arrives over HTTPS). A warning is logged whenever the server binds a non-loopback address.
 
-### Server flags & settings
+### Flags & settings
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `-server` | off | Run the HTTP server instead of the TUI |
-| `-addr` | `0.0.0.0:8080` | Bind address; overrides the configurable port |
-| `-dev` | off | Serve the UI by reverse-proxying the Vite dev server (HMR) instead of the embedded build |
+| `-v` | off | Verbose logging: debug level to the console **and** the log file, including a line per request and (redacted) upstream API traces |
+| `-dev` | off | Developer mode: reverse-proxy the web UI to the Vite dev server for HMR instead of serving the embedded build |
 
-The listen **port is configurable at runtime** from the web UI's Settings dialog (persisted to `~/.config/fusionlocalserver/server.json`). Changing it restarts the listener in place; the page then reconnects on the new port. The port field is read-only when `-addr` was passed explicitly or in `-dev` mode.
+The listen **port is configurable at runtime** from the web UI's Settings dialog (persisted to `~/.config/fusionlocalserver/server.json`). Changing it restarts the listener in place; the page then reconnects on the new port. The port field is read-only in `-dev` mode (where the Vite proxy is pinned to the default port).
+
+Logs go to the console and to `~/.config/fusionlocalserver/server.log`. The default level is essential-only; `-v` adds the per-request and upstream-trace detail.
 
 ### Web UI
 
-The web UI recreates the three-column browser — **Projects │ Contents │ Details** — with a global header, a left rail (Hubs / Pins / Settings), and a clickable breadcrumb. Highlights:
+The web UI is a three-column browser — **Projects │ Contents │ Details** — with a global header (signed-in user + sign-out), a left rail (Hubs / Pins / Settings), and a clickable breadcrumb. Highlights:
 
 - **Details panel** — the document's metadata (type, part number, material, version, dates…) is always shown beside its **thumbnail**; tabs add **History**, **Properties**, **Uses**, **Where Used**, and **Drawings**.
-- **Thumbnails** are fetched once, cached server-side (shared across all clients), warmed in the background as you browse, and streamed same-origin — so opening a design is usually instant.
+- **Thumbnails** are fetched once, cached server-side, warmed in the background as you browse, and streamed same-origin — so opening a design is usually instant.
 - **Properties** shows physical/mass properties (mass, volume, surface area, density, bounding box) from the v2 Manufacturing Data Model API.
 - **Uses / Where Used / Drawings** rows are clickable: selecting one navigates the browser straight to that document.
-- **Pins**, **Light/Dark/System theme**, and region are available from the rail and Settings.
+- **Pins** and **Light/Dark/System theme** are available from the rail and Settings.
 
-## Terminal UI
-
-Run with no flags for the keyboard/mouse terminal browser:
-
-```sh
-fusionlocalserver
-```
-
-![fusionlocalserver terminal UI](./docs/screenshot.png)
-
-### Key bindings
-
-| Key | Action |
-|-----|--------|
-| `↑` `↓` / `w` `s` | Move cursor |
-| `→` `↵` / `d` | Enter folder / open details |
-| `←` / `a` | Go back |
-| `h` | Switch hub |
-| `u` | Open selected document in browser (after details load) |
-| `o` | Open in Fusion desktop (via Fusion MCP) |
-| `i` | Insert into active Fusion design (via Fusion MCP) |
-| `shift+d` | Download STEP file for the selected design |
-| `shift+p` / `p` | Pin or unpin / open the pins overlay |
-| `t` / `m` | Cycle theme / toggle mouse |
-| `shift+a` / `r` / `?` / `q` | About / refresh / debug log / quit |
-
-Details-pane tabs: `1` Details, `2` Uses, `3` Where Used, `4` Drawings. On a non-Details tab, `Enter` (or double-click) does **Show in Location** — jumps the Contents column to that row's project + folder + item.
-
-### Fusion desktop, STEP, web links
-
-- `o` / `i` drive the running Fusion desktop client via its local MCP server (`http://127.0.0.1:27182/mcp`), after verifying Fusion is on the same hub.
-- `shift+d` requests a STEP derivative (`componentVersion(...).derivatives(outputFormat: STEP, generate: true)`), polls until `SUCCESS`/`FAILED`, and streams it to `~/Downloads/<design>-<timestamp>.stp`. Valid only on `DesignItem` rows with a `tipRootComponentVersion`.
-- `u` opens the item's `fusionWebUrl` permalink in your default browser (after details load).
+See [`docs/web-ui.md`](docs/web-ui.md) for a full tour.
 
 ### Non-US hubs
 
-```sh
-APS_REGION=EMEA fusionlocalserver   # Europe, Middle East, Africa
-APS_REGION=AUS  fusionlocalserver   # Australia
-```
+Set the region the server queries (applies to every user) via the APS region, e.g. `APS_REGION=EMEA` or `APS_REGION=AUS` (default is US). See [`docs/development.md`](docs/development.md) for configuration precedence.
 
 ## Install
 
@@ -111,48 +72,48 @@ Released binaries ship the embedded web UI and a publisher client ID, so they ne
 
 ## Building from source
 
-Requires **Go 1.22+** and **Node/npm** (for the web UI).
+Requires **Go 1.23+** and **Node/npm** (for the web UI).
 
 ```sh
 git clone https://github.com/schneik80/fusionlocalserver
 cd fusionlocalserver
 ```
 
-Register a public client at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) (redirect URI `http://localhost:7879/callback`, scope `data:read user-profile:read`), then:
+Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) with scope `data:read user-profile:read`. **Register a Callback URL for every origin users will reach the server by** — APS allows no wildcards, so each `http(s)://host:port/api/auth/callback` is a separate exact-match entry. For local development that is `http://localhost:8080/api/auth/callback`; add each LAN address (and each configured port) you intend to use.
 
 ```sh
 echo "your-client-id" > .aps-client-id    # git-ignored
 make build                                # vite build → embed UI (-tags embed_ui) → go build
-./fusionlocalserver -server               # or: make run
+./fusionlocalserver                       # or: make run
 ```
 
 | Target | What it does |
 |--------|--------------|
 | `make build` | Build the web UI, embed it (`-tags embed_ui`), and compile with the client ID baked in |
-| `make run` | `make build` then serve on the LAN (`ARGS="-addr ..."` to override) |
-| `make dev` | Go-only build, **no** embedded UI (serves a stub) and no embedded client ID — pair with `cd web && npm run dev` and `./fusionlocalserver -server -dev` for hot reload |
+| `make run` | `make build` then serve on the LAN (`ARGS="-v"` to add flags) |
+| `make dev` | Go-only build, **no** embedded UI (serves a stub) and no embedded client ID — pair with `cd web && npm run dev` and `./fusionlocalserver -dev` for hot reload |
 | `make check` | `go vet ./...` + `go test -race ./...` |
 
 `server/webdist/` is entirely gitignored build output; a plain `go build` (no `embed_ui` tag) compiles against an in-memory stub, so the tree never needs a committed placeholder.
 
 ## Requirements
 
-- An [Autodesk account](https://accounts.autodesk.com) with access to at least one Fusion Team hub
+- An [Autodesk account](https://accounts.autodesk.com) with access to at least one Fusion Team hub (each user needs their own)
 - macOS 12+, Linux, or Windows 10+
-- Port `7879` available locally during sign-in (OAuth callback); the server also needs its listen port (default `8080`) free
+- The server's listen port (default `8080`) free on the host
 
 ## Documentation
 
 | Doc | What it covers |
 |---|---|
-| [`docs/server-webui-plan.md`](docs/server-webui-plan.md) | The `-server` mode + React/MUI web UI: architecture, API routes, build |
-| [`docs/navigation.md`](docs/navigation.md) | Three-column browser, details-pane tabs, Show in Location, mouse, themes |
+| [`docs/web-ui.md`](docs/web-ui.md) | The web UI: sign-in, the three-column browser, details tabs, pins, settings |
+| [`docs/authentication.md`](docs/authentication.md) | Per-user OAuth (PKCE) login, sessions, cookies, token refresh |
 | [`docs/api.md`](docs/api.md) | APS Manufacturing Data Model GraphQL queries, retry behaviour, debug logging |
-| [`docs/authentication.md`](docs/authentication.md) | OAuth PKCE flow, token storage, refresh |
-| [`docs/architecture.md`](docs/architecture.md) | C4 diagrams, package layout, data flow, performance, resilience |
-| [`docs/debugging.md`](docs/debugging.md) | **Reporting a bug** — what to capture and how to file it |
+| [`docs/architecture.md`](docs/architecture.md) | C4 diagrams, package layout, request/session flow, performance, resilience |
+| [`docs/development.md`](docs/development.md) | Building from source, configuration, release pipeline, dependencies |
+| [`docs/debugging.md`](docs/debugging.md) | Logging, `-v`, and **reporting a bug** — what to capture and how to file it |
 | [`docs/testing.md`](docs/testing.md) | Test strategy and how to run / extend the suite |
-| [`docs/development.md`](docs/development.md) | Building from source, release pipeline, dependencies |
+| [`docs/server-webui-plan.md`](docs/server-webui-plan.md) | Historical: the original design plan for the server + web UI |
 
 ## License
 

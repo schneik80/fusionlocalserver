@@ -2,7 +2,7 @@
 
 Everything needed to build, run, test, and release fusionlocalserver from source.
 
-The binary has two modes: the default Bubble Tea **TUI**, and `fusionlocalserver -server`, which serves a JSON API plus an embedded React/MUI web UI. Building the web UI (and embedding it) requires Node/npm in addition to the Go toolchain.
+The binary is a single dedicated HTTP server: a JSON API under `/api` plus an embedded React/MUI single-page web UI. There is no separate mode — running the binary always starts the server. Building the web UI (and embedding it) requires Node/npm in addition to the Go toolchain.
 
 ---
 
@@ -10,8 +10,8 @@ The binary has two modes: the default Bubble Tea **TUI**, and `fusionlocalserver
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Go | 1.22+ | Build and run |
-| Node + npm | LTS | Build the `web/` React/MUI UI (only for `-server` mode) |
+| Go | 1.23+ | Build and run (the `go` directive in `go.mod` is `go 1.23`) |
+| Node + npm | LTS | Build the `web/` React/MUI UI |
 | goreleaser | v2 | Cross-platform release builds |
 | git | any | Version tags trigger releases |
 | An APS app registration | — | Client ID for OAuth |
@@ -20,13 +20,19 @@ The binary has two modes: the default Bubble Tea **TUI**, and `fusionlocalserver
 
 ## APS App Registration
 
-Register a **public client** app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps):
+Each browser user signs in with their own Autodesk account via OAuth (Authorization Code + PKCE, backend-for-frontend). Register a **web app** at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps):
 
-- **App type:** Desktop / Native
-- **Callback URL:** `http://localhost:7879/callback`
+- **App type:** Web app
 - **Scopes:** `data:read`, `user-profile:read`
+- **Callback URL:** one per origin that users reach the server by. The server derives `redirect_uri` from the request's origin as `<origin>/api/auth/callback`, so register a Callback URL for each origin. For local development that is:
 
-Copy the **Client ID**. No client secret is needed for public clients.
+  ```
+  http://localhost:8080/api/auth/callback
+  ```
+
+  Add the LAN URLs (e.g. `http://<lan-ip>:8080/api/auth/callback`) and any TLS-terminated public hostnames the same way.
+
+Copy the **Client ID** (and **Client Secret** if your app registration issues one — it is read from `APS_CLIENT_SECRET` / `config.json` when present). Sessions live in server memory; there is no on-disk token file.
 
 ---
 
@@ -36,8 +42,11 @@ Copy the **Client ID**. No client secret is needed for public clients.
 
 ```sh
 export APS_CLIENT_ID=your-client-id
-export APS_REGION=EMEA          # optional — US default
+export APS_CLIENT_SECRET=your-client-secret   # only if your web app issues one
+export APS_REGION=EMEA                          # optional — US default
 ```
+
+`APS_REGION` is process-global: it applies to every signed-in user, not per session.
 
 ### Config file (persistent)
 
@@ -63,15 +72,19 @@ Users of the published binary need no configuration — the embedded client ID i
 
 ### Config resolution order
 
+The same precedence resolves both the client ID/secret and the region (`config.Load`):
+
 ```mermaid
 flowchart LR
-    A([APS_CLIENT_ID\nenv var]) -- "highest priority" --> R([Resolved\nClient ID])
+    A([APS_CLIENT_ID / APS_CLIENT_SECRET\nAPS_REGION env vars]) -- "highest priority" --> R([Resolved\nClient ID / Region])
     B([~/.config/fusionlocalserver/\nconfig.json]) --> R
-    C([Build-time\nDefaultClientID]) -- "lowest priority" --> R
-    R --> D{empty?}
-    D -- Yes --> E([stateSetupNeeded\nwith instructions])
-    D -- No --> F([stateLoading])
+    C([Build-time\nDefaultClientID / DefaultRegion]) -- "lowest priority" --> R
+    R --> D{client ID empty?}
+    D -- Yes --> E([server logs a setup\nhint and the UI shows\nconfiguration instructions])
+    D -- No --> F([server starts])
 ```
+
+There is no `tokens.json` — per-user sessions are held in server memory only.
 
 ---
 
@@ -89,20 +102,21 @@ echo your-client-id > .aps-client-id          # or pass CLIENT_ID= to make
 make build                                     # produces ./fusionlocalserver
 make install                                   # same, into $GOPATH/bin
 
-# Build and serve the web UI on the LAN (binds 0.0.0.0:8080 by default)
-make run                                        # = make build, then -server
-make run ARGS="-addr 0.0.0.0:9000"             # override the bind address
+# Build and serve (binds 0.0.0.0:8080 by default; change the port from the
+# web UI's Settings dialog). Startup logs the reachable LAN URLs.
+make run                                        # = make build, then serve
+make run ARGS="-v"                             # add flags (here: verbose logging)
 
 # Dev build: no embedded UI, no embedded client_id (stub UI shell).
 # Pair with the Vite dev server for HMR:
-make dev                                        # go build (untagged)
+make dev                                        # go build (untagged, Go-only)
 cd web && npm run dev                           # Vite on :5173, separate terminal
-APS_CLIENT_ID=your-id ./fusionlocalserver -server -dev   # proxies the UI to Vite
+APS_CLIENT_ID=your-id ./fusionlocalserver -dev  # reverse-proxies the UI to Vite
 ```
 
 > `make build` overwrites `server/webdist/index.html` with a built shell that references gitignored hashed assets. The whole `server/webdist/` tree is gitignored build output — restore the committed placeholder before committing.
 
-Building plain TUI changes needs no Node: `make dev` (or `APS_CLIENT_ID=your-id go run .`) builds a Go-only binary; the embedded UI matters only for `-server` without `-dev`.
+A plain `go build` (no `embed_ui` tag) still produces a working server; it serves the in-memory "not built yet" stub UI (`server/static_stub.go`) instead of the embedded SPA. That is what `make dev` produces — pair it with `npm run dev` and `-dev` so the Go server reverse-proxies the live Vite UI.
 
 ---
 
@@ -110,33 +124,24 @@ Building plain TUI changes needs no Node: `make dev` (or `APS_CLIENT_ID=your-id 
 
 ```mermaid
 graph TD
-    main["main.go\nentry point; -server vs TUI"] --> config["config/\nClient ID, region, paths"]
-    main --> ui["ui/\nBubbleTea TUI (default)"]
+    main["main.go\nentry point; parses -v / -dev,\ncalls server.Run"] --> config["config/\nClient ID, secret, region, paths"]
     main --> server["server/\nHTTP JSON API + embedded SPA"]
 
-    ui --> auth["auth/\nOAuth PKCE"]
-    ui --> api_pkg["api/\nGraphQL client"]
-    ui --> fusion_pkg["fusion/\nFusion desktop MCP"]
-
-    server --> auth
-    server --> api_pkg
+    server --> auth["auth/\nOAuth Authorization Code + PKCE"]
+    server --> api_pkg["api/\nGraphQL client"]
     server --> pins_pkg["pins/\nhub-scoped bookmarks"]
     server --> config
 
     auth --> config
     api_pkg --> config
 
-    subgraph "ui/ package (TUI)"
-        app["app.go\nModel, Update, View, tabs,\nShow-in-Location orchestration"]
-        keys["keys.go\nkey bindings\n(WASD/arrows, 1-4, Enter)"]
-        styles["styles.go\nthemes, Lipgloss styles, tab strip"]
-    end
-
-    subgraph "server/ package (-server)"
-        srv["server.go\nRun, listener rebind loop"]
+    subgraph "server/ package"
+        srv["server.go\nRun, listener bind/rebind loop"]
         routes["routes.go + handlers*.go\n/api/* JSON endpoints"]
-        token["token.go\nTokenManager (one APS identity)"]
-        static["static*.go\nembedded SPA / Vite proxy"]
+        authsrv["auth.go + session.go\nper-user OAuth (BFF),\nin-memory sessions, requireAuth"]
+        mw["middleware.go\nlogRequest, recoverPanic, devCORS"]
+        logging["logging.go\nslog → stdout + server.log"]
+        static["static*.go\nembedded SPA / Vite proxy / stub"]
         thumb["thumbcache.go\nshared thumbnail cache"]
     end
 
@@ -148,9 +153,9 @@ graph TD
     static --> spa
 
     subgraph "auth/ package"
-        oauth["oauth.go\nLogin + Refresh"]
-        callback["callback.go\nlocal HTTP :7879"]
-        tokens["tokens.go\nLoad + Save"]
+        oauth["oauth.go\nBuildAuthURL / ExchangeCode / Refresh\n(scope data:read user-profile:read)"]
+        userinfo["userinfo.go\nFetchUserProfile"]
+        tokens["tokens.go\nTokenData / Valid()"]
     end
 
     subgraph "api/ package"
@@ -159,27 +164,32 @@ graph TD
         details_f["details.go\nGetItemDetails"]
         refs["refs.go\nGetOccurrences / GetWhereUsed /\nGetDrawingsForDesign / GetDrawingSource"]
         locate["locate.go\nGetItemLocation\n(parentFolder walk)"]
-        download["download.go\nSTEP derivative + DownloadFile"]
-        debug["debug.go\nin-mem ring + debug.log + stderr"]
+        classify["classify.go\nasync part/assembly subtype"]
+        thumbnail_f["thumbnail.go\nthumbnail signedUrl lookup"]
+        debug["debug.go\nEnableDebug: GraphQL request/response\ntracing (signedUrl redacted)"]
     end
 ```
 
 ---
 
-## Debug Mode
+## Flags
 
-For day-to-day TUI development:
+The binary takes exactly two flags:
 
-```sh
-FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
-```
+| Flag | Effect |
+|------|--------|
+| `-v` | Verbose logging: raises the log level from info to debug, on **both** the console (stdout) and the log file. Adds a line per HTTP request and the `api` package's GraphQL request/response traces. |
+| `-dev` | Developer mode: reverse-proxy the web UI to the Vite dev server (`:5173`) for HMR instead of serving the embedded/stub SPA. |
 
-- Logs every GraphQL request body and response.
-- Press `?` in the browser to view the rolling in-app log (max 500 lines).
-- Also written to `~/.config/fusionlocalserver/debug.log` (mode 0600, truncated each session) so you can `tail -f` it from another terminal.
-- Stderr mirroring is auto-enabled when stderr is redirected (`2> log`), suppressed when stderr is a TTY (so the live TUI isn't smeared).
+There is no `-server` flag (the binary always serves) and no `-addr` flag (the listen port is changed from the web UI's Settings dialog, defaulting to `0.0.0.0:8080`).
 
-In `-server` mode `FUSIONLOCALSERVER_DEBUG` does not apply; the server logs a structured line per request to **stdout** (method, path, status, duration, remote IP) via `log/slog`, and recovers + logs any handler panic as a JSON 500.
+---
+
+## Logging
+
+A single `log/slog` logger (see `server/logging.go`) writes to **both** the console (stdout) and `~/.config/fusionlocalserver/server.log` (mode `0600`, appended). The default level is **info** — essential lines only: startup URLs, warnings, errors, and auth events. `-v` raises it to debug, adding a structured line per request (method, path, status, duration, remote IP) and the `api` package's GraphQL request/response traces.
+
+Tokens and `Authorization` headers are never logged, and `signedUrl` values are redacted from traces. A panic in any handler is recovered, logged with its stack, and returned to the client as a JSON 500 rather than crashing the process.
 
 End users reporting bugs should follow [`docs/debugging.md`](debugging.md), which walks through what to capture and how to file a defect.
 
@@ -201,20 +211,13 @@ The full test architecture — layer breakdown, fixtures, naming conventions, th
 
 ## Dependencies
 
-The Go module's only external dependencies are the [Charm.sh](https://charm.sh) TUI libraries; auth, HTTP, and the `-server` mode are built on the Go standard library (`net/http`, `log/slog`, `embed`) — no third-party Go web framework.
-
-| Module | Version | Purpose |
-|--------|---------|---------|
-| `github.com/charmbracelet/bubbletea` | v1 | TUI event loop (Model/Update/View) |
-| `github.com/charmbracelet/bubbles` | v1 | Spinner component |
-| `github.com/charmbracelet/lipgloss` | v1 | Terminal styling and layout |
+The Go module has **no third-party dependencies** — auth, the HTTP server, logging, and UI embedding are all built on the Go standard library (`net/http`, `log/slog`, `crypto/*`, `embed`). Removing the Bubble Tea TUI dropped every external Go dependency, so there is **no `go.sum`** and `go.mod` is just the module path plus the `go 1.23` directive.
 
 ```sh
-go mod tidy     # sync go.mod + go.sum
-go mod download # pre-fetch dependencies
+go mod tidy     # keeps go.mod tidy (no go.sum to sync — pure stdlib)
 ```
 
-The web UI (`-server` mode only) has its own npm dependency tree under `web/` — React, MUI, TanStack Query, and Vite — bundled into `server/webdist` at build time and embedded into the binary. It is independent of the Go module graph above.
+The web UI has its own npm dependency tree under `web/` — React, MUI, TanStack Query, and Vite — bundled into `server/webdist` at build time and embedded into the binary. It is independent of the Go module graph.
 
 ```sh
 cd web && npm install   # sync web/ dependencies (package-lock.json)
@@ -335,7 +338,7 @@ The binary version is set at build time:
 var version = "dev"   // overwritten by ldflag
 ```
 
-In the TUI the version is displayed in the About screen (`shift+a`); in `-server` mode it is logged at startup and returned by `GET /api/meta`. The current series is **v0.1.0**.
+The version is logged at startup and returned by `GET /api/meta` (the web UI surfaces it in its About dialog). The current series is **v0.1.0**.
 
 ---
 

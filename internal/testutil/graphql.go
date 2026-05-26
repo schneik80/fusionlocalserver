@@ -1,9 +1,7 @@
-// Package testutil provides shared test helpers for spinning up in-process
-// httptest.Server instances that emulate the upstream services fusionlocalserver
-// talks to: the APS GraphQL endpoint and the Fusion desktop MCP JSON-RPC
-// server. Tests in `auth`, `api`, and `fusion` packages all need to issue
-// real HTTP requests against fakes; this package keeps that boilerplate in
-// one place so per-package test files can stay focused on the behaviour
+// Package testutil provides a shared test helper for spinning up an in-process
+// httptest.Server that emulates the upstream APS GraphQL endpoint. Tests in the
+// api package issue real HTTP requests against the fake; keeping that
+// boilerplate here lets per-package test files stay focused on the behaviour
 // under test.
 package testutil
 

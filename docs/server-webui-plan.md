@@ -1,9 +1,13 @@
-# fusionlocalserver — `-server` mode + React/MUI web UI
+# fusionlocalserver — server mode + React/MUI web UI
 
-> **Status:** this was the design plan for the `-server` mode and web UI; both
-> are now implemented and shipped. It is kept as a design record. Where the
-> implementation diverged from the plan it is annotated inline; for the current
-> architecture see [`architecture.md`](architecture.md#server-mode-specifics).
+> **Status — historical.** This was the original design plan for adding a
+> `-server` mode and web UI alongside the (now-removed) Bubble Tea TUI. The web
+> UI shipped, then a later refactor dropped the TUI entirely, made the server the
+> sole front end (no `-server` flag), and replaced the single shared APS identity
+> with per-user login. This document is kept only as a design record; it does
+> **not** describe current behaviour. For that, see
+> [`architecture.md`](architecture.md), [`authentication.md`](authentication.md),
+> and [`web-ui.md`](web-ui.md).
 
 ## Context
 

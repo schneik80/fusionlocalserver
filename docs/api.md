@@ -1,6 +1,6 @@
 # APS Manufacturing Data Model API
 
-fusionlocalserver queries the **APS Manufacturing Data Model GraphQL API v2** to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow. This `api` package is the shared core used by both the TUI and the `-server` HTTP mode; the diagrams below describe the GraphQL client itself, independent of which front end calls it.
+fusionlocalserver queries the **APS Manufacturing Data Model GraphQL API v2** to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow. This `api` package is the GraphQL client used by the server; the diagrams below describe the client itself, independent of the handlers that call it.
 
 ---
 
@@ -21,7 +21,7 @@ The `X-Ads-Region` header is only sent when a non-default region is configured. 
 
 ```mermaid
 flowchart TD
-    caller["Caller\n(ui package or server package)"] --> hierarchy["Hierarchy queries\nGetHubs / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
+    caller["Caller\n(server package handlers)"] --> hierarchy["Hierarchy queries\nGetHubs / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
     caller --> details["Per-item queries\nGetItemDetails"]
     caller --> tabs["Cross-reference queries\nGetOccurrences (Uses)\nGetWhereUsed\nGetDrawingsForDesign\nGetDrawingSource (drawing → design)"]
     caller --> locate["Locate query\nGetItemLocation\n(walks parentFolder chain)"]
@@ -37,7 +37,7 @@ flowchart TD
     ap --> gql["gqlQuery()\nretry loop\n(0 → 500ms → 1.5s)"]
     gql --> once["gqlQueryOnce()\nsingle HTTP round-trip\n+ JSON decode"]
     once --> http["net/http\nPOST /mfg/graphql"]
-    once --> debug["dbgLog()\nin-memory ring buffer\n+ debug.log file\n+ stderr if redirected"]
+    once --> debug["dbgLog()\nrequest/response trace\n(no-op unless -v;\nsignedUrl redacted)"]
     ap --> extract["extract() callback\npage-specific JSON unmarshal"]
 ```
 
@@ -258,7 +258,7 @@ func ClassifyAssembly(ctx context.Context, token, componentVersionID string) (bo
 
 8 was chosen empirically — see `cmd/probe-assembly/` for the latency-vs-parallelism data on a real hub. Higher caps return diminishing throughput per the gateway's per-tenant rate limits; lower caps leave wall-clock latency on the table.
 
-**Cancellation.** `ClassifyAssembly` itself takes a context but does not implement explicit cancellation of in-flight calls when the user navigates away. Instead, the caller-side dispatch flow in `ui/app.go` carries a `contentsGen` counter on the Model that's incremented every time the Contents slice is replaced (folder drill, hub switch, project switch, refresh, error recovery). Each `classifyDesignCmd` captures the gen at dispatch and stamps it on the resulting `itemClassifiedMsg`; the Update handler drops the message when `msg.gen != m.contentsGen`. Late results aren't cancelled mid-flight — they complete, post their message, and get ignored. This is cheap and lock-free; see [`docs/architecture.md`](architecture.md#async-assembly-vs-part-classification) for the full sequence diagram.
+**Cancellation.** `ClassifyAssembly` takes a context bounded by the handler's request timeout. The web UI issues one `GET /api/items/classify` per design row via TanStack Query; navigating away changes the active query keys, so stale results are simply ignored by the client rather than cancelled mid-flight. Late server-side calls complete and are discarded.
 
 The classifier is fire-and-forget; per-row errors keep the row's generic design icon (graceful degradation) and never surface as user-visible noise.
 
@@ -313,78 +313,13 @@ query GetItemDetails($hubId: ID!, $itemId: ID!) {
 }
 ```
 
-`itemVersions.results` are returned oldest-first by the API. The UI reverses the slice to display newest-first.
-
----
-
-### RequestSTEPDerivative
-
-Asks APS to translate a design's tip root component version into a STEP file and report the signed download URL when ready. Used by the `[d]` key in the UI. Lives in `api/download.go`.
-
-```graphql
-query GetGeometry($componentVersionId: ID!) {
-    componentVersion(componentVersionId: $componentVersionId) {
-        derivatives(derivativeInput: {outputFormat: STEP, generate: true}) {
-            expires
-            signedUrl
-            status
-            outputFormat
-        }
-    }
-}
-```
-
-The same query both **kicks off** generation (the first call, when no derivative exists yet) and **reports current status** thereafter. APS keeps the worker running between calls, so the client polls until status reaches `SUCCESS` or `FAILED`:
-
-```mermaid
-sequenceDiagram
-    participant App
-    participant API as APS GraphQL
-    participant CDN as APS Signed-URL CDN
-
-    App->>API: RequestSTEPDerivative(cvid) — first call
-    API-->>App: { status: PENDING, signedUrl: "" }
-    Note over App: Tea.Tick 2s, repeat
-    App->>API: RequestSTEPDerivative(cvid)
-    API-->>App: { status: PENDING, signedUrl: "" }
-    App->>API: RequestSTEPDerivative(cvid)
-    API-->>App: { status: SUCCESS, signedUrl: "https://…" }
-    App->>CDN: GET signedUrl (no Authorization header)
-    CDN-->>App: STEP bytes (streamed to ~/Downloads/<name>-<ts>.stp)
-```
-
-`RequestSTEPDerivative` returns `(status, signedURL, err)`. Status values are `PENDING`, `SUCCESS`, and `FAILED` (the constants `StepStatusPending`, `StepStatusSuccess`, `StepStatusFailed`). `signedURL` is empty until status reaches `SUCCESS`.
-
-**Restrictions:**
-
-- Only valid on `DesignItem`. Drawings, configured designs, and folders/projects have no `tipRootComponentVersion` and the API returns no derivative. The UI checks `details.Typename == "DesignItem"` and `details.RootComponentVersionID != ""` before issuing the call.
-- The signed URL expires (the `expires` field is returned but currently unused — the client downloads immediately after `SUCCESS`).
-
-#### DownloadFile
-
-Streams the signed-URL response to a destination path. Critically, **the user's bearer token is intentionally NOT attached** — APS signed URLs are self-authenticated (the signature is embedded in the URL) and adding a bearer would leak the access token to whatever host the signed URL points at. If a poisoned or MITM'd GraphQL response ever returned a non-Autodesk URL, the blast radius is confined to the (already untrusted) signed URL itself.
-
-```go
-func DownloadFile(ctx context.Context, url, destPath string) error
-```
-
-The destination directory is created (`0755`) if needed; the file is written via `os.Create`. Non-2xx responses are surfaced with the first 2 KiB of the body for diagnostics.
-
-#### StepDownloadPath
-
-Returns a sensible local path for a STEP file derived from `name`:
-
-- Prefers `~/Downloads/<sanitised-name>-<YYYYMMDD-HHMMSS>.stp`
-- Falls back to `os.TempDir()` if `os.UserHomeDir()` fails or returns empty
-- Filenames are sanitised to alphanumerics + `- _ . space` (everything else becomes `_`) so the path round-trips cleanly across Linux, macOS, and Windows
-
-The `userHomeDir` and `nowFunc` package vars are swappable by tests for deterministic output (see Testing below).
+`itemVersions.results` are returned oldest-first by the API; `GetItemDetails` reverses the slice so versions come back newest-first.
 
 ---
 
 ## NavItem Struct
 
-All list queries produce `[]NavItem`. This is the fundamental navigation unit passed between the `api` and `ui` packages.
+All list queries produce `[]NavItem`. This is the fundamental navigation unit the `api` package returns; the server maps it to the JSON `ItemDTO` the web UI consumes.
 
 ```go
 type NavItem struct {
@@ -411,8 +346,8 @@ type NavItem struct {
     //     extension at items-list time ("dwg" | "template")
     //
     // For Fusion Electronics types (pcb / schematic / ecad) the Kind
-    // itself implies the tag; Subtype is unused. See subtypeSuffix()
-    // in ui/app.go for the full label table.
+    // itself implies the tag; Subtype is unused. The web UI maps Subtype
+    // to the displayed type tag in the Contents column.
     Subtype string
 }
 ```
@@ -608,7 +543,7 @@ type FolderRef struct {
 }
 ```
 
-The UI consumes this in `handleItemLocation` to: (1) verify the hub matches the current selection, (2) find the project in `m.cols[colProjects]` and move the cursor, (3) queue a `pendingNavState` with the folder chain, (4) drill folder-by-folder via `loadItemsCmd` until the leaf, (5) place the cursor on the target item. See [`docs/navigation.md`](navigation.md#tab-cursor-and-show-in-location) for the user-visible flow.
+The server returns this from `GET /api/items/location` (handler `handleItemLocation`). The web UI uses it to navigate straight to a referenced item — selecting the project, walking the folder chain, and landing on the target — which is how a click in the Uses / Where Used / Drawings tabs jumps the browser to that document. See [`docs/web-ui.md`](web-ui.md) for the user-visible flow.
 
 ---
 
@@ -679,31 +614,25 @@ If the call is still failing after 3 attempts, the wrapped error reads `APS Grap
 
 ---
 
-## Debug Mode
+## Request/Response Tracing
 
-Set `FUSIONLOCALSERVER_DEBUG=1` before running the **TUI** to enable full request/response logging (the `-server` mode logs structured request lines to stdout instead):
+Run the server with the `-v` flag to enable full GraphQL request/response tracing:
 
 ```sh
-FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
+fusionlocalserver -v
 ```
 
-Logs are written to **three sinks**:
+`-v` turns on debug-level logging, which includes this package's request/response traces. They are written to the server's logging sink — both the **console** and **`~/.config/fusionlocalserver/server.log`** (the path comes from `config.Dir()`). Without `-v`, `dbgLog()` is a no-op with no allocation.
 
-1. **In-memory ring buffer** (max 500 lines) — viewed via the `?` overlay from `stateBrowsing`. The overlay shows the current log file path at the top so the user knows where to grab the text from (the rendered overlay text itself is not selectable).
-2. **`~/.config/fusionlocalserver/debug.log`** — opened with `O_TRUNC` on each session start, mode 0600. The path comes from `config.Dir()`. Tail / grep / open in an editor with standard tools while the TUI is running.
-3. **Stderr** — *only* when stderr has been redirected (file or pipe). Detected at startup via `os.Stderr.Stat()`'s `ModeCharDevice` bit; when stderr is the terminal, writing to it would smear bubbletea's alternate-screen render, so the mirror is suppressed in that case. When you want stderr capture explicitly, redirect:
+The wiring is one call at startup — the server passes its logging writer to `api.EnableDebug(w)` (a nil writer turns tracing off); `api.DebugEnabled()` reports the current state.
 
-   ```sh
-   FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver 2> debug.log
-   ```
-
-Each log entry includes:
-- Query name and variables
+Each trace entry includes:
+- Query variables
 - HTTP status code
 - Raw JSON response body
 - `RETRY attempt=N delay=… lastErr=…` lines whenever the bounded-retry loop kicks in
 
-Authorization headers are never logged. The on-disk log file is mode 0600.
+**Secrets are never traced.** Authorization headers and access/refresh tokens are never logged, and every `signedUrl` value is redacted (`"signedUrl":"[redacted]"`) by `redactSignedURLs` before the line reaches the console or log file — a signed URL is itself a bearer credential for the derivative it points at.
 
 ---
 
@@ -731,7 +660,7 @@ The `api` package endpoint is held in a package-level `var` rather than a `const
 var graphqlEndpoint = "https://developer.api.autodesk.com/mfg/graphql"
 ```
 
-Same-package tests (`api/*_test.go`) can write `graphqlEndpoint` directly. Cross-package tests (notably `ui/` flow tests that drive a `tea.Cmd` which internally calls into `api`) use the exported helper:
+Same-package tests (`api/*_test.go`) can write `graphqlEndpoint` directly. Callers in other packages use the exported helper:
 
 ```go
 // SetGraphqlEndpointForTesting overrides graphqlEndpoint and returns a
@@ -747,9 +676,9 @@ srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.Grap
 })
 restore := api.SetGraphqlEndpointForTesting(srv.URL)
 defer restore()
-// drive UI / api code under test...
+// drive api code under test...
 ```
 
 `testutil.GraphQLServer` is in the shared `internal/testutil/` package — see [`docs/architecture.md`](architecture.md) and [`docs/development.md`](development.md) for the full test strategy.
 
-The `download.go` package vars `userHomeDir` and `nowFunc` follow the same pattern: tests overwrite them to redirect downloads into a `t.TempDir()` and produce deterministic timestamps.
+The `retryBackoffs` package var follows the same pattern: retry tests overwrite it with millisecond delays so the bounded-retry loop runs instantly. Tracing tests drive `dbgLog` through `EnableDebug`/`DebugEnabled` and assert that `signedUrl` values come out redacted (`api/debug_test.go`).

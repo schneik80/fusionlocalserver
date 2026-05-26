@@ -2,57 +2,65 @@
 
 This page is for users who hit a problem with fusionlocalserver and want to report it. It explains how to capture enough diagnostic information that the maintainers can reproduce and fix the issue without a long back-and-forth.
 
-The debug logging described here covers the **TUI** (default mode). The `-server` HTTP mode logs structured request lines to stdout instead (one line per request: method, path, status, duration, remote IP); a panic in any handler is recovered, logged with its stack, and returned as a JSON 500 rather than crashing the process.
+fusionlocalserver is a single HTTP server (a JSON API plus an embedded React/MUI web UI). Everything below is about its logging and how to file a useful defect.
 
-
-
-If you're a contributor looking for the test-suite architecture, see [`testing.md`](testing.md). If you want internals on the GraphQL client, retry behaviour, or the in-memory log, see [`api.md`](api.md).
+If you're a contributor looking for the test-suite architecture, see [`testing.md`](testing.md). If you want internals on the GraphQL client and its retry behaviour, see [`api.md`](api.md).
 
 ---
 
-## Where logs live
+## Where logs go
 
-Two files appear under `~/.config/fusionlocalserver/` while the app is running:
+The server uses a single `log/slog` logger that writes to **two** places at once:
 
-| File | When written | Contents |
-|---|---|---|
-| `debug.log` | Whenever `FUSIONLOCALSERVER_DEBUG=1` is set. Truncated each session. Mode `0600`. | Full GraphQL request and response bodies, retry decisions, browser-open events. **No tokens, no Authorization headers.** |
-| `panic.log` | Only if the app crashes unrecoverably. Appended each crash (so multiple crashes accumulate). Mode `0600`. | Crash message + full goroutine stack trace from the moment the app died. |
-
-Both files are local to your machine; nothing is sent anywhere automatically. You decide what (if anything) to share when you file a defect.
+| Sink | Contents |
+|---|---|
+| The **console** (stdout) | The same lines you see in the terminal that launched the server. |
+| `~/.config/fusionlocalserver/server.log` | A persistent copy of every log line. Mode `0600`, appended (not truncated) across runs. |
 
 On Linux and macOS the path is exactly `~/.config/fusionlocalserver/`. On Windows it's `%USERPROFILE%\.config\fusionlocalserver\` (the same shape — the app uses `os.UserHomeDir()` directly rather than the OS-specific config dir).
 
+The log file is local to your machine; nothing is sent anywhere automatically. You decide what (if anything) to share when you file a defect.
+
 ---
 
-## Enabling debug mode
+## Log levels
+
+The default level is **info** — essential lines only: startup URLs, warnings, errors, and auth events (login complete, session expired, callback errors). That keeps day-to-day output quiet.
+
+Run with `-v` to raise the level to **debug**. This applies to both sinks (console and `server.log`) and adds:
+
+- **One line per HTTP request** — method, path, query, status, byte count, duration, and remote IP.
+- **GraphQL request/response traces** from the `api` package — the full request body and response for each upstream APS call, plus retry decisions.
 
 ```sh
-FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
+fusionlocalserver -v
 ```
 
-Three things happen:
+You can tail the file from another terminal while reproducing:
 
-1. **In-memory log** — press `?` from the main browser at any time to scroll the rolling log of the last 500 entries. The first line of the overlay shows the path of the on-disk log file.
-2. **`debug.log` file** — written under your config dir, truncated each session start. Tail it from another terminal:
-   ```sh
-   tail -f ~/.config/fusionlocalserver/debug.log
-   ```
-3. **Stderr mirror** — only when stderr is redirected. If you launch with `FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver 2> capture.log`, every entry is also written to `capture.log`. When stderr is your terminal, the mirror is suppressed automatically so it doesn't smear the alternate-screen render.
-
-The debug log is silent unless `FUSIONLOCALSERVER_DEBUG=1` is set. There is no performance cost when it's off.
+```sh
+tail -f ~/.config/fusionlocalserver/server.log
+```
 
 ---
 
 ## What's safe to share
 
-Everything written to `debug.log` is already redacted of sensitive material:
+The logger never records secrets:
 
-- **Authorization headers are never logged.** The bearer token never appears in any log file.
-- **Token files (`tokens.json`)** are in the same directory but are not part of the debug log. Don't attach them.
-- **GraphQL response bodies** are logged verbatim. They contain item names, project names, hub names, file sizes, and other metadata. If your project names themselves are confidential, redact those before sharing.
+- **Access tokens and `Authorization` headers are never logged.** No bearer token appears in any log line, at any level.
+- **`signedUrl` values are redacted** from GraphQL traces (replaced with `[redacted]`). A signed URL is itself a bearer credential for the derivative it points at, so its value never reaches the log even under `-v`.
+- **GraphQL response bodies** are logged verbatim under `-v`. They contain item names, project names, hub names, file sizes, and other metadata. If your project names themselves are confidential, redact those before sharing.
 
-`panic.log` contains a Go stack trace and runtime details. It does not contain tokens or user data — only program flow. It's safe to attach in full.
+There is no separate token file to worry about: per-user sessions live only in server memory, so there is nothing on disk to accidentally attach.
+
+---
+
+## When a request fails or the server misbehaves
+
+A panic in any request handler is **recovered**: the server logs the panic message and a full stack trace at error level, returns a JSON `500 internal server error` to the browser, and keeps running. So a single bad request can't take the process down — but the stack in `server.log` is exactly what we need to fix it.
+
+If a data request returns an unexpected error in the UI, re-run with `-v`, reproduce, and the failing request and its GraphQL trace will be in `server.log`.
 
 ---
 
@@ -60,102 +68,74 @@ Everything written to `debug.log` is already redacted of sensitive material:
 
 When you open an issue at <https://github.com/schneik80/fusionlocalserver/issues>, please include:
 
-1. **Version** — `fusionlocalserver` shows the version on the About screen (`shift+a`). Or check `which fusionlocalserver && stat $(which fusionlocalserver)`.
-2. **OS and terminal** — e.g. "macOS 14.5, Terminal.app" or "Linux Fedora 40, Ghostty 1.0".
-3. **What you did** — three to five lines is plenty. "Logged in, picked the *IMA* hub, selected the *RC* project, drilled into *Designs*, pressed `2` to load the Uses tab on a 200-component assembly."
-4. **What you expected vs. what happened.**
-5. **The relevant slice of `debug.log`** if you have one — usually the last few hundred lines around the failure are enough. The very first lines of `debug.log` always show the GraphQL endpoint and your hub list, which is helpful context.
-6. **`panic.log`** in full if the app crashed.
+1. **Version** — fetch `GET /api/meta` from the running server (e.g. `curl http://localhost:8080/api/meta`); the `version` field is what we need. It's also logged at startup and shown in the web UI's About dialog.
+2. **OS and browser** — e.g. "macOS 14.5, Safari 17" or "Linux Fedora 40, Chrome 124".
+3. **What you did** — three to five lines is plenty. "Signed in, picked the *IMA* hub, selected the *RC* project, drilled into *Designs*, opened the Uses tab on a 200-component assembly."
+4. **What you expected vs. what happened** (and the failing request/URL if you can see it — the browser devtools Network tab shows the `/api/...` call that errored).
+5. **The relevant slice of `server.log`**, ideally captured with `-v` so it includes the per-request lines and GraphQL traces around the failure. The last few hundred lines around the failure are usually enough.
+6. **The recovered-panic block** in full if the server returned a 500 — the `panic recovered` log line carries the stack trace.
 
-If the issue is a slow or flaky API call, we'll usually want to see at least one full `REQUEST` / `RESPONSE` pair plus any `RETRY` lines that fired.
+If the issue is a slow or flaky API call, we'll usually want to see at least one full GraphQL request/response pair plus any retry lines that fired.
 
 A good bug-report skeleton:
 
 ```
-Version: v0.1.0
+Version: v0.1.0   (from GET /api/meta)
 OS: macOS 14.5 (Apple Silicon)
-Terminal: iTerm2 3.5
+Browser: Safari 17
 
 Steps:
-1. FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
-2. Selected hub "IMA"
+1. Started: fusionlocalserver -v
+2. Signed in, selected hub "IMA"
 3. Selected project "RC"
 4. Drilled into "Mechanical Drawings"
 5. Selected design "2021-02"
-6. Pressed "4" to load the Drawings tab
+6. Opened the Drawings tab
 
 Expected: list of drawings made from the design.
 Actual: tab shows "Error: Query point value 23066 exceeds maximum...".
+Failing request: GET /api/items/drawings?...
 
-debug.log excerpt: <attached>
+server.log excerpt (-v): <attached>
 ```
 
 ---
 
 ## Common log signatures and what they mean
 
-These are the patterns that show up most often in `debug.log`. Recognising them helps you tell whether you've hit something we already know about.
+Under `-v` these are the GraphQL-trace patterns that show up most often. Recognising them helps you tell whether you've hit something we already know about.
 
-### `RETRY attempt=N delay=… lastErr=…`
+### Retry lines (`attempt=N`, `delay=…`)
 
 The retry layer kicked in. The client wraps each GraphQL call in a 3-attempt retry loop for transient APS gateway flakiness — see [`api.md`](api.md#error-handling-and-retry). Seeing one or two retries is fine; seeing the loop bottom out with `APS GraphQL flaky after 3 attempts: …` after every action is a real bug worth filing.
 
 ### `code:NOT_FOUND, errorType:UNKNOWN, service:cw`
 
-The APS Manufacturing Data Model gateway returns this intermittently for hub URNs it just successfully enumerated. It's an upstream bug, not yours. The retry layer absorbs it for root-level paths automatically. There's a defect-report template for filing this with APS at `~/Documents/aps-mfg-graphql-flakiness.md` (kept outside the repo so you can pick it up to attach to a support case).
+The APS Manufacturing Data Model gateway returns this intermittently for hub URNs it just successfully enumerated. It's an upstream bug, not yours. The retry layer absorbs it for root-level paths automatically.
 
 ### `Query point value <N> exceeds maximum allowed query point value 1000`
 
-The GraphQL gateway rejected the request as too expensive. If this comes from a query that *we* sent, that's a real bug — please file it with the `REQUEST` line so we can shrink the query. The drawings tab in particular has tight limits because of this cap; see [`api.md`](api.md#getdrawingsfordesign--drawings-tab-on-a-designitem) for the trade-off.
+The GraphQL gateway rejected the request as too expensive. If this comes from a query that *we* sent, that's a real bug — please file it with the request line so we can shrink the query. The drawings tab in particular has tight limits because of this cap; see [`api.md`](api.md#getdrawingsfordesign--drawings-tab-on-a-designitem) for the trade-off.
 
-### `unauthorized (HTTP 401) — token may be expired or lacks scope/entitlement`
+### `unauthorized (HTTP 401)` / 401 from a data endpoint
 
-Your access token is stale, was revoked, or lacks the `data:read` / `user-profile:read` scope. Re-running the app prompts a fresh login on launch. If a fresh login still produces 401, the APS app registration may be misconfigured — see [`authentication.md`](authentication.md).
+The session's access token is stale, was revoked, or lacks the `data:read` / `user-profile:read` scope. The web UI turns a 401 from the API into a prompt to sign in again. If a fresh sign-in still produces 401, the APS app registration may be misconfigured — see [`authentication.md`](authentication.md).
 
 ### `GraphQL partial errors (kept data): …`
 
-A response came back with both useful data and field-level errors. The client kept the data and surfaced the errors via this log line. Typically harmless — common when one row in a list references a deactivated or deleted record. If a tab unexpectedly shows missing fields, the corresponding `GraphQL partial errors` line in the log identifies which row.
-
-### `OPEN_BROWSER <url>`
-
-The app handed `<url>` to your OS browser handler (for `u`-key actions). If the page errors out (e.g. Autodesk's "WEB SESSION INVALID"), this line is the URL to check or copy manually.
+A response came back with both useful data and field-level errors. The client kept the data and surfaced the errors via this log line. Typically harmless — common when one row in a list references a deactivated or deleted record. If a tab unexpectedly shows missing fields, the corresponding `GraphQL partial errors` line identifies which row.
 
 ### `ClassifyAssembly` query bursts after a folder load
 
-When the Contents column loads, the app dispatches up to 50 small `componentVersion(...).occurrences(pagination: { limit: 1 })` queries in parallel, capped at 8 concurrent in flight by a semaphore. In `debug.log` this shows up as a burst of similar requests right after the `itemsByFolder` / `itemsByProject` response. Each one returns a single-result list (or empty) and refines a Contents-column row's icon to `· asm` or `· part`. If those queries 401 or get rate-limited, the corresponding rows silently keep their generic design icon — failures here never block navigation. See [`api.md`](api.md#classifyassembly--async-partassembly-subtype) for the query and the concurrency cap, and [`architecture.md`](architecture.md#async-assembly-vs-part-classification) for the cancellation pattern (a `contentsGen` counter on the Model drops late responses when the user has navigated away).
-
----
-
-## When the app crashes
-
-If fusionlocalserver exits unexpectedly:
-
-1. Re-run with `FUSIONLOCALSERVER_DEBUG=1` so the debug log captures the actions leading up to the crash.
-2. Reproduce the crash.
-3. Attach **both** `debug.log` and `panic.log` to your bug report.
-
-`panic.log` is appended-to, not truncated, so multiple crashes accumulate. If you've been debugging for a while and the file is large, the most relevant entry is the *last* `=== panic at <timestamp> ===` block.
-
----
-
-## Disabling debug mode
-
-Just don't set the environment variable:
-
-```sh
-fusionlocalserver           # quiet — no debug logging anywhere
-```
-
-In quiet mode no log files are written and the in-memory ring buffer stays empty. The `?` debug overlay opens but reads "Debug mode is off. Re-launch with FUSIONLOCALSERVER_DEBUG=1 to enable logging."
+When a folder's contents load, the app dispatches up to 50 small `componentVersion(...).occurrences(pagination: { limit: 1 })` queries in parallel, capped at 8 concurrent in flight by a semaphore. Under `-v` this shows up as a burst of similar requests right after the `itemsByFolder` / `itemsByProject` response. Each one returns a single-result list (or empty) and refines a row's icon to assembly or part. If those queries 401 or get rate-limited, the corresponding rows silently keep their generic design icon — failures here never block navigation. See [`api.md`](api.md#classifyassembly--asyncpartassembly-subtype) for the query and the concurrency cap.
 
 ---
 
 ## Privacy and security
 
-- All log files are written with mode `0600` (owner-only read/write).
-- Token files (`tokens.json`) are separate from the debug log and are never read by the logger.
-- The Authorization header is filtered out of every request body before it's logged.
-- Stderr mirroring requires explicit redirection; the app never writes to stderr while bound to a TTY.
+- `server.log` is written with mode `0600` (owner-only read/write).
+- Per-user sessions live only in server memory; there is no on-disk token file.
+- The `Authorization` header is never logged, and `signedUrl` values are redacted from traces.
 - Nothing is uploaded automatically. Logs stay on your machine until you choose to share them.
 
 If you find a bug that *does* leak tokens or other sensitive data into a log, please report it privately rather than filing a public issue — see `SECURITY-TODO.md` and the security-fix history (PR #1) for how the project handles such reports.
