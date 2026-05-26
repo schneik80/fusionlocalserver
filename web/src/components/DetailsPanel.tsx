@@ -1,17 +1,14 @@
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faLocationArrow } from '@fortawesome/free-solid-svg-icons'
 import {
   Box,
   CircularProgress,
-  IconButton,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   Paper,
   Stack,
   Tab,
   Tabs,
-  Tooltip,
   Typography,
 } from '@mui/material'
 import { useQueryClient } from '@tanstack/react-query'
@@ -414,14 +411,13 @@ function DrawingsTab({
   return (
     <List dense disablePadding>
       {drawings.map((d: DrawingRef) => (
-        <ListItem key={d.drawingItemId} disablePadding sx={{ py: 0.5 }}>
-          <ListItemText
-            primary={d.name}
-            secondary={`${fmtDate(d.modifiedOn)}${d.modifiedBy ? ` · ${d.modifiedBy}` : ''}`}
-            primaryTypographyProps={{ variant: 'body2', noWrap: true }}
-            secondaryTypographyProps={{ variant: 'caption' }}
-          />
-        </ListItem>
+        <NavRow
+          key={d.drawingItemId}
+          itemId={d.drawingItemId}
+          name={d.name}
+          kind="drawing"
+          secondary={`${fmtDate(d.modifiedOn)}${d.modifiedBy ? ` · ${d.modifiedBy}` : ''}`}
+        />
       ))}
     </List>
   )
@@ -445,28 +441,49 @@ function RefList({
   return (
     <List dense disablePadding>
       {list.map((r) => (
-        <RefRow key={r.id || r.designItemId || r.name} r={r} />
+        <NavRow
+          key={r.id || r.designItemId || r.name}
+          itemId={r.designItemId}
+          name={r.designItemName || r.name}
+          kind="design"
+          componentVersionId={r.id}
+          secondary={[r.partNumber, r.material].filter(Boolean).join(' · ') || undefined}
+        />
       ))}
     </List>
   )
 }
 
-// RefRow is one Uses / Where Used row. Hovering reveals a "go to" action that
-// navigates the browser to that document — it resolves the design's location
-// (project + folder path) and selects it, the same flow the Pins dialog uses.
-function RefRow({ r }: { r: ComponentRef }) {
+// NavRow is a clickable row for the Uses / Where Used / Drawings tabs. It mirrors
+// the Projects/Contents rows — a ListItemButton picks up the themed hover and
+// selected highlight — and on click navigates the browser to that document by
+// resolving its location (project + folder path), the flow the Pins dialog uses.
+function NavRow({
+  itemId,
+  name,
+  kind,
+  componentVersionId,
+  secondary,
+}: {
+  itemId?: string
+  name: string
+  kind: string
+  componentVersionId?: string
+  secondary?: string
+}) {
   const nav = useNav()
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
-  const canNav = !!r.designItemId && !!nav.hubId
+  const canNav = !!itemId && !!nav.hubId
+  const selected = !!itemId && nav.selected?.id === itemId
 
   const goTo = async () => {
     if (!canNav || busy) return
     setBusy(true)
     try {
       const loc = await qc.fetchQuery({
-        queryKey: ['location', nav.hubId, r.designItemId],
-        queryFn: () => api.itemLocation(nav.hubId!, r.designItemId!),
+        queryKey: ['location', nav.hubId, itemId],
+        queryFn: () => api.itemLocation(nav.hubId!, itemId!),
         staleTime: 5 * 60 * 1000,
       })
       const project: Item = {
@@ -482,14 +499,13 @@ function RefRow({ r }: { r: ComponentRef }) {
         kind: 'folder',
         isContainer: true,
       }))
-      const selected: Item = {
-        id: r.designItemId!,
-        name: r.designItemName || r.name,
-        kind: 'design',
-        componentVersionId: r.id,
+      nav.navigate(project, folderStack, {
+        id: itemId!,
+        name,
+        kind,
+        componentVersionId,
         isContainer: false,
-      }
-      nav.navigate(project, folderStack, selected)
+      })
     } catch {
       /* couldn't resolve the location — leave the user where they are */
     } finally {
@@ -499,35 +515,17 @@ function RefRow({ r }: { r: ComponentRef }) {
 
   return (
     <ListItem
-      sx={{ py: 0.5, '&:hover .goto-action': { opacity: 1 } }}
-      secondaryAction={
-        canNav ? (
-          <Tooltip title="Go to document">
-            <IconButton
-              className="goto-action"
-              size="small"
-              edge="end"
-              onClick={goTo}
-              disabled={busy}
-              sx={{ opacity: 0, transition: 'opacity 120ms' }}
-            >
-              {busy ? (
-                <CircularProgress size={14} />
-              ) : (
-                <FontAwesomeIcon icon={faLocationArrow} style={{ fontSize: 12 }} />
-              )}
-            </IconButton>
-          </Tooltip>
-        ) : undefined
-      }
+      disablePadding
+      secondaryAction={busy ? <CircularProgress size={14} sx={{ mr: 1 }} /> : undefined}
     >
-      <ListItemText
-        primary={r.designItemName || r.name}
-        secondary={[r.partNumber, r.material].filter(Boolean).join(' · ') || undefined}
-        primaryTypographyProps={{ variant: 'body2', noWrap: true }}
-        secondaryTypographyProps={{ variant: 'caption' }}
-        sx={{ pr: 4 }}
-      />
+      <ListItemButton selected={selected} onClick={goTo} disabled={!canNav} sx={{ py: 0.5 }}>
+        <ListItemText
+          primary={name}
+          secondary={secondary}
+          primaryTypographyProps={{ variant: 'body2', noWrap: true, fontWeight: selected ? 600 : 400 }}
+          secondaryTypographyProps={{ variant: 'caption' }}
+        />
+      </ListItemButton>
     </ListItem>
   )
 }
