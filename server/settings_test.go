@@ -33,12 +33,12 @@ func TestSettings_SaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestResolveAddr(t *testing.T) {
-	t.Run("not configurable ignores server.json", func(t *testing.T) {
+	t.Run("not configurable (dev) ignores server.json and pins the default port", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		if err := SaveSettings(Settings{Port: 9000}); err != nil {
 			t.Fatal(err)
 		}
-		s := &Server{logger: quietLogger(), portConfigurable: false, opts: Options{Addr: "0.0.0.0:8080"}}
+		s := &Server{logger: quietLogger(), portConfigurable: false}
 		if got := s.resolveAddr(); got != "0.0.0.0:8080" {
 			t.Errorf("resolveAddr = %q, want %q", got, "0.0.0.0:8080")
 		}

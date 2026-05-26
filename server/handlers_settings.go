@@ -21,7 +21,7 @@ const (
 func (s *Server) handleSetPort(w http.ResponseWriter, r *http.Request) {
 	if !s.portConfigurable {
 		writeError(w, http.StatusConflict,
-			"port is not configurable: the server was started with an explicit -addr or in dev mode")
+			"port is not configurable: the server is running in dev mode")
 		return
 	}
 

@@ -7,14 +7,12 @@ import (
 	"github.com/schneik80/fusionlocalserver/api"
 )
 
-// handleMeta describes the running server: version, region, and whether the
-// stubbed Fusion/STEP features are enabled (always false this iteration).
+// handleMeta describes the running server: version, region, and the listen
+// port (plus whether it can be changed at runtime).
 func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MetaDTO{
 		Version:          s.opts.Version,
 		Region:           regionLabel(s.region),
-		FusionEnabled:    false,
-		StepEnabled:      false,
 		Port:             s.currentPort(),
 		PortConfigurable: s.portConfigurable,
 	})

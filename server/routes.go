@@ -38,10 +38,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/pins", s.handlePinsAdd)
 	mux.HandleFunc("DELETE /api/pins", s.handlePinsRemove)
 
-	// Stubs (501).
-	mux.HandleFunc("POST /api/fusion/open", s.handleStub)
-	mux.HandleFunc("POST /api/step/download", s.handleStub)
-
 	// Unmatched API paths -> JSON 404 (kept off the SPA fallback).
 	mux.HandleFunc("/api/", s.handleAPINotFound)
 

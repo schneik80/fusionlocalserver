@@ -26,15 +26,16 @@ import (
 // Options configures a server run. Config may be nil when CfgErr is set (no
 // usable APS configuration); Bootstrap then fails fast with a clear message.
 type Options struct {
-	// Addr is the bind address from the -addr flag. It is authoritative only
-	// when AddrExplicit is true; otherwise the bind address is derived from the
-	// persisted port setting (server.json), defaulting to 0.0.0.0:8080.
-	Addr         string
-	AddrExplicit bool
-	Dev          bool
-	Config       *config.Config
-	CfgErr       error
-	Version      string
+	// Verbose raises the log level to debug and adds per-request and upstream
+	// API tracing, to both the console and the log file.
+	Verbose bool
+	// Dev proxies the web UI to the Vite dev server for HMR and pins the listen
+	// port to the default (so the proxy target is stable); the runtime
+	// port-change endpoint is disabled in this mode.
+	Dev     bool
+	Config  *config.Config
+	CfgErr  error
+	Version string
 }
 
 // Server holds the runtime state shared across handlers.
@@ -44,10 +45,9 @@ type Server struct {
 	tm     *TokenManager
 	region string // resolved APS region ("" == US)
 
-	// portConfigurable gates the runtime port-change endpoint. The port is
-	// only owned by the server when it derives the address itself — i.e. when
-	// -addr was not given explicitly and we are not in dev mode (where the
-	// Vite proxy is pinned to 8080).
+	// portConfigurable gates the runtime port-change endpoint. The server owns
+	// the port (and so derives the bind address from server.json) unless it is
+	// in dev mode, where the Vite proxy is pinned to the default port.
 	portConfigurable bool
 
 	// restartCh signals the bind loop to drain the current listener and rebind
@@ -81,7 +81,11 @@ const (
 // or fails to start. It performs the one-time interactive auth bootstrap
 // before binding the listener, so any browser login happens up front.
 func Run(opts Options) error {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	level := slog.LevelInfo
+	if opts.Verbose {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
 	var clientID, clientSecret, region string
 	if opts.Config != nil {
@@ -105,7 +109,7 @@ func Run(opts Options) error {
 		logger:           logger,
 		tm:               NewTokenManager(clientID, clientSecret, logger),
 		region:           region,
-		portConfigurable: !opts.AddrExplicit && !opts.Dev,
+		portConfigurable: !opts.Dev,
 		restartCh:        make(chan struct{}, 1),
 		thumbs:           newThumbCache(512, 10*time.Minute),
 		warmSem:          make(chan struct{}, 12),
@@ -229,13 +233,13 @@ func (s *Server) drain(srv *http.Server) {
 	}
 }
 
-// resolveAddr computes the bind address. The persisted port (server.json) is
-// consulted only when the server owns the port — i.e. portConfigurable. When
-// -addr was explicit, or in dev mode (where the Vite proxy is pinned to the
-// flag's :8080), the flag value is used verbatim and server.json is ignored.
+// resolveAddr computes the bind address, always on the wildcard host. In dev
+// mode the port is pinned to the default (the Vite proxy targets it); otherwise
+// the server owns the port and derives it from the persisted setting
+// (server.json), falling back to the default.
 func (s *Server) resolveAddr() string {
 	if !s.portConfigurable {
-		return s.opts.Addr
+		return fmt.Sprintf("0.0.0.0:%d", defaultPort)
 	}
 	port := defaultPort
 	if set, err := LoadSettings(); err != nil {

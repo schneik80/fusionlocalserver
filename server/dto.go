@@ -14,13 +14,11 @@ import (
 
 // MetaDTO is the server self-description returned by GET /api/meta.
 type MetaDTO struct {
-	Version       string `json:"version"`
-	Region        string `json:"region"`
-	FusionEnabled bool   `json:"fusionEnabled"`
-	StepEnabled   bool   `json:"stepEnabled"`
+	Version string `json:"version"`
+	Region  string `json:"region"`
 	// Port is the currently bound listen port. PortConfigurable reports whether
-	// it can be changed at runtime via POST /api/settings/port (false when
-	// -addr was passed explicitly or in dev mode).
+	// it can be changed at runtime via POST /api/settings/port (false in dev
+	// mode).
 	Port             int  `json:"port"`
 	PortConfigurable bool `json:"portConfigurable"`
 }

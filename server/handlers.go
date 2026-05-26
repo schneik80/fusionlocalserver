@@ -47,3 +47,9 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	s.logger.Error("handler error", "path", r.URL.Path, "query", r.URL.RawQuery, "status", status, "err", err)
 	writeError(w, status, err.Error())
 }
+
+// handleAPINotFound returns a JSON 404 for unmatched /api/* paths so API
+// clients never receive the SPA's index.html in place of an error envelope.
+func (s *Server) handleAPINotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "no such API endpoint: "+r.URL.Path)
+}

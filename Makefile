@@ -34,15 +34,16 @@ install: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
 	go install -tags embed_ui -ldflags "$(LDFLAGS)" .
 
-# Build the full app and serve it on the LAN. Binds 0.0.0.0:8080 by default;
-# startup logs the reachable http://<lan-ip>:8080 URLs so you can open it from
-# another machine. Override with `make run ARGS="-addr 0.0.0.0:9000"`.
+# Build the full app and serve it on the LAN. Binds 0.0.0.0:8080 by default
+# (change the port from the web UI's Settings dialog); startup logs the
+# reachable http://<lan-ip>:8080 URLs so you can open it from another machine.
+# Pass ARGS to add flags, e.g. `make run ARGS="-v"`.
 run: build
-	./fusionlocalserver -server $(ARGS)
+	./fusionlocalserver $(ARGS)
 
 # Dev build: no embedded UI and no embedded client_id — for local dev using env
 # vars or config.json. Go-only (stub UI); pair with `cd web && npm run dev` and
-# run `./fusionlocalserver -server -dev` for HMR.
+# run `./fusionlocalserver -dev` for HMR.
 dev:
 	go build -o fusionlocalserver .
 

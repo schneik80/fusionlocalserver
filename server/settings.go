@@ -10,7 +10,7 @@ import (
 	"github.com/schneik80/fusionlocalserver/config"
 )
 
-// defaultPort is the bind port when none is configured and -addr is not set.
+// defaultPort is the bind port when none is configured in server.json.
 const defaultPort = 8080
 
 // Settings holds web-server runtime preferences that a user can change at
