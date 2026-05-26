@@ -24,12 +24,12 @@ type BOMRow struct {
 // allOccurrences (every descendant, not just immediate children) and groups by
 // component version id, preserving first-seen order.
 func GetBOM(ctx context.Context, token, componentVersionID string) ([]BOMRow, error) {
-	// limit 100 keeps each page under the APS query-complexity cap (~1000
-	// points); pagination walks the rest.
+	// The v2 API caps PaginationInput.limit at 50 (same as occurrences /
+	// whereUsed); pagination walks the rest of a large assembly.
 	const qFirst = `
 		query GetBOM($cvId: ID!) {
 			componentVersion(componentVersionId: $cvId) {
-				allOccurrences(pagination: { limit: 100 }) {
+				allOccurrences(pagination: { limit: 50 }) {
 					pagination { cursor }
 					results {
 						componentVersion { id name partNumber partDescription materialName }
@@ -40,7 +40,7 @@ func GetBOM(ctx context.Context, token, componentVersionID string) ([]BOMRow, er
 	const qNext = `
 		query GetBOMNext($cvId: ID!, $cursor: String!) {
 			componentVersion(componentVersionId: $cvId) {
-				allOccurrences(pagination: { cursor: $cursor, limit: 100 }) {
+				allOccurrences(pagination: { cursor: $cursor, limit: 50 }) {
 					pagination { cursor }
 					results {
 						componentVersion { id name partNumber partDescription materialName }
