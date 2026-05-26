@@ -16,10 +16,10 @@ func clearEnv(t *testing.T) {
 	t.Setenv("APS_REGION", "")
 }
 
-// writeConfigFile creates ~/.config/fusiondatacli/config.json under the given home dir.
+// writeConfigFile creates ~/.config/fusionlocalserver/config.json under the given home dir.
 func writeConfigFile(t *testing.T, home, contents string) {
 	t.Helper()
-	dir := filepath.Join(home, ".config", "fusiondatacli")
+	dir := filepath.Join(home, ".config", "fusionlocalserver")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestDir_CreatesWithMode0700(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dir: %v", err)
 	}
-	want := filepath.Join(home, ".config", "fusiondatacli")
+	want := filepath.Join(home, ".config", "fusionlocalserver")
 	if dir != want {
 		t.Errorf("Dir = %q, want %q", dir, want)
 	}
@@ -218,7 +218,7 @@ func TestPath_ReturnsExpected(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	got := Path()
-	want := filepath.Join(home, ".config", "fusiondatacli", "config.json")
+	want := filepath.Join(home, ".config", "fusionlocalserver", "config.json")
 	if got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}

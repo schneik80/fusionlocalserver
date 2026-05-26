@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/auth"
+	"github.com/schneik80/fusionlocalserver/auth"
 )
 
 func quietLogger() *slog.Logger {
@@ -24,7 +24,7 @@ func quietLogger() *slog.Logger {
 // a temp dir first via t.Setenv.
 func writeFakeTokens(t *testing.T, td *auth.TokenData) {
 	t.Helper()
-	dir := filepath.Join(os.Getenv("HOME"), ".config", "fusiondatacli")
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "fusionlocalserver")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}

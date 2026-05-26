@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/api"
+	"github.com/schneik80/fusionlocalserver/api"
 )
 
 // handleUses is polymorphic, mirroring the TUI's Uses tab:

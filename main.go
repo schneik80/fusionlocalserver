@@ -9,9 +9,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/schneik80/FusionDataCLI/config"
-	"github.com/schneik80/FusionDataCLI/server"
-	"github.com/schneik80/FusionDataCLI/ui"
+	"github.com/schneik80/fusionlocalserver/config"
+	"github.com/schneik80/fusionlocalserver/server"
+	"github.com/schneik80/fusionlocalserver/ui"
 )
 
 // version is set at build time via -ldflags "-X main.version=x.y.z".

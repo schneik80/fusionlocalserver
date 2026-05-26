@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 // FolderRef is a single hop in a folder ancestry chain (mirrors api.FolderRef).

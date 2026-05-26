@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/schneik80/FusionDataCLI/api"
+	"github.com/schneik80/fusionlocalserver/api"
 )
 
 // TestBrowserLayoutFitsTerminal is a regression test for the bug where the
@@ -30,7 +30,7 @@ func TestBrowserLayoutFitsTerminal(t *testing.T) {
 				t.Fatalf("output %d lines exceeds terminal %d (header will scroll off)", h, size.h)
 			}
 			first := strings.Split(out, "\n")[0]
-			if !strings.Contains(first, "FusionDataCLI") {
+			if !strings.Contains(first, "fusionlocalserver") {
 				t.Fatalf("header missing from first line: %q", first)
 			}
 		})

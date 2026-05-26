@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/auth"
+	"github.com/schneik80/fusionlocalserver/auth"
 )
 
 var _ = strings.HasSuffix // keep import even if early return uses it

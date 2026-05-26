@@ -1,8 +1,8 @@
 # Testing
 
-How the FusionDataCLI test suite is structured, how to run it, and how to add a new test that fits the existing pattern.
+How the fusionlocalserver test suite is structured, how to run it, and how to add a new test that fits the existing pattern.
 
-The suite is small (~80 test functions, finishes under five seconds with `-race`) but covers the full vertical slice from pure helpers up through Bubble Tea state-machine transitions driven against a fake APS server.
+The suite is small (finishes under five seconds with `-race`) but covers the full vertical slice from pure helpers up through Bubble Tea state-machine transitions driven against a fake APS server. The `-server` package adds its own focused tests (settings persistence, the token manager, the thumbnail cache, and a thumbnail handler) alongside the shared layers it reuses.
 
 ---
 
@@ -62,6 +62,7 @@ graph TD
 | `api` | 65% | ~70% |
 | `pins` | 70% | ~85% |
 | `ui` | 30% | ~40% |
+<!-- TODO(rebrand): add a `server` coverage row once a floor/current figure is established for the new server package. -->
 
 UI is intentionally lower because View() rendering is exercised by humans; the L3 tests cover the state-machine transitions that *drive* View() but don't assert on the styled output. Don't chase UI coverage by writing pixel-snapshot tests — they break on every theme tweak and don't catch logic bugs.
 

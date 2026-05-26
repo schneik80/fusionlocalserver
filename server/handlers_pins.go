@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/schneik80/FusionDataCLI/pins"
+	"github.com/schneik80/fusionlocalserver/pins"
 )
 
-// Pins are stored per-hub in ~/.config/fusiondatacli/pins-<hub>.json. The
+// Pins are stored per-hub in ~/.config/fusionlocalserver/pins-<hub>.json. The
 // mutate endpoints follow a Load -> mutate -> Save cycle that is not atomic on
 // disk, so s.pinsMu serialises them to prevent a lost update when two clients
 // pin concurrently. pins.Pin already carries JSON tags, so it doubles as the

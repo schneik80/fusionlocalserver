@@ -16,7 +16,7 @@ items below remain.
     callback handler.
 
 - [ ] **M3. Redact signed URLs from debug logs** — `api/client.go`, `api/debug.go`
-  - When `APSNAV_DEBUG=1`, the GraphQL response bodies logged via
+  - When `FUSIONLOCALSERVER_DEBUG=1`, the GraphQL response bodies logged via
     `dbgLog` include `signedUrl` fields for STEP derivatives. Those
     URLs are credentials.
   - Either: (a) regex-redact `"signedUrl":"…"` substrings before
@@ -26,7 +26,7 @@ items below remain.
 ## Low
 
 - [ ] **L1. Move tokens to OS keychain** — `auth/tokens.go`
-  - Currently plaintext at `~/.config/fusiondatacli/tokens.json` (mode
+  - Currently plaintext at `~/.config/fusionlocalserver/tokens.json` (mode
     0600). Conventional for a CLI but the macOS Keychain / Windows
     DPAPI / Linux secret-service would be stronger.
   - At minimum, mention storage location + plaintext in the About

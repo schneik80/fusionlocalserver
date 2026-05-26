@@ -1,6 +1,8 @@
 # Authentication
 
-FusionDataCLI uses the **OAuth 2.0 Authorization Code flow with PKCE** (Proof Key for Code Exchange), which is the recommended approach for CLI and native applications. No client secret is required when using a public APS app registration.
+fusionlocalserver uses the **OAuth 2.0 Authorization Code flow with PKCE** (Proof Key for Code Exchange), which is the recommended approach for CLI and native applications. No client secret is required when using a public APS app registration.
+
+The same `auth` package backs both front ends. In the TUI, login is triggered interactively from the browser screen. In `-server` mode the login runs **once at startup on the server host** (`TokenManager.Bootstrap`): a still-valid cached token is reused as-is, an expired one with a refresh token is refreshed, and otherwise a browser opens on the host for an interactive login before the listener binds. After that, every web client shares that one cached APS identity — there is no per-user login.
 
 ---
 
@@ -16,8 +18,8 @@ PKCE prevents authorization code interception by binding the code exchange to a 
 sequenceDiagram
     autonumber
     participant U as User
-    participant App as FusionDataCLI
-    participant FS as ~/.config/fusiondatacli/
+    participant App as fusionlocalserver
+    participant FS as ~/.config/fusionlocalserver/
     participant LS as Local Server :7879
     participant B as System Browser
     participant APS as APS Auth v2
@@ -73,7 +75,7 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant App as FusionDataCLI
+    participant App as fusionlocalserver
     participant FS as tokens.json
     participant APS as APS Auth v2
 
@@ -95,7 +97,7 @@ sequenceDiagram
 | Verifier generation | `crypto/rand` — 64 bytes | `newVerifier()` → base64url (no padding) |
 | Challenge derivation | SHA-256 → base64url | `verifierToChallenge(verifier)` |
 | Challenge method | `S256` | Sent as query parameter to `/authorize` |
-| Token storage | JSON file | `~/.config/fusiondatacli/tokens.json`, mode `0600` |
+| Token storage | JSON file | `~/.config/fusionlocalserver/tokens.json`, mode `0600` |
 
 ---
 
@@ -120,7 +122,7 @@ APS supports both public and confidential app registrations.
 | **Public client** (default) | `client_id` in POST form body | CLI tools, no server-side secret storage |
 | **Confidential client** | HTTP Basic Auth (`client_id:client_secret`) | Server-side apps with secure secret storage |
 
-FusionDataCLI detects which mode to use automatically:
+fusionlocalserver detects which mode to use automatically:
 - If `APS_CLIENT_SECRET` / `client_secret` in config → confidential (Basic Auth, no form client_id)
 - Otherwise → public client (form body only)
 
@@ -152,7 +154,7 @@ sequenceDiagram
 
 ## Token File Format
 
-`~/.config/fusiondatacli/tokens.json`:
+`~/.config/fusionlocalserver/tokens.json`:
 
 ```json
 {
@@ -170,7 +172,7 @@ The file is written with mode `0600` (owner read/write only). `expires_at` is co
 
 - The `code_verifier` is generated fresh on every login — it is never stored or logged
 - Tokens are stored in the user config directory (`os.UserConfigDir()`), not in the project directory
-- Debug mode (`APSNAV_DEBUG=1`) logs API request/response bodies but **does not log tokens** — `Authorization` header values are not included in debug output
+- Debug mode (`FUSIONLOCALSERVER_DEBUG=1`) logs API request/response bodies but **does not log tokens** — `Authorization` header values are not included in debug output
 - Port 7879 is used only during the OAuth callback window; the server stops immediately after receiving one valid request
 - The OAuth callback listener binds to `127.0.0.1` only, never `0.0.0.0` (H1)
 - Reflected `error` / `error_description` query params on the callback page are HTML-escaped (XSS defense)

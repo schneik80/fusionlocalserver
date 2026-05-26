@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 func TestTokenData_Valid(t *testing.T) {

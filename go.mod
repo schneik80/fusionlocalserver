@@ -1,4 +1,4 @@
-module github.com/schneik80/FusionDataCLI
+module github.com/schneik80/fusionlocalserver
 
 go 1.22
 

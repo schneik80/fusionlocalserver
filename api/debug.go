@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 const maxDebugLines = 500

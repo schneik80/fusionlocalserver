@@ -11,10 +11,10 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/schneik80/FusionDataCLI/api"
-	"github.com/schneik80/FusionDataCLI/auth"
-	"github.com/schneik80/FusionDataCLI/fusion"
-	"github.com/schneik80/FusionDataCLI/internal/testutil"
+	"github.com/schneik80/fusionlocalserver/api"
+	"github.com/schneik80/fusionlocalserver/auth"
+	"github.com/schneik80/fusionlocalserver/fusion"
+	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
 // TestUpdate_TokenReadyMsg_TransitionsToLoading drives the model from the

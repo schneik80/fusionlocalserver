@@ -17,7 +17,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/auth"
+	"github.com/schneik80/fusionlocalserver/auth"
 )
 
 func init() {

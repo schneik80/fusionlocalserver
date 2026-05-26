@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/auth"
+	"github.com/schneik80/fusionlocalserver/auth"
 )
 
 // proactiveSkew is how far before a token's expiry the background refresher
@@ -25,7 +25,7 @@ var errNoRefresh = errors.New("token expired and no refresh token available — 
 
 // TokenManager owns the single APS identity the server proxies every request
 // through. It reuses the auth package's disk-cached token (the same
-// ~/.config/fusiondatacli/tokens.json the TUI writes) and keeps it fresh.
+// ~/.config/fusionlocalserver/tokens.json the TUI writes) and keeps it fresh.
 //
 // Concurrency model: a single mutex guards both the cached token and the
 // refresh round-trip. APS rotates the refresh token on every use, so two

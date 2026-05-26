@@ -1,6 +1,11 @@
 # Architecture
 
-FusionDataCLI is a single-binary terminal application written in Go. It authenticates with Autodesk Platform Services (APS), then renders a live three-column browser over the Manufacturing Data Model hierarchy using a reactive TUI loop.
+fusionlocalserver is a single-binary Go application that authenticates with Autodesk Platform Services (APS) and browses the Manufacturing Data Model hierarchy. It ships **two front ends over one shared core**:
+
+- **TUI (default)** — a reactive Bubble Tea three-column terminal browser (package `ui/`).
+- **Server (`-server`)** — an HTTP service (package `server/`) that exposes a JSON REST API under `/api/*` and serves an embedded React/MUI single-page web UI built from `web/`.
+
+Both front ends sit on the same UI-agnostic layers — `api/` (APS Manufacturing Data Model GraphQL client), `auth/` (OAuth PKCE + cached tokens), `config/`, and `pins/`.
 
 ---
 
@@ -8,28 +13,30 @@ FusionDataCLI is a single-binary terminal application written in Go. It authenti
 
 ```mermaid
 C4Context
-    title FusionDataCLI — System Context
+    title fusionlocalserver — System Context
 
     Person(user, "Designer / Engineer", "Autodesk account holder with access to at least one Fusion Team hub")
+    Person(lan_user, "LAN web user", "Browses the web UI over the LAN. There is no auth gate — they act as the server's APS identity.")
 
-    System(app, "FusionDataCLI", "Cross-platform terminal browser for APS Manufacturing Data Model. Runs entirely in the terminal — no GUI, no browser dependency after first login.")
+    System(app, "fusionlocalserver", "Single Go binary with two front ends: a terminal UI (default) and an HTTP server (-server) exposing a JSON API + embedded React/MUI web UI. Both reuse one cached APS identity.")
 
     System_Ext(aps_auth, "APS Authentication v2", "OAuth 2.0 authorization server. Issues access and refresh tokens via PKCE 3-legged flow.")
 
-    System_Ext(aps_mfg, "APS Manufacturing Data Model", "GraphQL API (v2). Exposes hubs, projects, folders, items, and version history for Fusion designs.")
+    System_Ext(aps_mfg, "APS Manufacturing Data Model", "GraphQL API (v2). Exposes hubs, projects, folders, items, version history, thumbnails, and physical properties for Fusion designs.")
 
-    System_Ext(browser, "System Default Browser", "Used once during first login to complete the OAuth consent page. Not required after token is cached.")
+    System_Ext(browser, "System Default Browser", "Used once during first login (on the host) to complete the OAuth consent page. Not required after the token is cached.")
 
-    System_Ext(fusion, "Fusion Desktop", "Optional. Provides a local MCP server (http://127.0.0.1:27182/mcp) used to open and insert documents in the running app.")
+    System_Ext(fusion, "Fusion Desktop", "Optional. Provides a local MCP server (http://127.0.0.1:27182/mcp) used by the TUI to open and insert documents in the running app.")
 
-    SystemDb_Ext(fs, "Local Filesystem", "~/.config/fusiondatacli/ — stores config.json (client ID) and tokens.json (access + refresh tokens).")
+    SystemDb_Ext(fs, "Local Filesystem", "~/.config/fusionlocalserver/ — config.json (client ID), tokens.json (access + refresh tokens), pins-<hub>.json, and server.json (web-server port).")
 
-    Rel(user, app, "Navigates with keyboard")
+    Rel(user, app, "Navigates the TUI with keyboard")
+    Rel(lan_user, app, "Browses the web UI over the LAN", "HTTP")
     Rel(app, aps_auth, "PKCE OAuth login + token refresh", "HTTPS POST")
     Rel(app, aps_mfg, "GraphQL queries", "HTTPS POST")
-    Rel(app, fs, "Reads config, reads/writes tokens")
+    Rel(app, fs, "Reads config, reads/writes tokens, pins, server.json")
     Rel(app, browser, "Opens auth URL on first login", "OS exec")
-    Rel(app, fusion, "JSON-RPC tool calls (open / insert document)", "HTTP")
+    Rel(app, fusion, "JSON-RPC tool calls (open / insert document) — TUI only", "HTTP")
     Rel(browser, aps_auth, "Redirects to 127.0.0.1:7879/callback (loopback only)")
 ```
 
@@ -37,40 +44,68 @@ C4Context
 
 ## Container Diagram
 
+`main.go` parses flags and dispatches to one of two front ends — `runTUI` (default) or `server.Run` (`-server`) — both wired over the same shared `config` / `auth` / `api` / `pins` packages.
+
 ```mermaid
 C4Container
-    title FusionDataCLI — Containers
+    title fusionlocalserver — Containers
 
-    Person(user, "User")
+    Person(user, "TUI user")
+    Person(web_user, "Web user (LAN)")
 
-    Container_Boundary(app, "FusionDataCLI (single binary)") {
-        Component(main, "main", "Go — main.go", "CLI entry point. Loads config, wires packages, starts BubbleTea event loop with alternate-screen mode.")
+    Container_Boundary(app, "fusionlocalserver (single binary)") {
+        Component(main, "main", "Go — main.go", "Entry point. Parses flags; runs the TUI by default or the HTTP server with -server. Loads config; owns the TUI panic-log wrapper.")
+
+        Component(ui, "ui", "Go package", "Default mode. BubbleTea Model/Update/View. Three-column ranger-style browser with optional fourth details column, pins overlay, themes, About/debug overlays.")
+
+        Component(server, "server", "Go package", "-server mode. HTTP service: JSON REST API under /api/*, plus an embedded React/MUI SPA. TokenManager holds one APS identity; thumbnail cache + image proxy; runtime port rebind. No TUI dependencies.")
+        Component(webui, "web (React/MUI SPA)", "TypeScript / Vite", "Single-page app built from web/ into server/webdist and embedded via -tags embed_ui. Browser columns, details panel (metadata + thumbnail + tabs), pins + settings dialogs.")
+
         Component(config, "config", "Go package", "Three-layer config loader: env vars → config.json → build-time linker default. Resolves client ID and APS region.")
-        Component(auth, "auth", "Go package", "Full OAuth 2.0 PKCE flow. Generates verifier/challenge, opens browser, runs local callback server, exchanges code for tokens, saves and refreshes token data.")
-        Component(api, "api", "Go package", "Typed GraphQL client. Executes cursor-paginated queries for hubs, projects, folders, items, item details, refs, and async assembly-vs-part classification.")
+        Component(auth, "auth", "Go package", "OAuth 2.0 PKCE flow. Generates verifier/challenge, opens browser, runs local callback server, exchanges/refreshes tokens.")
+        Component(api, "api", "Go package", "Typed GraphQL client. Cursor-paginated hierarchy queries, item details, refs, async assembly classification, thumbnails, physical properties.")
         Component(pins, "pins", "Go package", "Per-hub bookmark storage. Load/Save scoped by sanitized hub ID; MigrateLegacy promotes the pre-hub-scoping single-file pins.json on first run.")
-        Component(fusion, "fusion", "Go package", "JSON-RPC client for the running Fusion desktop's local MCP server (open and insert document tools).")
-        Component(ui, "ui", "Go package", "BubbleTea Model/Update/View. Three-column ranger-style browser with optional fourth details column. Pins overlay. Three color themes. About and debug overlays.")
+        Component(fusion, "fusion", "Go package", "JSON-RPC client for the running Fusion desktop's local MCP server (open and insert document tools). Used by the TUI only.")
     }
 
     System_Ext(aps_auth, "APS Auth v2", "https://developer.api.autodesk.com/authentication/v2")
     System_Ext(aps_gql, "APS MFG GraphQL v2", "https://developer.api.autodesk.com/mfg/graphql")
     System_Ext(fusion_mcp, "Fusion MCP", "http://127.0.0.1:27182/mcp")
-    SystemDb_Ext(fs, "~/.config/fusiondatacli/")
+    SystemDb_Ext(fs, "~/.config/fusionlocalserver/")
 
     Rel(main, config, "Loads config")
-    Rel(main, ui, "Creates Model, runs program")
+    Rel(main, ui, "runTUI: creates Model, runs program")
+    Rel(main, server, "server.Run when -server")
+
+    Rel(user, ui, "Keyboard")
+    Rel(web_user, webui, "Browser over LAN", "HTTP")
+    Rel(webui, server, "fetch /api/* (same origin)", "HTTP/JSON")
+
     Rel(ui, auth, "Triggers login / token check")
     Rel(ui, api, "Issues data queries")
     Rel(ui, pins, "Load(hubID) / Save(hubID, pins)")
     Rel(ui, fusion, "Open / insert document via MCP")
+
+    Rel(server, auth, "TokenManager bootstrap + refresh")
+    Rel(server, api, "Issues data queries on behalf of web clients")
+    Rel(server, pins, "Load/Save")
+
     Rel(auth, aps_auth, "PKCE token exchange + refresh", "HTTPS")
     Rel(auth, fs, "Persists tokens.json", "os.WriteFile 0600")
     Rel(config, fs, "Reads config.json", "os.ReadFile")
     Rel(pins, fs, "Reads/writes pins-<hubID>.json", "os.WriteFile 0600")
+    Rel(server, fs, "Reads/writes server.json (port)", "os.WriteFile 0600")
     Rel(api, aps_gql, "GraphQL POST", "HTTPS")
     Rel(fusion, fusion_mcp, "JSON-RPC", "HTTP")
 ```
+
+### Server mode specifics
+
+- **Bind address.** Binds `0.0.0.0:8080` by default, so the web UI is reachable from other machines on the LAN. **There is no auth gate** — anyone who can reach the address browses as the server's single cached APS identity. Startup logs a warning and the reachable `http://<lan-ip>:8080` URLs.
+- **Runtime-configurable port.** When `-addr` was not given explicitly (and not in `-dev` mode), the listen port is owned by the server and persisted in `~/.config/fusionlocalserver/server.json`. `POST /api/settings/port` validates and saves a new port, then an in-process listener rebind drops the old listener and binds the new one without restarting the process.
+- **Embedded SPA vs. stub.** The React/MUI app is embedded only when built with `-tags embed_ui` (`server/static_embed.go`); a plain `go build` compiles `server/static_stub.go`, which serves a small "not built yet" shell. In `-dev` mode the static handler instead reverse-proxies non-`/api` requests to the Vite dev server for HMR.
+- **Thumbnail cache + image proxy.** A bounded, shared in-memory cache (`thumbCache`) holds thumbnail status/URLs and PNG bytes keyed by component-version id. It is warmed in the background off the per-row classify probe, and `/api/items/thumbnail/image` streams the bytes same-origin so browsers never fetch the cross-origin APS signed URL directly.
+- **Physical properties.** `/api/items/properties` returns a design's mass/geometry properties (v2 API); generation is async, so the web UI polls until COMPLETED.
 
 ---
 
@@ -78,7 +113,7 @@ C4Container
 
 ```mermaid
 C4Component
-    title ui package — Internal Components
+    title ui package (TUI mode) — Internal Components
 
     Component(app, "app.go", "BubbleTea Model", "Root state machine. Owns the Model struct, Init/Update/View lifecycle, all message handlers, navigation logic, and renderer orchestration.")
     Component(keys, "keys.go", "keyMap struct", "Declares all key bindings using charmbracelet/bubbles key package. Single keyMap var consumed by app.go Update loop.")
@@ -92,14 +127,24 @@ C4Component
 
 ## Package Dependency Graph
 
+`main` dispatches to either `ui` (TUI) or `server` (HTTP). Both depend on the same shared `api` / `auth` / `config` / `pins` layers; only the TUI depends on `fusion`.
+
 ```mermaid
 graph TD
     main --> config
     main --> ui
+    main --> server
+
     ui --> api
     ui --> auth
     ui --> pins
     ui --> fusion
+
+    server --> api
+    server --> auth
+    server --> pins
+    server --> config
+
     auth --> config
     api --> config
     pins --> config
@@ -115,6 +160,7 @@ graph TD
     auth --> stdlib
     api --> stdlib
     pins --> stdlib
+    server --> stdlib
 
     subgraph charm["Charm.sh (external)"]
         bubbletea["charmbracelet/bubbletea"]
@@ -125,13 +171,52 @@ graph TD
     ui --> bubbletea
     ui --> bubbles
     ui --> lipgloss
+
+    subgraph web["web/ (React/MUI SPA, embedded into server)"]
+        spa["React + MUI + Vite\n→ server/webdist (embed_ui)"]
+    end
+
+    server --> spa
+    spa -. "fetch /api/*" .-> server
 ```
+
+The Go server depends on the standard library only (`net/http`, `log/slog`, `embed`, …) — no third-party Go web framework. The `web/` SPA's dependencies (React, MUI, Vite) are managed by npm and bundled into `server/webdist`, which is embedded into the binary at build time.
 
 ---
 
-## Data Flow — From Keypress to Screen
+## Data Flow
 
-### Hierarchy navigation (arrow keys, Enter on a folder)
+The two front ends drive the same `api` package but with different glue: the TUI dispatches `tea.Cmd` goroutines from `Update`, while the server runs each `/api/*` request through a handler.
+
+### Server mode — browser request to JSON
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (React/MUI SPA)
+    participant MW as Middleware (recover → log → dev CORS)
+    participant H as Handler (server/handlers*.go)
+    participant TM as TokenManager
+    participant API as api package
+    participant APS as APS GraphQL
+
+    B->>MW: GET /api/folders/contents?... (same origin)
+    MW->>H: ServeHTTP
+    H->>TM: Token(ctx)
+    Note over TM: cached token still Valid?<br/>refresh transparently if not<br/>(401 if no refresh token)
+    TM-->>H: access token
+    H->>API: GetFolders / GetItems / GetItemDetails / …
+    API->>APS: POST /mfg/graphql
+    APS-->>API: JSON response
+    API-->>H: typed result
+    H-->>B: writeJSON(DTO)
+    Note over B: TanStack Query caches the<br/>result and renders the column
+```
+
+The SPA is served same-origin from the embedded build (or, with `-dev`, reverse-proxied to Vite), so no CORS is needed in production. Unmatched `/api/*` paths return a JSON 404; all other paths fall through to the SPA shell (`index.html`) so client-side deep links resolve.
+
+### TUI mode — From Keypress to Screen
+
+#### Hierarchy navigation (arrow keys, Enter on a folder)
 
 ```mermaid
 sequenceDiagram
@@ -157,7 +242,7 @@ sequenceDiagram
     BT->>BT: View() → render to terminal
 ```
 
-### Tab activation (1-4)
+#### Tab activation (1-4)
 
 ```mermaid
 sequenceDiagram
@@ -181,11 +266,11 @@ sequenceDiagram
     end
 ```
 
-### Show in Location (Enter / double-click on a tab row)
+#### Show in Location (Enter / double-click on a tab row)
 
 See [`docs/navigation.md`](navigation.md#tab-cursor-and-show-in-location) for the user-visible flow; the API-side detail is in [`docs/api.md`](api.md#getitemlocation--show-in-location).
 
-### Async assembly-vs-part classification
+#### Async assembly-vs-part classification
 
 After the Contents column loads, each DesignItem is enriched with an "assembly" / "part" subtype derived from whether its tipRootComponentVersion has any sub-component occurrences. The probe is dispatched in parallel under a `tea.Batch` and capped at 8 concurrent calls by a package-level semaphore in `api/classify.go`; each result flows back as an `itemClassifiedMsg` that mutates the matching row's `Subtype` in place. A `contentsGen` counter on the Model is incremented every time the Contents slice is replaced (folder drill, hub switch, project switch, refresh, recovery), and stale `itemClassifiedMsg`s whose gen no longer matches are dropped — late refinements can never stamp state onto a folder the user has already left.
 
@@ -255,8 +340,9 @@ The full `go test -race ./...` suite finishes in under five seconds. CI (`.githu
 ## File Layout
 
 ```
-FusionDataCLI/
-├── main.go                  Entry point + deferred recover(); writes ~/.config/fusiondatacli/panic.log
+fusionlocalserver/
+├── main.go                  Entry point. -server runs the HTTP server; default runs the TUI.
+│                            TUI path adds a deferred recover() → ~/.config/fusionlocalserver/panic.log
 │
 ├── config/
 │   └── config.go            Config struct, Load(), Dir(), Path(), DefaultClientID
@@ -282,12 +368,30 @@ FusionDataCLI/
 │                            DebugLines(), DebugEnabled(), DebugLogPath()
 │
 ├── pins/
-│   └── pins.go              Hub-scoped bookmark storage (~/.config/fusiondatacli/pins-<hubID>.json);
+│   └── pins.go              Hub-scoped bookmark storage (~/.config/fusionlocalserver/pins-<hubID>.json);
 │                            Load(hubID), Save(hubID, pins), MigrateLegacy() (one-shot pins.json split
 │                            into per-hub files), sanitizeHubID() for cross-platform filenames
 │
 ├── fusion/
-│   └── mcp.go               Fusion desktop MCP client (open / insert document)
+│   └── mcp.go               Fusion desktop MCP client (open / insert document) — TUI only
+│
+├── server/                  -server mode: HTTP JSON API + embedded React/MUI SPA
+│   ├── server.go            Run(), listener (re)bind loop, LAN-URL/open-network warning, resolveAddr
+│   ├── routes.go            ServeMux: /api/* JSON routes + SPA catch-all + middleware chain
+│   ├── handlers*.go         Per-endpoint handlers (nav, refs, props, pins, settings, thumbnail, stub)
+│   ├── dto.go               JSON DTOs returned to the web client
+│   ├── token.go             TokenManager — one cached APS identity, transparent refresh
+│   ├── settings.go          server.json (runtime listen port) load/save
+│   ├── thumbcache.go        Bounded in-memory thumbnail status/URL/bytes cache (shared, LRU)
+│   ├── middleware.go        recoverPanic / logRequest / dev-only CORS
+│   ├── static.go            SPA handler: embedded build (prod) or Vite reverse-proxy (-dev)
+│   ├── static_embed.go      //go:build embed_ui — go:embed server/webdist
+│   └── static_stub.go       //go:build !embed_ui — "not built yet" shell
+│
+├── web/                     React/MUI single-page UI (Vite, TypeScript)
+│   ├── src/                 App, BrowserColumns, DetailsPanel, Pins/Settings dialogs, api client
+│   ├── vite.config.ts       Builds into ../server/webdist (gitignored build output)
+│   └── package.json
 │
 ├── ui/
 │   ├── app.go               Model, Init, Update, View; nav + tab + Show-in-Location orchestration;
@@ -313,6 +417,7 @@ FusionDataCLI/
 │   ├── debugging.md         End-user defect-submission guide
 │   ├── development.md       Build, release, dependencies
 │   ├── navigation.md        Browser, tabs, Show-in-Location, pins, mouse, themes
+│   ├── server-webui-plan.md -server mode + React/MUI web UI design record
 │   └── testing.md           Three-layer test strategy + how to extend
 │
 ├── SECURITY-TODO.md         Pending security follow-ups (M1, M3, L1–L5)

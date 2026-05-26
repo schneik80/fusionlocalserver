@@ -57,7 +57,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </Field>
 
           <Field label="About">
-            <Typography variant="body2">FusionDataCLI · {meta?.version ?? '—'}</Typography>
+            <Typography variant="body2">fusionlocalserver · {meta?.version ?? '—'}</Typography>
             <Typography variant="caption" color="text.secondary">
               Fusion open/insert and STEP download are not yet available in this build.
             </Typography>

@@ -1,4 +1,4 @@
-// Package server runs FusionDataCLI as an HTTP service: a JSON REST API over
+// Package server runs fusionlocalserver as an HTTP service: a JSON REST API over
 // the shared api/auth/config/pins packages, plus an embedded React/MUI SPA. It
 // holds one APS identity (reused from the TUI's cached tokens) and proxies
 // every data call through it. The package has no TUI dependencies.
@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/api"
-	"github.com/schneik80/FusionDataCLI/config"
-	"github.com/schneik80/FusionDataCLI/pins"
+	"github.com/schneik80/fusionlocalserver/api"
+	"github.com/schneik80/fusionlocalserver/config"
+	"github.com/schneik80/fusionlocalserver/pins"
 )
 
 // Options configures a server run. Config may be nil when CfgErr is set (no

@@ -38,8 +38,8 @@ jobs:
     needs: release
     runs-on: macos-latest
     env:
-      BUNDLE_ID: com.industrialmachineartsllc.fusiondatacli
-      MODULE: github.com/schneik80/FusionDataCLI
+      BUNDLE_ID: com.industrialmachineartsllc.fusionlocalserver
+      MODULE: github.com/schneik80/fusionlocalserver
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,14 +102,14 @@ jobs:
 
           mkdir -p build
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusiondatacli-arm64 .
+            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusionlocalserver-arm64 .
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
-            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusiondatacli-amd64 .
+            go build -tags embed_ui -ldflags "${LDFLAGS}" -o build/fusionlocalserver-amd64 .
 
-          lipo -create -output build/fusiondatacli \
-            build/fusiondatacli-arm64 build/fusiondatacli-amd64
-          rm build/fusiondatacli-arm64 build/fusiondatacli-amd64
-          file build/fusiondatacli
+          lipo -create -output build/fusionlocalserver \
+            build/fusionlocalserver-arm64 build/fusionlocalserver-amd64
+          rm build/fusionlocalserver-arm64 build/fusionlocalserver-amd64
+          file build/fusionlocalserver
 
       - name: Codesign binary
         run: |
@@ -126,20 +126,20 @@ jobs:
 
           codesign --force --options runtime --timestamp \
             --sign "${APP_IDENTITY}" \
-            build/fusiondatacli
-          codesign --verify --strict --verbose=2 build/fusiondatacli
+            build/fusionlocalserver
+          codesign --verify --strict --verbose=2 build/fusionlocalserver
 
       - name: Stage payload
         run: |
           STAGING="/tmp/pkg-root/usr/local/bin"
           mkdir -p "${STAGING}"
-          cp build/fusiondatacli "${STAGING}/fusiondatacli"
-          chmod +x "${STAGING}/fusiondatacli"
+          cp build/fusionlocalserver "${STAGING}/fusionlocalserver"
+          chmod +x "${STAGING}/fusionlocalserver"
 
       - name: Build and sign .pkg
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          PKG_NAME="FusionDataCLI-${VERSION}-darwin-universal.pkg"
+          PKG_NAME="fusionlocalserver-${VERSION}-darwin-universal.pkg"
           echo "PKG_NAME=${PKG_NAME}" >> "${GITHUB_ENV}"
 
           INSTALLER_IDENTITY=$(security find-identity -v /tmp/build.keychain-db \

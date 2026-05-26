@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/schneik80/FusionDataCLI/api"
+	"github.com/schneik80/fusionlocalserver/api"
 )
 
 // handleProperties -> api.GetPhysicalProperties (query: cvId). Returns the

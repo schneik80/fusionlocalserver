@@ -29,8 +29,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/auth"
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/auth"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 const endpoint = "https://developer.api.autodesk.com/mfg/graphql"

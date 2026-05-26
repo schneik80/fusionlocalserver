@@ -20,7 +20,7 @@ func withTempConfigDir(t *testing.T) string {
 	t.Setenv("USERPROFILE", home) // Windows fallback used by os.UserHomeDir
 	// Create the expected nested config dir so the pins helpers don't
 	// have to MkdirAll on every call — matches what config.Dir does.
-	dir := filepath.Join(home, ".config", "fusiondatacli")
+	dir := filepath.Join(home, ".config", "fusionlocalserver")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatalf("setup config dir: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 // TokenData holds an OAuth access/refresh token pair with expiry.

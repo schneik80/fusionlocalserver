@@ -1,6 +1,10 @@
 # Debugging & Reporting Bugs
 
-This page is for users who hit a problem with FusionDataCLI and want to report it. It explains how to capture enough diagnostic information that the maintainers can reproduce and fix the issue without a long back-and-forth.
+This page is for users who hit a problem with fusionlocalserver and want to report it. It explains how to capture enough diagnostic information that the maintainers can reproduce and fix the issue without a long back-and-forth.
+
+The debug logging described here covers the **TUI** (default mode). The `-server` HTTP mode logs structured request lines to stdout instead (one line per request: method, path, status, duration, remote IP); a panic in any handler is recovered, logged with its stack, and returned as a JSON 500 rather than crashing the process.
+
+
 
 If you're a contributor looking for the test-suite architecture, see [`testing.md`](testing.md). If you want internals on the GraphQL client, retry behaviour, or the in-memory log, see [`api.md`](api.md).
 
@@ -8,23 +12,23 @@ If you're a contributor looking for the test-suite architecture, see [`testing.m
 
 ## Where logs live
 
-Two files appear under `~/.config/fusiondatacli/` while the app is running:
+Two files appear under `~/.config/fusionlocalserver/` while the app is running:
 
 | File | When written | Contents |
 |---|---|---|
-| `debug.log` | Whenever `APSNAV_DEBUG=1` is set. Truncated each session. Mode `0600`. | Full GraphQL request and response bodies, retry decisions, browser-open events. **No tokens, no Authorization headers.** |
+| `debug.log` | Whenever `FUSIONLOCALSERVER_DEBUG=1` is set. Truncated each session. Mode `0600`. | Full GraphQL request and response bodies, retry decisions, browser-open events. **No tokens, no Authorization headers.** |
 | `panic.log` | Only if the app crashes unrecoverably. Appended each crash (so multiple crashes accumulate). Mode `0600`. | Crash message + full goroutine stack trace from the moment the app died. |
 
 Both files are local to your machine; nothing is sent anywhere automatically. You decide what (if anything) to share when you file a defect.
 
-On Linux and macOS the path is exactly `~/.config/fusiondatacli/`. On Windows it's `%USERPROFILE%\.config\fusiondatacli\` (the same shape — the app uses `os.UserHomeDir()` directly rather than the OS-specific config dir).
+On Linux and macOS the path is exactly `~/.config/fusionlocalserver/`. On Windows it's `%USERPROFILE%\.config\fusionlocalserver\` (the same shape — the app uses `os.UserHomeDir()` directly rather than the OS-specific config dir).
 
 ---
 
 ## Enabling debug mode
 
 ```sh
-APSNAV_DEBUG=1 fusiondatacli
+FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
 ```
 
 Three things happen:
@@ -32,11 +36,11 @@ Three things happen:
 1. **In-memory log** — press `?` from the main browser at any time to scroll the rolling log of the last 500 entries. The first line of the overlay shows the path of the on-disk log file.
 2. **`debug.log` file** — written under your config dir, truncated each session start. Tail it from another terminal:
    ```sh
-   tail -f ~/.config/fusiondatacli/debug.log
+   tail -f ~/.config/fusionlocalserver/debug.log
    ```
-3. **Stderr mirror** — only when stderr is redirected. If you launch with `APSNAV_DEBUG=1 fusiondatacli 2> capture.log`, every entry is also written to `capture.log`. When stderr is your terminal, the mirror is suppressed automatically so it doesn't smear the alternate-screen render.
+3. **Stderr mirror** — only when stderr is redirected. If you launch with `FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver 2> capture.log`, every entry is also written to `capture.log`. When stderr is your terminal, the mirror is suppressed automatically so it doesn't smear the alternate-screen render.
 
-The debug log is silent unless `APSNAV_DEBUG=1` is set. There is no performance cost when it's off.
+The debug log is silent unless `FUSIONLOCALSERVER_DEBUG=1` is set. There is no performance cost when it's off.
 
 ---
 
@@ -54,9 +58,9 @@ Everything written to `debug.log` is already redacted of sensitive material:
 
 ## Filing a bug — checklist
 
-When you open an issue at <https://github.com/schneik80/FusionDataCLI/issues>, please include:
+When you open an issue at <https://github.com/schneik80/fusionlocalserver/issues>, please include:
 
-1. **Version** — `fusiondatacli` shows the version on the About screen (`shift+a`). Or check `which fusiondatacli && stat $(which fusiondatacli)`.
+1. **Version** — `fusionlocalserver` shows the version on the About screen (`shift+a`). Or check `which fusionlocalserver && stat $(which fusionlocalserver)`.
 2. **OS and terminal** — e.g. "macOS 14.5, Terminal.app" or "Linux Fedora 40, Ghostty 1.0".
 3. **What you did** — three to five lines is plenty. "Logged in, picked the *IMA* hub, selected the *RC* project, drilled into *Designs*, pressed `2` to load the Uses tab on a 200-component assembly."
 4. **What you expected vs. what happened.**
@@ -68,12 +72,12 @@ If the issue is a slow or flaky API call, we'll usually want to see at least one
 A good bug-report skeleton:
 
 ```
-Version: v4.0.0
+Version: v0.1.0
 OS: macOS 14.5 (Apple Silicon)
 Terminal: iTerm2 3.5
 
 Steps:
-1. APSNAV_DEBUG=1 fusiondatacli
+1. FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
 2. Selected hub "IMA"
 3. Selected project "RC"
 4. Drilled into "Mechanical Drawings"
@@ -94,7 +98,7 @@ These are the patterns that show up most often in `debug.log`. Recognising them 
 
 ### `RETRY attempt=N delay=… lastErr=…`
 
-The retry layer kicked in. v3.1.1+ has a 3-attempt retry loop for transient APS gateway flakiness — see [`api.md`](api.md#error-handling-and-retry). Seeing one or two retries is fine; seeing the loop bottom out with `APS GraphQL flaky after 3 attempts: …` after every action is a real bug worth filing.
+The retry layer kicked in. The client wraps each GraphQL call in a 3-attempt retry loop for transient APS gateway flakiness — see [`api.md`](api.md#error-handling-and-retry). Seeing one or two retries is fine; seeing the loop bottom out with `APS GraphQL flaky after 3 attempts: …` after every action is a real bug worth filing.
 
 ### `code:NOT_FOUND, errorType:UNKNOWN, service:cw`
 
@@ -124,9 +128,9 @@ When the Contents column loads, the app dispatches up to 50 small `componentVers
 
 ## When the app crashes
 
-If FusionDataCLI exits unexpectedly:
+If fusionlocalserver exits unexpectedly:
 
-1. Re-run with `APSNAV_DEBUG=1` so the debug log captures the actions leading up to the crash.
+1. Re-run with `FUSIONLOCALSERVER_DEBUG=1` so the debug log captures the actions leading up to the crash.
 2. Reproduce the crash.
 3. Attach **both** `debug.log` and `panic.log` to your bug report.
 
@@ -139,10 +143,10 @@ If FusionDataCLI exits unexpectedly:
 Just don't set the environment variable:
 
 ```sh
-fusiondatacli           # quiet — no debug logging anywhere
+fusionlocalserver           # quiet — no debug logging anywhere
 ```
 
-In quiet mode no log files are written and the in-memory ring buffer stays empty. The `?` debug overlay opens but reads "Debug mode is off. Re-launch with APSNAV_DEBUG=1 to enable logging."
+In quiet mode no log files are written and the in-memory ring buffer stays empty. The `?` debug overlay opens but reads "Debug mode is off. Re-launch with FUSIONLOCALSERVER_DEBUG=1 to enable logging."
 
 ---
 

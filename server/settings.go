@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/fusionlocalserver/config"
 )
 
 // defaultPort is the bind port when none is configured and -addr is not set.
@@ -22,7 +22,7 @@ type Settings struct {
 	Port int `json:"port,omitempty"`
 }
 
-// settingsPath is ~/.config/fusiondatacli/server.json. config.Dir creates the
+// settingsPath is ~/.config/fusionlocalserver/server.json. config.Dir creates the
 // directory if needed.
 func settingsPath() (string, error) {
 	dir, err := config.Dir()

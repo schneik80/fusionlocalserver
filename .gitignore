@@ -1,6 +1,6 @@
 # Binary
-fusiondatacli
-fusiondatacli.exe
+fusionlocalserver
+fusionlocalserver.exe
 probe-assembly
 
 # Build secrets — store your client_id here, never commit it
@@ -29,7 +29,7 @@ vendor/
 go/pkg/
 
 # Auth & config (never commit credentials)
-config/apsnav/
+config/fusionlocalserver/
 tokens.json
 config.json
 .env
@@ -45,7 +45,7 @@ config.json
 *.swp
 *.swo
 *~
-fusiondatacli.zip
+fusionlocalserver.zip
 
 # Generated docs (e.g. README.pdf exports)
 *.pdf

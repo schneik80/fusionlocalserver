@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/schneik80/FusionDataCLI/api"
+	"github.com/schneik80/fusionlocalserver/api"
 )
 
 // handleMeta describes the running server: version, region, and whether the

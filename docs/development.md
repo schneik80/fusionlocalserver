@@ -1,6 +1,8 @@
 # Development
 
-Everything needed to build, run, test, and release FusionDataCLI from source.
+Everything needed to build, run, test, and release fusionlocalserver from source.
+
+The binary has two modes: the default Bubble Tea **TUI**, and `fusionlocalserver -server`, which serves a JSON API plus an embedded React/MUI web UI. Building the web UI (and embedding it) requires Node/npm in addition to the Go toolchain.
 
 ---
 
@@ -9,6 +11,7 @@ Everything needed to build, run, test, and release FusionDataCLI from source.
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Go | 1.22+ | Build and run |
+| Node + npm | LTS | Build the `web/` React/MUI UI (only for `-server` mode) |
 | goreleaser | v2 | Cross-platform release builds |
 | git | any | Version tags trigger releases |
 | An APS app registration | — | Client ID for OAuth |
@@ -39,8 +42,8 @@ export APS_REGION=EMEA          # optional — US default
 ### Config file (persistent)
 
 ```sh
-mkdir -p ~/.config/fusiondatacli
-cat > ~/.config/fusiondatacli/config.json <<EOF
+mkdir -p ~/.config/fusionlocalserver
+cat > ~/.config/fusionlocalserver/config.json <<EOF
 {
   "client_id": "your-client-id",
   "region": "US"
@@ -53,7 +56,7 @@ EOF
 The published binaries embed a default client ID via linker flags:
 
 ```sh
-go build -ldflags "-X github.com/schneik80/FusionDataCLI/config.DefaultClientID=<id>" .
+go build -ldflags "-X github.com/schneik80/fusionlocalserver/config.DefaultClientID=<id>" .
 ```
 
 Users of the published binary need no configuration — the embedded client ID is used automatically.
@@ -63,7 +66,7 @@ Users of the published binary need no configuration — the embedded client ID i
 ```mermaid
 flowchart LR
     A([APS_CLIENT_ID\nenv var]) -- "highest priority" --> R([Resolved\nClient ID])
-    B([~/.config/fusiondatacli/\nconfig.json]) --> R
+    B([~/.config/fusionlocalserver/\nconfig.json]) --> R
     C([Build-time\nDefaultClientID]) -- "lowest priority" --> R
     R --> D{empty?}
     D -- Yes --> E([stateSetupNeeded\nwith instructions])
@@ -74,24 +77,32 @@ flowchart LR
 
 ## Building
 
+The Makefile is the supported build path — it injects the APS `client_id` (and region) via `-ldflags`, runs the web build, and sets the `embed_ui` tag so the binary ships the React/MUI UI. Store your client ID in a git-ignored `.aps-client-id` file (or pass `CLIENT_ID=` on the command line); a region can go in `.aps-region`.
+
 ```sh
 # Clone
-git clone https://github.com/schneik80/FusionDataCLI
-cd FusionDataCLI
+git clone https://github.com/schneik80/fusionlocalserver
+cd fusionlocalserver
+echo your-client-id > .aps-client-id          # or pass CLIENT_ID= to make
 
-# Dev run (no embedded client ID — supply via env var)
-APS_CLIENT_ID=your-id go run .
+# Production build: vite build → go build -tags embed_ui (embedded UI + client_id)
+make build                                     # produces ./fusionlocalserver
+make install                                   # same, into $GOPATH/bin
 
-# Build binary with embedded client ID
-go build -ldflags \
-  "-X main.version=dev \
-   -X github.com/schneik80/FusionDataCLI/config.DefaultClientID=your-id" \
-  -o fusiondatacli .
+# Build and serve the web UI on the LAN (binds 0.0.0.0:8080 by default)
+make run                                        # = make build, then -server
+make run ARGS="-addr 0.0.0.0:9000"             # override the bind address
 
-# Or use the Makefile
-make build CLIENT_ID=your-id
-make dev                          # go run . without embedded ID
+# Dev build: no embedded UI, no embedded client_id (stub UI shell).
+# Pair with the Vite dev server for HMR:
+make dev                                        # go build (untagged)
+cd web && npm run dev                           # Vite on :5173, separate terminal
+APS_CLIENT_ID=your-id ./fusionlocalserver -server -dev   # proxies the UI to Vite
 ```
+
+> `make build` overwrites `server/webdist/index.html` with a built shell that references gitignored hashed assets. The whole `server/webdist/` tree is gitignored build output — restore the committed placeholder before committing.
+
+Building plain TUI changes needs no Node: `make dev` (or `APS_CLIENT_ID=your-id go run .`) builds a Go-only binary; the embedded UI matters only for `-server` without `-dev`.
 
 ---
 
@@ -99,19 +110,42 @@ make dev                          # go run . without embedded ID
 
 ```mermaid
 graph TD
-    main["main.go\nentry point + panic recovery"] --> config["config/\nClient ID, region, paths"]
-    main --> ui["ui/\nBubbleTea TUI"]
+    main["main.go\nentry point; -server vs TUI"] --> config["config/\nClient ID, region, paths"]
+    main --> ui["ui/\nBubbleTea TUI (default)"]
+    main --> server["server/\nHTTP JSON API + embedded SPA"]
+
     ui --> auth["auth/\nOAuth PKCE"]
     ui --> api_pkg["api/\nGraphQL client"]
     ui --> fusion_pkg["fusion/\nFusion desktop MCP"]
+
+    server --> auth
+    server --> api_pkg
+    server --> pins_pkg["pins/\nhub-scoped bookmarks"]
+    server --> config
+
     auth --> config
     api_pkg --> config
 
-    subgraph "ui/ package"
+    subgraph "ui/ package (TUI)"
         app["app.go\nModel, Update, View, tabs,\nShow-in-Location orchestration"]
         keys["keys.go\nkey bindings\n(WASD/arrows, 1-4, Enter)"]
         styles["styles.go\nthemes, Lipgloss styles, tab strip"]
     end
+
+    subgraph "server/ package (-server)"
+        srv["server.go\nRun, listener rebind loop"]
+        routes["routes.go + handlers*.go\n/api/* JSON endpoints"]
+        token["token.go\nTokenManager (one APS identity)"]
+        static["static*.go\nembedded SPA / Vite proxy"]
+        thumb["thumbcache.go\nshared thumbnail cache"]
+    end
+
+    subgraph "web/ (React/MUI SPA)"
+        spa["Vite build → server/webdist\nembedded via -tags embed_ui"]
+    end
+
+    server --> static
+    static --> spa
 
     subgraph "auth/ package"
         oauth["oauth.go\nLogin + Refresh"]
@@ -134,16 +168,18 @@ graph TD
 
 ## Debug Mode
 
-For day-to-day development:
+For day-to-day TUI development:
 
 ```sh
-APSNAV_DEBUG=1 fusiondatacli
+FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
 ```
 
 - Logs every GraphQL request body and response.
 - Press `?` in the browser to view the rolling in-app log (max 500 lines).
-- Also written to `~/.config/fusiondatacli/debug.log` (mode 0600, truncated each session) so you can `tail -f` it from another terminal.
+- Also written to `~/.config/fusionlocalserver/debug.log` (mode 0600, truncated each session) so you can `tail -f` it from another terminal.
 - Stderr mirroring is auto-enabled when stderr is redirected (`2> log`), suppressed when stderr is a TTY (so the live TUI isn't smeared).
+
+In `-server` mode `FUSIONLOCALSERVER_DEBUG` does not apply; the server logs a structured line per request to **stdout** (method, path, status, duration, remote IP) via `log/slog`, and recovers + logs any handler panic as a JSON 500.
 
 End users reporting bugs should follow [`docs/debugging.md`](debugging.md), which walks through what to capture and how to file a defect.
 
@@ -165,7 +201,7 @@ The full test architecture — layer breakdown, fixtures, naming conventions, th
 
 ## Dependencies
 
-All external dependencies are from the [Charm.sh](https://charm.sh) ecosystem. No other third-party libraries are used — auth and HTTP are handled with the Go standard library.
+The Go module's only external dependencies are the [Charm.sh](https://charm.sh) TUI libraries; auth, HTTP, and the `-server` mode are built on the Go standard library (`net/http`, `log/slog`, `embed`) — no third-party Go web framework.
 
 | Module | Version | Purpose |
 |--------|---------|---------|
@@ -176,6 +212,12 @@ All external dependencies are from the [Charm.sh](https://charm.sh) ecosystem. N
 ```sh
 go mod tidy     # sync go.mod + go.sum
 go mod download # pre-fetch dependencies
+```
+
+The web UI (`-server` mode only) has its own npm dependency tree under `web/` — React, MUI, TanStack Query, and Vite — bundled into `server/webdist` at build time and embedded into the binary. It is independent of the Go module graph above.
+
+```sh
+cd web && npm install   # sync web/ dependencies (package-lock.json)
 ```
 
 ---
@@ -192,10 +234,10 @@ flowchart TD
         Checkout --> SetupGo[actions/setup-go]
         SetupGo --> GoReleaser[goreleaser/goreleaser-action v6]
         GoReleaser --> Builds["Build 5 binaries\ndarwin/amd64\ndarwin/arm64\nlinux/amd64\nlinux/arm64\nwindows/amd64"]
-        Builds --> Archives["Create archives\nFusionDataCLI-{ver}-{os}-{arch}.tar.gz\nFusionDataCLI-{ver}-windows-amd64.zip"]
+        Builds --> Archives["Create archives\nfusionlocalserver-{ver}-{os}-{arch}.tar.gz\nfusionlocalserver-{ver}-windows-amd64.zip"]
         Archives --> Checksums[checksums.txt]
         Archives --> GHRelease[GitHub Release\nv{version}]
-        GHRelease --> BrewFormula["Push formula to\nschneik80/homebrew-fusiondatacli\nFormula/fusiondatacli.rb"]
+        GHRelease --> BrewFormula["Push formula to\nschneik80/homebrew-fusionlocalserver\nFormula/fusionlocalserver.rb"]
     end
 
     subgraph "mac-installer job (needs: release)"
@@ -212,8 +254,8 @@ flowchart TD
 ### Triggering a release
 
 ```sh
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 The workflow fires automatically. No manual steps needed.
@@ -224,9 +266,9 @@ The `mac-installer` job runs after the main `release` job and produces a signed,
 
 1. Build a universal binary (`arm64` + `amd64` joined via `lipo`)
 2. Codesign the binary with a `Developer ID Application` identity (hardened runtime, secure timestamp)
-3. `pkgbuild` the payload to install at `/usr/local/bin/fusiondatacli`, then `productsign` with a `Developer ID Installer` identity
+3. `pkgbuild` the payload to install at `/usr/local/bin/fusionlocalserver`, then `productsign` with a `Developer ID Installer` identity
 4. Submit to Apple's notary service via `xcrun notarytool submit --wait` and `stapler staple` the ticket
-5. Upload `FusionDataCLI-<version>-darwin-universal.pkg` to the GitHub release
+5. Upload `fusionlocalserver-<version>-darwin-universal.pkg` to the GitHub release
 
 End users can double-click the `.pkg` and install without Gatekeeper warnings.
 
@@ -236,7 +278,7 @@ End users can double-click the `.pkg` and install without Gatekeeper warnings.
 |--------|---------|
 | `GITHUB_TOKEN` | Auto-provided by Actions — creates the release |
 | `APS_CLIENT_ID` | Embedded into binaries at build time via ldflag |
-| `HOMEBREW_TAP_GITHUB_TOKEN` | PAT with `repo` scope on `homebrew-fusiondatacli` tap |
+| `HOMEBREW_TAP_GITHUB_TOKEN` | PAT with `repo` scope on `homebrew-fusionlocalserver` tap |
 | `APPLE_CERTIFICATE_P12` | Base64-encoded `.p12` containing both Developer ID Application + Installer identities |
 | `APPLE_CERTIFICATE_PASSWORD` | Password for the `.p12` |
 | `APPLE_ID` | Apple ID for notarytool submission |
@@ -247,8 +289,8 @@ End users can double-click the `.pkg` and install without Gatekeeper warnings.
 
 | Setting | Value | Why |
 |---------|-------|-----|
-| `project_name` | `FusionDataCLI` | Sets archive filename casing — must match homebrew formula URL expectations |
-| `binary` | `fusiondatacli` | Lowercase binary name installed into `$PATH` |
+| `project_name` | `fusionlocalserver` | Sets archive filename casing — must match homebrew formula URL expectations |
+| `binary` | `fusionlocalserver` | Binary name installed into `$PATH` |
 | `ldflags` | `-s -w -X main.version -X config.DefaultClientID` | Strip debug info, embed version + client ID |
 | `CGO_ENABLED=0` | yes | Pure Go, no C dependencies — enables full cross-compilation |
 | `ignore` | `windows/arm64` | Not yet supported |
@@ -258,22 +300,22 @@ End users can double-click the `.pkg` and install without Gatekeeper warnings.
 
 ## Homebrew Tap
 
-The tap repo is [github.com/schneik80/homebrew-fusiondatacli](https://github.com/schneik80/homebrew-fusiondatacli).
+The tap repo is [github.com/schneik80/homebrew-fusionlocalserver](https://github.com/schneik80/homebrew-fusionlocalserver).
 
-goreleaser generates `Formula/fusiondatacli.rb` after each release with:
+goreleaser generates `Formula/fusionlocalserver.rb` after each release with:
 - Explicit `version "x.y.z"` field (prevents Homebrew from misdetecting the version from the archive filename)
 - Per-platform binary URLs with SHA-256 checksums
-- `bin.install "fusiondatacli"` install block
+- `bin.install "fusionlocalserver"` install block
 
 ```sh
 # Install
-brew install schneik80/fusiondatacli/fusiondatacli
+brew install schneik80/fusionlocalserver/fusionlocalserver
 
 # Upgrade
-brew update && brew upgrade fusiondatacli
+brew update && brew upgrade fusionlocalserver
 
 # Verify
-brew info fusiondatacli
+brew info fusionlocalserver
 ```
 
 ---
@@ -293,7 +335,7 @@ The binary version is set at build time:
 var version = "dev"   // overwritten by ldflag
 ```
 
-The version is displayed in the About screen (`shift+a`) and passed into the UI model at startup.
+In the TUI the version is displayed in the About screen (`shift+a`); in `-server` mode it is logged at startup and returned by `GET /api/meta`. The current series is **v0.1.0**.
 
 ---
 

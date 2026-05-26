@@ -34,7 +34,7 @@ export function AppLayout() {
         <Toolbar variant="dense" sx={{ gap: 1.5 }}>
           <FontAwesomeIcon icon={faCubes} style={{ fontSize: 18, color: '#0696d7' }} />
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            FusionDataCLI
+            fusionlocalserver
           </Typography>
           {metaQ.data && (
             <Typography variant="caption" color="text.secondary">

@@ -1,6 +1,6 @@
 // cmd/screenshot/main.go
 //
-// Renders a synthetic FusionDataCLI screen with sample data.
+// Renders a synthetic fusionlocalserver screen with sample data.
 // Pipe through freeze to produce a PNG:
 //
 //	go run ./cmd/screenshot | freeze -o docs/screenshot.png
@@ -278,7 +278,7 @@ func main() {
 	browser := lipgloss.JoinHorizontal(lipgloss.Top, c0, c1, c2, det)
 
 	// ── Header ────────────────────────────────────────────────────────────
-	title := styleHeader.Render("FusionDataCLI")
+	title := styleHeader.Render("fusionlocalserver")
 	status := styleStatus.Render("Acme Engineering  ›  Falcon UAV  ›  CAD")
 	headerGap := totalWidth - lipgloss.Width(title) - lipgloss.Width(status) - 2
 	if headerGap < 1 {

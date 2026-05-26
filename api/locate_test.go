@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/schneik80/FusionDataCLI/internal/testutil"
+	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
 // TestGetItemLocation_WalksFolderAncestry seeds a fake APS server that

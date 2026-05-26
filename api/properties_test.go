@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/schneik80/FusionDataCLI/internal/testutil"
+	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
 func measureJSON(value, units string) map[string]any {

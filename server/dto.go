@@ -3,7 +3,7 @@ package server
 import (
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/api"
+	"github.com/schneik80/fusionlocalserver/api"
 )
 
 // The DTOs below mirror the api.* result structs but carry explicit camelCase

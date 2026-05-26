@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/schneik80/FusionDataCLI/internal/testutil"
+	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
 func TestSanitizeFilename(t *testing.T) {

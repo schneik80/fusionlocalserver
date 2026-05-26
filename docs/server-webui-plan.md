@@ -1,8 +1,13 @@
-# FusionDataCLI — `-server` mode + React/MUI web UI
+# fusionlocalserver — `-server` mode + React/MUI web UI
+
+> **Status:** this was the design plan for the `-server` mode and web UI; both
+> are now implemented and shipped. It is kept as a design record. Where the
+> implementation diverged from the plan it is annotated inline; for the current
+> architecture see [`architecture.md`](architecture.md#server-mode-specifics).
 
 ## Context
 
-FusionDataCLI is a Go TUI (Bubble Tea) that browses Autodesk Platform Services
+fusionlocalserver is a Go TUI (Bubble Tea) that browses Autodesk Platform Services
 (APS) data — Hubs → Projects → folder Contents → document Details. We want to run
 the same capability as a **web app** so multiple users on the network can browse
 through one shared server identity, and so the UI can be iterated on rapidly in
@@ -17,9 +22,10 @@ lightbox-style dialogs for Pins and Settings. Light/Dark theming reuses the colo
 tokens from the sibling **PowerTools-Assembly** project. Keyboard navigation is
 dropped in the web UI; everything is click-driven.
 
-The codebase is well-suited to this: `main.go` has no CLI parsing yet (clean
-insertion point), and the data/auth layers have zero TUI dependencies, so the
-server reuses them directly.
+The codebase is well-suited to this: at the time of this plan `main.go` had no CLI
+parsing (a clean insertion point — `main.go` now parses `-server`/`-addr`/`-dev`),
+and the data/auth layers have zero TUI dependencies, so the server reuses them
+directly.
 
 ### Decisions (confirmed with user)
 - **Frontend**: React + MUI + Vite (TypeScript). MUI `AppBar`/`Drawer`/`Tabs`/`Breadcrumbs`/`Dialog` map 1:1 onto the described layout.
@@ -31,7 +37,7 @@ server reuses them directly.
 ## Architecture overview
 
 ```
-fusiondatacli (single binary)
+fusionlocalserver (single binary)
  ├─ default            -> TUI (unchanged)
  └─ -server -addr ...  -> HTTP server
         ├─ /api/*      JSON REST, wraps api/ + pins/, auth via TokenManager
@@ -41,7 +47,7 @@ web/  (Vite + React + TS + MUI source)  ──vite build──> server/webdist/ 
 ```
 
 The server holds one APS token (3-legged, reused from the TUI's cached
-`~/.config/fusiondatacli/tokens.json`) and proxies every data call. Region is
+`~/.config/fusionlocalserver/tokens.json`) and proxies every data call. Region is
 process-global (`api.SetRegion`), set once at startup.
 
 ---
@@ -105,7 +111,7 @@ handler wraps `r.Context()` in a ~30s timeout and passes it to `tm.Token(ctx)` a
 
 | Method | Path | Query | Wraps |
 |---|---|---|---|
-| GET | `/api/meta` | — | `{version, region, fusionEnabled:false, stepEnabled:false}` |
+| GET | `/api/meta` | — | `{version, region, fusionEnabled:false, stepEnabled:false, port, portConfigurable}` |
 | GET | `/api/hubs` | — | `api.GetHubs` |
 | GET | `/api/projects` | `hubId` | `api.GetProjects` |
 | GET | `/api/projects/contents` | `projectId` | `api.GetFolders` + `api.GetProjectItems` (concurrent; returns `{folders,items}`) |
@@ -115,7 +121,10 @@ handler wraps `r.Context()` in a ~30s timeout and passes it to `tm.Token(ctx)` a
 | GET | `/api/items/uses` | `cvId` *or* `hubId,drawingItemId` | `api.GetOccurrences` / drawing-source |
 | GET | `/api/items/where-used` | `cvId` | `api.GetWhereUsed` |
 | GET | `/api/items/drawings` | `hubId,designItemId` | `api.GetDrawingsForDesign` |
-| GET | `/api/items/classify` | `cvId` | `api.ClassifyAssembly` (per-row async refine; `classifySem` caps at 8) |
+| GET | `/api/items/classify` | `cvId` | `api.ClassifyAndThumbnail` (per-row async refine; `classifySem` caps at 8; also warms the thumbnail cache off the same round trip) |
+| GET | `/api/items/thumbnail` | `cvId` | `api.GetThumbnail` (status + signed URL; polled while PENDING) — *implemented* |
+| GET | `/api/items/thumbnail/image` | `cvId` | same-origin PNG proxy — streams cached bytes (warmed by classify) instead of the cross-origin APS signed URL — *implemented* |
+| GET | `/api/items/properties` | `cvId` | `api.GetPhysicalProperties` (mass/geometry, v2; polled while computing) — *implemented* |
 | GET | `/api/pins` | `hubId` | `pins.Load` |
 | POST | `/api/pins` | `hubId` | validate `pins.IsPinnable` → `Load`+`Add`+`Save`; body carries `id,name,kind,project_id,project_alt_id,folder_path` so the bookmark stays navigable (mirrors `ui/app.go` pin capture) |
 | DELETE | `/api/pins` | `hubId,id` | `Load`+`Remove`+`Save` |
@@ -171,7 +180,7 @@ breadcrumb separators, type tags.
 - `AppLayout` — MUI `AppBar` (global header: app name, version, hub indicator, theme toggle) + permanent left `Drawer` (fat nav rail: Hubs, Pins, Settings icon buttons) + main region.
 - `BreadcrumbBar` — MUI `Breadcrumbs` below header, above columns: Hub › Project › Folder… › Document; segments clickable (dispatch navigate), last (document) inert.
 - `BrowserColumns` — three-pane region: `ProjectsColumn` | `ContentsColumn` | `DetailsPanel`. CSS grid/flex (~35% details, nav columns split the rest). Click selects; selecting a container loads the next column. Loading spinners per column.
-- `DetailsPanel` — MUI `Tabs`: **Details / Uses / Where Used / Drawings**. Tab availability mirrors TUI (designs get all 4; drawings get Details+Uses; basic/configured get Details only). Lazy-fetch + cache per item; spinner while loading.
+- `DetailsPanel` — a header with the item name, **always-visible metadata** beside a **thumbnail**, then MUI `Tabs`. *As implemented* the metadata moved out of a tab into the header, so the tabs are **History / Properties / Uses / Where Used / Drawings**: designs get all five; configured designs get History + Properties; drawings get History + Uses; everything else is History only. Lazy-fetch + cache per item; spinner while loading. The thumbnail loads from the same-origin `/api/items/thumbnail/image` proxy.
 - **Pins lightbox** — MUI `Dialog` opened from the left rail Pins icon: stub for now — render the pin list grouped by kind (fetch `/api/pins?hubId=`), star icon, Navigate/Remove actions; Open/Insert buttons disabled.
 - **Settings lightbox** — MUI `Dialog` from the Settings icon: stub — theme (Light/Dark/System), region display (read-only from `/api/meta`), version/about. Stubbed controls clearly marked.
 - **Hub switcher** — opened from Hubs rail icon (Dialog or Menu): list `/api/hubs`, select → reload projects + pins for that hub.
@@ -190,10 +199,10 @@ keyboard nav.
 - Makefile: `web` target (`cd web && npm install && npm run build`); `build` and `install`
   depend on `web` and compile with `-tags embed_ui`; keep existing
   `CLIENT_ID`/`REGION`/`VERSION` ldflags.
-- `run` target: `build` then `./fusiondatacli -server` (binds `0.0.0.0:8080`; startup logs
+- `run` target: `build` then `./fusionlocalserver -server` (binds `0.0.0.0:8080`; startup logs
   the reachable LAN URLs). `make run ARGS="-addr 0.0.0.0:9000"` to override.
 - `dev` target stays Go-only and **untagged** (serves the stub UI); pair
-  `./fusiondatacli -server -dev` with `cd web && npm run dev` for HMR.
+  `./fusionlocalserver -server -dev` with `cd web && npm run dev` for HMR.
 - `.gitignore`: ignore the whole `server/webdist/` tree (pure build output); nothing is
   committed there. Verify no broad `**/dist` glob misbehaves.
 - If releases use `.goreleaser.yaml`, the build hook must run `make web` and pass
@@ -215,32 +224,34 @@ keyboard nav.
 ---
 
 ## Verification
-- **Backend, no UI**: `go build` (uses placeholder) then `./fusiondatacli -server`;
+- **Backend, no UI**: `go build` (uses placeholder) then `./fusionlocalserver -server`;
   watch stdout for startup + auth-bootstrap logs; `curl localhost:8080/api/meta`,
   `/api/hubs`, `/api/projects?hubId=...`, `/api/projects/contents?projectId=...`,
   `/api/items/details?hubId=...&itemId=...`, pins POST/GET/DELETE. Confirm request log
   lines (method/path/status/dur). Confirm token refresh logs after expiry (or force-expire
   the cache). `go vet ./...` and `go test -race ./...` (existing `make check`).
 - **Full app**: `make build` (runs `vite build` → embeds → ldflags client_id) then
-  `./fusiondatacli -server`; open `http://<host>:8080` in a browser. Verify: header +
+  `./fusionlocalserver -server`; open `http://<host>:8080` in a browser. Verify: header +
   left rail render; hub switch loads projects; three-column drill-down; breadcrumb
   clicks navigate; details tabs lazy-load (Uses/Where Used/Drawings); type tags refine
   to asm/part; Light/Dark toggle; Pins and Settings dialogs open from the rail (stub
   content); Fusion/STEP buttons disabled. Confirm reachable from a second machine on
   the LAN (open-network decision) and that the no-auth warning is logged.
-- **TUI regression**: `./fusiondatacli` (no flag) still launches the TUI unchanged.
+- **TUI regression**: `./fusionlocalserver` (no flag) still launches the TUI unchanged.
 
 ## Follow-ups / TODO
-- **Thumbnail image proxy (fallback).** The Details panel thumbnail
-  (`GET /api/items/thumbnail` → `componentVersion.thumbnail{status,signedUrl}`,
-  in `api/thumbnail.go`) currently hands the APS **signed URL** straight to the
-  browser `<img>`, which loads it cross-origin from Autodesk's CDN. If that ever
-  fails (CORS/Referer rejection, signed-URL expiry while a tab stays open, or a
-  locked-down deployment), add a server-side proxy: a handler that fetches the
-  signed URL and streams the PNG bytes back through the Go server (reuse the
-  `DownloadFile` no-bearer pattern — signed URLs are self-authenticated, so the
-  user token must NOT be attached). The frontend would then point `<img>` at
-  `/api/items/thumbnail/image?cvId=…` instead of the raw signed URL.
+- **Thumbnail image proxy (fallback).** *Done.* Rather than handing the APS
+  **signed URL** straight to the browser `<img>` (a cross-origin load from
+  Autodesk's CDN), the server now exposes `GET /api/items/thumbnail/image?cvId=…`:
+  a handler that fetches the signed URL and streams the PNG bytes back same-origin
+  (reusing the `DownloadFile` no-bearer pattern — signed URLs are self-authenticated,
+  so the user token is NOT attached). Bytes are held in a bounded shared cache
+  (`server/thumbcache.go`), warmed in the background off the per-row classify probe,
+  so repeat views and other LAN clients are served from memory. The frontend points
+  `<img>` at the proxy.
+- **Physical/mass properties.** *Done.* `GET /api/items/properties?cvId=…`
+  (`api.GetPhysicalProperties`, v2) backs the Details panel's Properties tab;
+  generation is async, so the web UI polls while it computes.
 
 ## Critical files
 - `main.go` — add `-server`/`-addr`/`-dev` flag branch.

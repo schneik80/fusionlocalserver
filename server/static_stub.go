@@ -16,11 +16,11 @@ const stubIndexHTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FusionDataCLI server</title>
+    <title>fusionlocalserver server</title>
   </head>
   <body>
     <main style="font-family: sans-serif; padding: 2rem;">
-      <h1>FusionDataCLI server</h1>
+      <h1>fusionlocalserver server</h1>
       <p>
         This binary was built without the embedded web UI. Run
         <code>make build</code> (which runs <code>vite build</code> then

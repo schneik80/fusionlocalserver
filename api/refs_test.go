@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/schneik80/FusionDataCLI/internal/testutil"
+	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
 func TestGetOccurrences_DecodesAndPaginates(t *testing.T) {

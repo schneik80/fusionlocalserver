@@ -1,6 +1,6 @@
 # APS Manufacturing Data Model API
 
-FusionDataCLI queries the **APS Manufacturing Data Model GraphQL API v2** to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow.
+fusionlocalserver queries the **APS Manufacturing Data Model GraphQL API v2** to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow. This `api` package is the shared core used by both the TUI and the `-server` HTTP mode; the diagrams below describe the GraphQL client itself, independent of which front end calls it.
 
 ---
 
@@ -21,7 +21,7 @@ The `X-Ads-Region` header is only sent when a non-default region is configured. 
 
 ```mermaid
 flowchart TD
-    caller["Caller\n(ui package)"] --> hierarchy["Hierarchy queries\nGetHubs / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
+    caller["Caller\n(ui package or server package)"] --> hierarchy["Hierarchy queries\nGetHubs / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
     caller --> details["Per-item queries\nGetItemDetails"]
     caller --> tabs["Cross-reference queries\nGetOccurrences (Uses)\nGetWhereUsed\nGetDrawingsForDesign\nGetDrawingSource (drawing → design)"]
     caller --> locate["Locate query\nGetItemLocation\n(walks parentFolder chain)"]
@@ -681,20 +681,20 @@ If the call is still failing after 3 attempts, the wrapped error reads `APS Grap
 
 ## Debug Mode
 
-Set `APSNAV_DEBUG=1` before running to enable full request/response logging:
+Set `FUSIONLOCALSERVER_DEBUG=1` before running the **TUI** to enable full request/response logging (the `-server` mode logs structured request lines to stdout instead):
 
 ```sh
-APSNAV_DEBUG=1 fusiondatacli
+FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver
 ```
 
 Logs are written to **three sinks**:
 
 1. **In-memory ring buffer** (max 500 lines) — viewed via the `?` overlay from `stateBrowsing`. The overlay shows the current log file path at the top so the user knows where to grab the text from (the rendered overlay text itself is not selectable).
-2. **`~/.config/fusiondatacli/debug.log`** — opened with `O_TRUNC` on each session start, mode 0600. The path comes from `config.Dir()`. Tail / grep / open in an editor with standard tools while the TUI is running.
+2. **`~/.config/fusionlocalserver/debug.log`** — opened with `O_TRUNC` on each session start, mode 0600. The path comes from `config.Dir()`. Tail / grep / open in an editor with standard tools while the TUI is running.
 3. **Stderr** — *only* when stderr has been redirected (file or pipe). Detected at startup via `os.Stderr.Stat()`'s `ModeCharDevice` bit; when stderr is the terminal, writing to it would smear bubbletea's alternate-screen render, so the mirror is suppressed in that case. When you want stderr capture explicitly, redirect:
 
    ```sh
-   APSNAV_DEBUG=1 fusiondatacli 2> debug.log
+   FUSIONLOCALSERVER_DEBUG=1 fusionlocalserver 2> debug.log
    ```
 
 Each log entry includes:
@@ -712,11 +712,11 @@ Authorization headers are never logged. The on-disk log file is mode 0600.
 APS hubs in EMEA and Australia are served from regional API endpoints. Set the region before running:
 
 ```sh
-APS_REGION=EMEA fusiondatacli   # Europe, Middle East, Africa
-APS_REGION=AUS  fusiondatacli   # Australia
+APS_REGION=EMEA fusionlocalserver   # Europe, Middle East, Africa
+APS_REGION=AUS  fusionlocalserver   # Australia
 ```
 
-Or set `"region": "EMEA"` in `~/.config/fusiondatacli/config.json`.
+Or set `"region": "EMEA"` in `~/.config/fusionlocalserver/config.json`.
 
 When a region is set, the `X-Ads-Region` header is added to every GraphQL request.
 

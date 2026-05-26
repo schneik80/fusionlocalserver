@@ -1,4 +1,4 @@
-# apsnav Makefile
+# fusionlocalserver Makefile
 #
 # The APS client_id is injected at build time so it never appears in source.
 # Store your client_id in a local .aps-client-id file (git-ignored), or set
@@ -9,7 +9,7 @@
 
 CLIENT_ID  ?= $(shell cat .aps-client-id 2>/dev/null | tr -d '[:space:]')
 REGION     ?= $(shell cat .aps-region 2>/dev/null | tr -d '[:space:]')
-MODULE     := github.com/schneik80/FusionDataCLI
+MODULE     := github.com/schneik80/fusionlocalserver
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS    := -X $(MODULE)/config.DefaultClientID=$(CLIENT_ID) \
               -X $(MODULE)/config.DefaultRegion=$(REGION) \
@@ -28,7 +28,7 @@ web:
 # the binary serves the "not built yet" stub (server/static_stub.go) instead.
 build: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
-	go build -tags embed_ui -ldflags "$(LDFLAGS)" -o fusiondatacli .
+	go build -tags embed_ui -ldflags "$(LDFLAGS)" -o fusionlocalserver .
 
 install: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
@@ -38,16 +38,16 @@ install: web
 # startup logs the reachable http://<lan-ip>:8080 URLs so you can open it from
 # another machine. Override with `make run ARGS="-addr 0.0.0.0:9000"`.
 run: build
-	./fusiondatacli -server $(ARGS)
+	./fusionlocalserver -server $(ARGS)
 
 # Dev build: no embedded UI and no embedded client_id — for local dev using env
 # vars or config.json. Go-only (stub UI); pair with `cd web && npm run dev` and
-# run `./fusiondatacli -server -dev` for HMR.
+# run `./fusionlocalserver -server -dev` for HMR.
 dev:
-	go build -o fusiondatacli .
+	go build -o fusionlocalserver .
 
 clean:
-	rm -f fusiondatacli
+	rm -f fusionlocalserver
 
 check:
 	go vet ./...

@@ -11,7 +11,7 @@ import (
 // DefaultClientID is the publisher's APS app client_id for public-client PKCE.
 // It is injected at build time:
 //
-//	go build -ldflags "-X github.com/schneik80/FusionDataCLI/config.DefaultClientID=<id>"
+//	go build -ldflags "-X github.com/schneik80/fusionlocalserver/config.DefaultClientID=<id>"
 //
 // End users running a published binary never need to configure a client_id.
 // Developers building from source can override via APS_CLIENT_ID env var or config.json.
@@ -29,13 +29,13 @@ type Config struct {
 	Region       string `json:"region,omitempty"`        // US (default), EMEA, or AUS
 }
 
-// Dir returns the apsnav config directory path (~/.config/apsnav), creating it if needed.
+// Dir returns the fusionlocalserver config directory path (~/.config/fusionlocalserver), creating it if needed.
 func Dir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".config", "fusiondatacli")
+	dir := filepath.Join(home, ".config", "fusionlocalserver")
 	return dir, os.MkdirAll(dir, 0700)
 }
 
@@ -43,15 +43,15 @@ func Dir() (string, error) {
 func Path() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "~/.config/apsnav/config.json"
+		return "~/.config/fusionlocalserver/config.json"
 	}
-	return filepath.Join(home, ".config", "fusiondatacli", "config.json")
+	return filepath.Join(home, ".config", "fusionlocalserver", "config.json")
 }
 
 // Load resolves configuration using a three-layer priority:
 //
 //  1. APS_CLIENT_ID / APS_CLIENT_SECRET / APS_REGION env vars (highest priority)
-//  2. ~/.config/apsnav/config.json — optional file for power users
+//  2. ~/.config/fusionlocalserver/config.json — optional file for power users
 //  3. DefaultClientID / DefaultRegion linker variables — embedded by the publisher at build time
 //
 // End users running a published binary never need to create a config file.
@@ -89,7 +89,7 @@ func Load() (*Config, error) {
 	return nil, fmt.Errorf("no APS client_id configured")
 }
 
-// tryLoadFile attempts to read ~/.config/apsnav/config.json.
+// tryLoadFile attempts to read ~/.config/fusionlocalserver/config.json.
 // Returns (cfg, true, nil) on success, (nil, false, nil) when the file is absent,
 // and (nil, false, err) when the file exists but cannot be parsed.
 func tryLoadFile() (*Config, bool, error) {

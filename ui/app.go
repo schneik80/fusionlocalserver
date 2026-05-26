@@ -13,11 +13,11 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/schneik80/FusionDataCLI/api"
-	"github.com/schneik80/FusionDataCLI/auth"
-	"github.com/schneik80/FusionDataCLI/config"
-	"github.com/schneik80/FusionDataCLI/fusion"
-	"github.com/schneik80/FusionDataCLI/pins"
+	"github.com/schneik80/fusionlocalserver/api"
+	"github.com/schneik80/fusionlocalserver/auth"
+	"github.com/schneik80/fusionlocalserver/config"
+	"github.com/schneik80/fusionlocalserver/fusion"
+	"github.com/schneik80/fusionlocalserver/pins"
 )
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ type pendingNavState struct {
 // threshold across most desktop environments.
 const doubleClickWindow = 500 * time.Millisecond
 
-// Model is the root bubbletea model for the apsnav browser.
+// Model is the root bubbletea model for the fusionlocalserver browser.
 type Model struct {
 	state    appState
 	width    int
@@ -386,7 +386,7 @@ func (m Model) ensureStyleCache(navInner, detailsInner int) *styleCache {
 // New creates the initial model. cfgErr may be non-nil when the config file is
 // missing or invalid; the app will display a setup screen in that case.
 func New(cfg *config.Config, cfgErr error, version string) Model {
-	if os.Getenv("APSNAV_DEBUG") != "" {
+	if os.Getenv("FUSIONLOCALSERVER_DEBUG") != "" {
 		api.EnableDebug()
 	}
 	if cfg != nil && cfg.Region != "" {
@@ -1552,10 +1552,10 @@ type crumbHit struct {
 
 // breadcrumbXOffset returns the absolute x column at which the breadcrumb
 // segments begin inside the header row. It accounts for the left padding of
-// styleHeader plus the fixed "FusionDataCLI  " prefix.
+// styleHeader plus the fixed "fusionlocalserver  " prefix.
 func breadcrumbXOffset() int {
 	// styleHeader.Padding(0, 1) contributes 1 leading column.
-	return 1 + lipgloss.Width("FusionDataCLI  ")
+	return 1 + lipgloss.Width("fusionlocalserver  ")
 }
 
 // buildBreadcrumb returns the plain-text breadcrumb string (with " › "
@@ -2494,7 +2494,7 @@ func (m Model) viewLoading(msg string) string {
 }
 
 func (m Model) viewAuthNeeded() string {
-	title := styleHeader.Render("FusionDataCLI")
+	title := styleHeader.Render("fusionlocalserver")
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		title,
 		"",
@@ -2506,7 +2506,7 @@ func (m Model) viewAuthNeeded() string {
 }
 
 func (m Model) viewHubSelect() string {
-	header := styleHeader.Render("FusionDataCLI — Select Hub") +
+	header := styleHeader.Render("fusionlocalserver — Select Hub") +
 		styleStatus.Render("  [↑↓/jk] move  [Enter] select  [r] refresh  [h] close")
 
 	if m.hubLoading {
@@ -2568,7 +2568,7 @@ func (m Model) viewHubSelect() string {
 }
 
 func (m Model) viewPins() string {
-	header := styleHeader.Render("FusionDataCLI — Pins") +
+	header := styleHeader.Render("fusionlocalserver — Pins") +
 		styleStatus.Render("  [↑↓/ws] move  [Enter] go to item  [o] Fusion  [i] insert  [del] remove  [p] close")
 
 	if len(m.pins) == 0 {
@@ -2633,7 +2633,7 @@ func (m Model) viewPins() string {
 
 func (m Model) viewSetupNeeded() string {
 	cfgPath := config.Path()
-	title := styleHeader.Render("FusionDataCLI — developer setup")
+	title := styleHeader.Render("fusionlocalserver — developer setup")
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		title,
 		"",
@@ -2642,10 +2642,10 @@ func (m Model) viewSetupNeeded() string {
 		"",
 		styleItemNormal.Render("  Option 1 — build with embedded client_id:"),
 		styleItemNormal.Render(`    go build -ldflags \`),
-		styleItemNormal.Render(`      "-X github.com/schneik80/FusionDataCLI/config.DefaultClientID=<id>" .`),
+		styleItemNormal.Render(`      "-X github.com/schneik80/fusionlocalserver/config.DefaultClientID=<id>" .`),
 		"",
 		styleItemNormal.Render("  Option 2 — environment variable:"),
-		styleItemNormal.Render("    APS_CLIENT_ID=<id> apsnav"),
+		styleItemNormal.Render("    APS_CLIENT_ID=<id> fusionlocalserver"),
 		"",
 		styleItemNormal.Render("  Option 3 — config file at:"),
 		styleItemNormal.Render("    "+cfgPath),
@@ -2662,10 +2662,10 @@ func (m Model) viewSetupNeeded() string {
 }
 
 func (m Model) viewDebug() string {
-	header := styleHeader.Render("FusionDataCLI — debug log") +
+	header := styleHeader.Render("fusionlocalserver — debug log") +
 		styleStatus.Render("  [?] close  [↑↓/jk] scroll")
 	if !api.DebugEnabled() {
-		body := styleItemDim.Render("\n  Debug mode is off. Re-launch with APSNAV_DEBUG=1 to enable logging.\n")
+		body := styleItemDim.Render("\n  Debug mode is off. Re-launch with FUSIONLOCALSERVER_DEBUG=1 to enable logging.\n")
 		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	}
 
@@ -2719,13 +2719,13 @@ func renderAboutLines(version string) []string {
 	}
 	heading := styleColumnTitle.MarginBottom(0)
 	lines := []string{
-		styleHeader.Render("FusionDataCLI  v" + version),
+		styleHeader.Render("fusionlocalserver  v" + version),
 		"",
 		styleItemNormal.Render("  A terminal browser for Autodesk Platform Services"),
 		styleItemNormal.Render("  Manufacturing Data Model — navigate Fusion hubs,"),
 		styleItemNormal.Render("  projects, folders, and designs from the command line."),
 		"",
-		styleItemDim.Render("  https://github.com/schneik80/FusionDataCLI"),
+		styleItemDim.Render("  https://github.com/schneik80/fusionlocalserver"),
 		"",
 		heading.Render("Copyright:"),
 		styleItemNormal.Render("  © 2025 Kevin Schneider"),
@@ -2966,7 +2966,7 @@ func (m Model) viewBrowser() string {
 	// The crumbs are built with buildBreadcrumb so the same logic drives
 	// both the rendered string and the mouse hit-test regions.
 	breadcrumb, _ := m.buildBreadcrumb(breadcrumbXOffset())
-	headerParts := "FusionDataCLI"
+	headerParts := "fusionlocalserver"
 	if breadcrumb != "" {
 		headerParts += "  " + breadcrumb
 	}

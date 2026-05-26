@@ -1,12 +1,14 @@
 # Navigation & User Interface
 
-FusionDataCLI presents the APS Manufacturing Data Model as a three-column ranger-style browser directly in your terminal. Each column represents one level of the hierarchy. Drilling right loads the next level; pressing left goes back.
+This page documents the **terminal UI** (the default mode). fusionlocalserver presents the APS Manufacturing Data Model as a three-column ranger-style browser directly in your terminal. Each column represents one level of the hierarchy. Drilling right loads the next level; pressing left goes back.
+
+> The `-server` mode ships a React/MUI web UI that mirrors this browser — projects/contents columns, a breadcrumb bar, and a details panel with always-visible metadata, a thumbnail, and History / Properties / Uses / Where Used / Drawings tabs — over the same APS data. See [`architecture.md`](architecture.md#server-mode-specifics) for the server/web architecture. Fusion-desktop integration (`o` / `i`) and STEP download are TUI-only; the web UI stubs those endpoints (HTTP 501).
 
 ---
 
 ## Data Hierarchy
 
-The APS Manufacturing Data Model is a tree. FusionDataCLI maps each level to a column in the browser.
+The APS Manufacturing Data Model is a tree. The terminal browser maps each level to a column.
 
 ```mermaid
 graph TD
@@ -89,7 +91,7 @@ stateDiagram-v2
 | `stateAuthWaiting` | Browser opened, local callback server running, waiting for OAuth redirect. |
 | `stateBrowsing` | Normal three-column (or four-column with details) interactive browser. |
 | `stateAbout` | Scrollable overlay showing version, copyright, GPL-3.0 license, and third-party credits. |
-| `stateDebug` | Scrollable overlay showing raw API request/response log (requires `APSNAV_DEBUG=1`). |
+| `stateDebug` | Scrollable overlay showing raw API request/response log (requires `FUSIONLOCALSERVER_DEBUG=1`). |
 | `stateError` | Fatal error with full message. Quit only. |
 
 ---
@@ -158,7 +160,7 @@ Mouse support is enabled by default and can be toggled with `m`. The footer bar 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ FusionDataCLI  My Team › Alpha › Designs                                 │
+│ fusionlocalserver  My Team › Alpha › Designs                             │
 ├──────────────────────┬──────────────────────┬────────────────────────────┤
 │ Projects             │ Contents             │ Details                    │
 │ ──────────────────   │ ──────────────────── │ ──────────────────────     │
@@ -316,7 +318,7 @@ flowchart TD
 
 Earlier versions tried to fall back to the project-level `fusionWebUrl` or to hand-constructed URLs like `https://autodesk360.com/g/projects/<id>` and `https://acc.autodesk.com/docs/files/projects/<id>`. Those patterns are rejected by Autodesk's team web app with a raw JSON `BROWSER_LOGIN_REQUIRED` / `WEB SESSION INVALID` error for team hubs, and they don't round-trip through the hub-subdomain routing that the real web app expects. They've been removed — the only trusted source is the item-level permalink.
 
-The status bar prints the full URL as it's handed to the OS browser handler, and an `OPEN_BROWSER <url>` line is appended to the debug log (`APSNAV_DEBUG=1`) for inspection.
+The status bar prints the full URL as it's handed to the OS browser handler, and an `OPEN_BROWSER <url>` line is appended to the debug log (`FUSIONLOCALSERVER_DEBUG=1`) for inspection.
 
 ---
 
@@ -366,7 +368,7 @@ Both operations require Fusion to be running locally with the MCP server enabled
 
 ### Hub Consistency Check
 
-Because FusionDataCLI and the running Fusion client can browse independent hubs, both `o` and `i` first verify that Fusion is on the same hub as the CLI before sending the open/insert call. The check works like this:
+Because fusionlocalserver and the running Fusion client can browse independent hubs, both `o` and `i` first verify that Fusion is on the same hub as the CLI before sending the open/insert call. The check works like this:
 
 1. Call `fusion_mcp_read` with `queryType=projects` — returns the projects in Fusion's currently active hub.
 2. Look up the currently-selected project's Data Management API ID (`NavItem.AltID`, e.g. `20250213876602531`) in the returned list.
@@ -391,7 +393,7 @@ Press `shift+p` while a project, folder, or document is focused to toggle its pi
 
 ### Per-hub scope
 
-Pins are stored per hub at `~/.config/fusiondatacli/pins-<sanitized-hubID>.json` (mode 0600). Switching hubs reloads the pin list for the new hub and resets the overlay cursor — pins from hub A are invisible while you're in hub B, but persist on disk so they reappear when you return. The hub ID is sanitized into a filesystem-safe slug (any character outside `[A-Za-z0-9_.\-]` becomes `_`) so URN-format identifiers round-trip cleanly across macOS, Linux, and Windows.
+Pins are stored per hub at `~/.config/fusionlocalserver/pins-<sanitized-hubID>.json` (mode 0600). Switching hubs reloads the pin list for the new hub and resets the overlay cursor — pins from hub A are invisible while you're in hub B, but persist on disk so they reappear when you return. The hub ID is sanitized into a filesystem-safe slug (any character outside `[A-Za-z0-9_.\-]` becomes `_`) so URN-format identifiers round-trip cleanly across macOS, Linux, and Windows.
 
 A pre-hub-scoping single-file `pins.json` from earlier versions is migrated automatically on first run: entries are grouped by `HubID`, merged into each hub's file (dedup by item ID — existing entries win), and the legacy file is renamed `pins.json.bak`. Pins from the legacy file that lack a `HubID` are dropped (they pre-date the field and can't be located deterministically).
 

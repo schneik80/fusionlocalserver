@@ -104,7 +104,7 @@ func NewClient() *Client {
 // HubProject is a single project returned by ActiveHubProjects. The ID is
 // the raw internal project ID used by the Fusion desktop client (e.g.
 // "20250213876602531" or "D20241002812932306"). This is NOT the same format
-// as the GraphQL dataManagementAPIProjectId stored by FusionDataCLI — use
+// as the GraphQL dataManagementAPIProjectId stored by fusionlocalserver — use
 // NormalizeProjectID to convert between them.
 type HubProject struct {
 	ID   string `json:"id"`
@@ -309,7 +309,7 @@ func (c *Client) initSession(ctx context.Context) (string, error) {
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
 			"clientInfo": map[string]any{
-				"name":    "FusionDataCLI",
+				"name":    "fusionlocalserver",
 				"version": "1.0",
 			},
 		},
