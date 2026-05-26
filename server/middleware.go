@@ -88,6 +88,23 @@ func (s *Server) recoverPanic(next http.Handler) http.Handler {
 	})
 }
 
+// canonicalRedirect bounces any request that arrived via a host other than the
+// configured public URL to that canonical origin, so the SPA load and the whole
+// OAuth round-trip stay same-origin — which is what lets a single redirect_uri
+// be registered with APS. No-op when no public URL is set.
+func (s *Server) canonicalRedirect(next http.Handler) http.Handler {
+	if s.publicOrigin == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requestOrigin(r) != s.publicOrigin {
+			http.Redirect(w, r, s.publicURL+r.URL.RequestURI(), http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // devCORS adds permissive CORS headers, but only in -dev mode. It lets a
 // Vite dev server running on a different origin (e.g. :5173) call the API on
 // :8080 directly. Production serves the SPA same-origin, so no CORS is emitted.

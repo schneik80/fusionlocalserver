@@ -31,7 +31,10 @@ Open one of those URLs in a browser and click **Sign in with Autodesk**. Each vi
 |------|---------|---------|
 | `-v` | off | Verbose logging: debug level to the console **and** the log file, including a line per request and (redacted) upstream API traces |
 | `-dev` | off | Developer mode: reverse-proxy the web UI to the Vite dev server for HMR instead of serving the embedded build |
-| `-tls` | off | Serve over HTTPS so the session cookie is `Secure`. With no cert given, a self-signed one is generated and cached under `~/.config/fusionlocalserver/` (browsers warn once); use `-tls-cert`/`-tls-key` to supply your own PEM pair. The OAuth callback then becomes `https://…/api/auth/callback` — register it on the APS app. |
+| `-tls` | off | Serve over HTTPS so the session cookie is `Secure`. With no cert given, a self-signed one is generated and cached under `~/.config/fusionlocalserver/` (browsers warn once); use `-tls-cert`/`-tls-key` to supply your own PEM pair. The OAuth callback then becomes `https://…/api/auth/callback`. |
+| `-public-url` | derived | Canonical external base URL clients use, e.g. `https://fusion.lan:8080`. When set, the OAuth `redirect_uri` is built from it — so you register **one** callback on the APS app — and any client that arrives via a different host is redirected to it. Without it, the callback is derived from each client's address and every distinct origin must be registered separately. |
+
+> **APS callback registration.** APS validates the OAuth `redirect_uri` by exact match (no wildcards). You don't register clients — you register the server's callback URL(s). The simplest setup is to pick **one** stable address everyone uses (a hostname or static IP), pass it as `-public-url`, and register just `<public-url>/api/auth/callback`. `localhost` ≠ `127.0.0.1`, each LAN IP/hostname is distinct, and `-tls` makes the scheme `https` — so a fixed `-public-url` is the way to keep it to a single registration.
 
 The listen **port is configurable at runtime** from the web UI's Settings dialog (persisted to `~/.config/fusionlocalserver/server.json`). Changing it restarts the listener in place; the page then reconnects on the new port. The port field is read-only in `-dev` mode (where the Vite proxy is pinned to the default port).
 

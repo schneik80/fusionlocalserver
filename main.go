@@ -14,25 +14,27 @@ var version = "dev"
 
 func main() {
 	var (
-		verbose = flag.Bool("v", false, "verbose logging (debug level, to console and the log file)")
-		dev     = flag.Bool("dev", false, "developer mode: proxy the web UI to the Vite dev server for HMR")
-		tls     = flag.Bool("tls", false, "serve over HTTPS so the session cookie is Secure (self-signed cert auto-generated if -tls-cert/-tls-key are not given)")
-		tlsCert = flag.String("tls-cert", "", "path to a TLS certificate (PEM); requires -tls and -tls-key")
-		tlsKey  = flag.String("tls-key", "", "path to the TLS private key (PEM); requires -tls and -tls-cert")
+		verbose   = flag.Bool("v", false, "verbose logging (debug level, to console and the log file)")
+		dev       = flag.Bool("dev", false, "developer mode: proxy the web UI to the Vite dev server for HMR")
+		tls       = flag.Bool("tls", false, "serve over HTTPS so the session cookie is Secure (self-signed cert auto-generated if -tls-cert/-tls-key are not given)")
+		tlsCert   = flag.String("tls-cert", "", "path to a TLS certificate (PEM); requires -tls and -tls-key")
+		tlsKey    = flag.String("tls-key", "", "path to the TLS private key (PEM); requires -tls and -tls-cert")
+		publicURL = flag.String("public-url", "", "canonical external base URL clients use, e.g. https://fusion.lan:8080; when set, the OAuth redirect_uri is built from it (register just that one callback) and requests to other hosts are redirected to it")
 	)
 	flag.Parse()
 
 	cfg, cfgErr := config.Load()
 
 	if err := server.Run(server.Options{
-		Verbose: *verbose,
-		Dev:     *dev,
-		TLS:     *tls,
-		TLSCert: *tlsCert,
-		TLSKey:  *tlsKey,
-		Config:  cfg,
-		CfgErr:  cfgErr,
-		Version: version,
+		Verbose:   *verbose,
+		Dev:       *dev,
+		TLS:       *tls,
+		TLSCert:   *tlsCert,
+		TLSKey:    *tlsKey,
+		PublicURL: *publicURL,
+		Config:    cfg,
+		CfgErr:    cfgErr,
+		Version:   version,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

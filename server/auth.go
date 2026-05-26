@@ -56,15 +56,26 @@ func isSecure(r *http.Request) bool {
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
-// callbackURIFromRequest derives the OAuth redirect_uri from the origin the
-// browser used to reach the server, so it always matches. Every such origin
-// must be registered as a Callback URL on the APS app (deferred APS work).
-func callbackURIFromRequest(r *http.Request) string {
+// requestOrigin is the external scheme://host the client used to reach the
+// server, honoring a TLS-terminating proxy via X-Forwarded-Proto.
+func requestOrigin(r *http.Request) string {
 	scheme := "http"
 	if isSecure(r) {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + "/api/auth/callback"
+	return scheme + "://" + r.Host
+}
+
+// callbackURI returns the OAuth redirect_uri. With a canonical public URL
+// configured it is fixed — so only that one callback need be registered on the
+// APS app, regardless of how each client connects. Otherwise it is derived from
+// the request origin (and every origin used must then be registered).
+func (s *Server) callbackURI(r *http.Request) string {
+	base := s.publicURL
+	if base == "" {
+		base = requestOrigin(r)
+	}
+	return base + "/api/auth/callback"
 }
 
 func setCookie(w http.ResponseWriter, name, value string, maxAge int, secure bool) {
@@ -100,7 +111,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not start login")
 		return
 	}
-	redirectURI := callbackURIFromRequest(r)
+	redirectURI := s.callbackURI(r)
 	s.pending.Put(state, pendingEntry{verifier: verifier, redirectURI: redirectURI, createdAt: time.Now()})
 	setCookie(w, pendingCookieName, state, int(pendingTTL.Seconds()), isSecure(r))
 	http.Redirect(w, r, auth.BuildAuthURL(s.clientID, challenge, redirectURI, state), http.StatusFound)

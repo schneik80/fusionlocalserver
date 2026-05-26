@@ -64,11 +64,16 @@ sequenceDiagram
     App-->>B: Set-Cookie: fls_session=<id>; HttpOnly; SameSite=Lax<br/>302 → /
 ```
 
-The `redirect_uri` is derived per request from the origin the browser used
-(`<scheme>://<host>/api/auth/callback`) so it always matches; the exact value
+**`redirect_uri`.** With `-public-url` set, the callback is fixed to
+`<public-url>/api/auth/callback` and a middleware redirects any client that
+arrives via a different host to the canonical origin first — so the whole flow
+stays same-origin and **only that one callback need be registered on the APS
+app**. Without `-public-url` the callback is derived per request from the origin
+the browser used (`<scheme>://<host>/api/auth/callback`), which then requires
+**every** such origin to be registered (`localhost` ≠ `127.0.0.1`, each LAN
+IP/hostname is distinct, and `-tls` makes it `https`). Either way the value
 chosen at `/login` is stored in the pending entry and replayed byte-for-byte at
-the token exchange (APS rejects a mismatch). **Every origin used must be
-registered as a Callback URL on the APS app** — see
+the token exchange (APS rejects a mismatch). See
 [`SECURITY-TODO.md`](../SECURITY-TODO.md).
 
 On any failure the callback redirects to `/?auth_error=<reason>`, which the
@@ -176,7 +181,7 @@ sequenceDiagram
 | Authorization | `https://developer.api.autodesk.com/authentication/v2/authorize` |
 | Token exchange / refresh | `https://developer.api.autodesk.com/authentication/v2/token` |
 | User profile (display) | `https://api.userprofile.autodesk.com/userinfo` |
-| Redirect receiver | `<server-origin>/api/auth/callback` (derived per request; must be registered on the APS app) |
+| Redirect receiver | `<public-url>/api/auth/callback` when `-public-url` is set (one registration), else `<server-origin>/api/auth/callback` derived per request; must be registered on the APS app |
 
 **Required scopes:** `data:read user-profile:read`
 

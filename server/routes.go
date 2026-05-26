@@ -54,6 +54,7 @@ func (s *Server) routes() http.Handler {
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())
 
-	// Middleware chain (outermost first): recover -> log -> dev CORS.
-	return s.recoverPanic(s.logRequest(s.devCORS(mux)))
+	// Middleware chain (outermost first): recover -> log -> canonical-host
+	// redirect -> dev CORS.
+	return s.recoverPanic(s.logRequest(s.canonicalRedirect(s.devCORS(mux))))
 }

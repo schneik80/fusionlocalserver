@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -40,9 +41,14 @@ type Options struct {
 	TLS     bool
 	TLSCert string
 	TLSKey  string
-	Config  *config.Config
-	CfgErr  error
-	Version string
+	// PublicURL is the canonical external base URL clients reach the server by
+	// (e.g. https://fusion.lan:8080). When set, the OAuth redirect_uri is built
+	// from it (so only one callback need be registered with APS) and requests
+	// arriving via any other host are redirected to it.
+	PublicURL string
+	Config    *config.Config
+	CfgErr    error
+	Version   string
 }
 
 // Server holds the runtime state shared across handlers.
@@ -66,6 +72,13 @@ type Server struct {
 	tlsEnabled  bool
 	tlsCertFile string
 	tlsKeyFile  string
+
+	// publicURL is the canonical external base URL (no trailing slash) used to
+	// build the OAuth redirect_uri; publicOrigin is its scheme://host, used to
+	// detect requests that arrived via a different host. Empty disables both
+	// (the callback is then derived per request from r.Host).
+	publicURL    string
+	publicOrigin string
 
 	// portConfigurable gates the runtime port-change endpoint. The server owns
 	// the port (and so derives the bind address from server.json) unless it is
@@ -138,6 +151,18 @@ func Run(opts Options) error {
 		restartCh:        make(chan struct{}, 1),
 		thumbs:           newThumbCache(512, 10*time.Minute),
 		warmSem:          make(chan struct{}, 12),
+	}
+
+	// A canonical public URL fixes the OAuth redirect_uri (one APS registration)
+	// and lets the server bounce clients who arrived via another host to it.
+	if opts.PublicURL != "" {
+		u, perr := url.Parse(opts.PublicURL)
+		if perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("invalid -public-url %q: want an absolute URL like https://host:port", opts.PublicURL)
+		}
+		s.publicOrigin = u.Scheme + "://" + u.Host
+		s.publicURL = s.publicOrigin
+		logger.Info("public URL set: OAuth callback is fixed and other hosts are redirected here", "public_url", s.publicURL)
 	}
 
 	// Restore sessions from the last run so a restart doesn't log everyone out.

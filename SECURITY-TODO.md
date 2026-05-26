@@ -36,13 +36,14 @@ obviated most of the rest. This file tracks what remains.
 
 ## New — deferred
 
-- [ ] **APS app callback registration.** The login flow derives `redirect_uri`
-  from the request origin (`<scheme>://<host>/api/auth/callback`). APS requires
-  each such origin to be registered as an exact-match Callback URL (no
-  wildcards): `localhost` ≠ `127.0.0.1`, each LAN IP is separate, and the
-  runtime port-change and `-tls` (https) features multiply the set. Tracked with
-  the broader "APS client_id/secret provisioning" work, which is out of scope
-  for the refactor.
+- [ ] **APS app callback registration.** APS validates `redirect_uri` by
+  exact match (no wildcards). Use **`-public-url`** to fix the callback to one
+  canonical URL and register just that — the server redirects clients arriving
+  via other hosts to it. Without it, the callback is derived per origin and each
+  must be registered (`localhost` ≠ `127.0.0.1`, each LAN IP/hostname is
+  separate, `-tls` makes it https). Still operator/portal work (and tied to the
+  broader APS client_id/secret provisioning), so it stays deferred — but
+  `-public-url` reduces it to a single registration.
 - [ ] **Stronger token-at-rest (L1).** Persisted sessions are AES-256-GCM
   encrypted, but the key sits beside the data (`session.key`, 0600) — this
   defends a casual file read, not an attacker with the user's home directory. OS
