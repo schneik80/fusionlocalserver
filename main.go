@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/schneik80/FusionDataCLI/config"
+	"github.com/schneik80/FusionDataCLI/server"
 	"github.com/schneik80/FusionDataCLI/ui"
 )
 
@@ -16,20 +18,45 @@ import (
 var version = "dev"
 
 func main() {
-	// Catch any panic that propagates out of the BubbleTea event loop and
-	// write the cause + full goroutine stack to <config.Dir()>/panic.log.
-	// Without this, the alternate-screen render is restored but the panic
-	// dump scrolls past in the terminal and is hard to recover, especially
-	// when the goroutine that panicked is something other than the main
-	// loop. Re-panic afterward so the process still exits non-zero.
+	var (
+		serverMode = flag.Bool("server", false, "run an HTTP server (web UI + JSON API) instead of the TUI")
+		addr       = flag.String("addr", "0.0.0.0:8080", "address to bind the server to (with -server)")
+		dev        = flag.Bool("dev", false, "dev mode: proxy the web UI to the Vite dev server for HMR (with -server)")
+	)
+	flag.Parse()
+
+	cfg, cfgErr := config.Load()
+
+	if *serverMode {
+		if err := server.Run(server.Options{
+			Addr:    *addr,
+			Dev:     *dev,
+			Config:  cfg,
+			CfgErr:  cfgErr,
+			Version: version,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	runTUI(cfg, cfgErr)
+}
+
+// runTUI launches the Bubble Tea program. It owns the panic-log wrapper: a
+// panic out of the event loop restores the alternate screen but the dump
+// scrolls past in the terminal, so we capture the cause + full stack to
+// <config.Dir()>/panic.log and re-panic so the process still exits non-zero.
+// The server path does not need this — it logs via slog and recovers panics
+// per-request in middleware.
+func runTUI(cfg *config.Config, cfgErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			writePanicLog(r)
 			panic(r)
 		}
 	}()
-
-	cfg, cfgErr := config.Load()
 
 	p := tea.NewProgram(
 		ui.New(cfg, cfgErr, version),

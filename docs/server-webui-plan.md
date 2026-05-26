@@ -1,0 +1,232 @@
+# FusionDataCLI — `-server` mode + React/MUI web UI
+
+## Context
+
+FusionDataCLI is a Go TUI (Bubble Tea) that browses Autodesk Platform Services
+(APS) data — Hubs → Projects → folder Contents → document Details. We want to run
+the same capability as a **web app** so multiple users on the network can browse
+through one shared server identity, and so the UI can be iterated on rapidly in
+real web tech instead of a terminal.
+
+The plan adds a `-server` switch that, instead of launching the TUI, starts an
+HTTP server. The server reuses the existing, already-UI-agnostic `api/`, `auth/`,
+`config/`, and `pins/` packages and serves a new React + MUI single-page app that
+recreates the current three-column browser, plus new chrome the TUI lacks: a
+global header, a fat left navigation rail (Hubs / Pins / Settings), and
+lightbox-style dialogs for Pins and Settings. Light/Dark theming reuses the color
+tokens from the sibling **PowerTools-Assembly** project. Keyboard navigation is
+dropped in the web UI; everything is click-driven.
+
+The codebase is well-suited to this: `main.go` has no CLI parsing yet (clean
+insertion point), and the data/auth layers have zero TUI dependencies, so the
+server reuses them directly.
+
+### Decisions (confirmed with user)
+- **Frontend**: React + MUI + Vite (TypeScript). MUI `AppBar`/`Drawer`/`Tabs`/`Breadcrumbs`/`Dialog` map 1:1 onto the described layout.
+- **Network**: bind open on the LAN (default `0.0.0.0:8080`), **no auth gate**. Anyone who reaches it browses as the server's APS identity. (Log a visible warning at startup.)
+- **Fusion Open/Insert + STEP download**: **stubbed** this iteration — disabled buttons in the UI; backend exposes `501` placeholders. Wire up later.
+
+---
+
+## Architecture overview
+
+```
+fusiondatacli (single binary)
+ ├─ default            -> TUI (unchanged)
+ └─ -server -addr ...  -> HTTP server
+        ├─ /api/*      JSON REST, wraps api/ + pins/, auth via TokenManager
+        └─ /*          embedded React/MUI SPA (go:embed of server/webdist)
+
+web/  (Vite + React + TS + MUI source)  ──vite build──> server/webdist/ (embedded)
+```
+
+The server holds one APS token (3-legged, reused from the TUI's cached
+`~/.config/fusiondatacli/tokens.json`) and proxies every data call. Region is
+process-global (`api.SetRegion`), set once at startup.
+
+---
+
+## Part A — Go backend
+
+### A1. `main.go` flag branch
+Add stdlib `flag` parsing **before** building the TUI. New flags: `-server` (bool),
+`-addr` (default `0.0.0.0:8080`), `-dev` (bool, serve UI from disk / Vite instead of
+embedded). If `-server`, call `server.Run(server.Options{Addr, Dev, Config, CfgErr, Version})`
+and return; otherwise the existing `tea.NewProgram(...)` path runs unchanged. Keep
+the TUI's panic-log wrapper only around the TUI path.
+
+### A2. New `server/` package
+Package `server`, zero TUI deps, imports `api`/`auth`/`config`/`pins`.
+
+| File | Responsibility |
+|---|---|
+| `server.go` | `Run(Options) error`, `Server` struct, region setup, `pins.MigrateLegacy()`, token bootstrap, `http.Server` wiring, graceful shutdown (`signal.NotifyContext` → `Shutdown`). |
+| `token.go` | Concurrency-safe `TokenManager` (see A3). |
+| `routes.go` | `(*Server).routes() http.Handler` — register `/api/*` first, static catch-all last; middleware chain. |
+| `handlers_nav.go` | hubs, projects, project-contents, folder-contents, item-details, item-location. |
+| `handlers_refs.go` | uses, where-used, drawings, classify. |
+| `handlers_pins.go` | pins list/add/remove (per-hub; guard Load→mutate→Save with a mutex). |
+| `handlers_stub.go` | `501` placeholders for Fusion open/insert + STEP download. |
+| `dto.go` | JSON DTOs + mappers from `api.*` (the api structs have no json tags). |
+| `respond.go` | `writeJSON`, `writeError`, status mapping. |
+| `middleware.go` | request logging, panic recovery, dev CORS. |
+| `static.go` | `go:embed all:webdist`, SPA fallback, dev disk/proxy mode. |
+| `webdist/` | embed target; commit a placeholder `index.html` so plain `go build` compiles. |
+
+### A3. `TokenManager` (token.go) — the critical concurrency piece
+Reuses existing `auth` funcs (confirmed signatures): `auth.LoadTokens() (*TokenData, error)`
+(returns `(nil,nil)` if absent), `auth.Login(ctx, clientID, clientSecret)`,
+`auth.Refresh(ctx, clientID, clientSecret, refreshToken)` (both internally call
+`SaveTokens`), and `(*TokenData).Valid()` (nil-safe, 30s skew).
+
+- `Bootstrap(ctx)` — runs once at startup, **before** serving:
+  load cache → if `Valid()` use it → else if refresh token present, `Refresh` →
+  else run interactive `auth.Login` (opens browser on the **server host**, binds
+  `127.0.0.1:7879` transiently, then releases before `:8080` serving). Fail fast if
+  no client_id configured.
+- `Token(ctx) (string, error)` — hot path, called by every handler. Single
+  `sync.Mutex` guards check-and-refresh so concurrent requests trigger **at most one**
+  refresh per expiry boundary (APS rotates the refresh token on use; a double-refresh
+  race would brick the cache — the mutex prevents this). Holding the lock across the
+  ~hourly refresh round-trip is intentional and correct.
+- No in-handler browser login: if the token expires with no refresh token mid-run,
+  return `401` and require an operator restart.
+- Optional: background goroutine that proactively refreshes ~1 min before expiry so
+  the hourly stall never lands on a user request; `Token()` stays the fallback.
+
+### A4. REST API route table
+All under `/api/`, JSON in/out. **IDs are GraphQL URNs (contain `:` `/`) → pass as
+query params, never path segments.** Region is process-global (not a param). Every
+handler wraps `r.Context()` in a ~30s timeout and passes it to `tm.Token(ctx)` and the
+`api.*` call. Uniform error envelope `{"error": "..."}`.
+
+| Method | Path | Query | Wraps |
+|---|---|---|---|
+| GET | `/api/meta` | — | `{version, region, fusionEnabled:false, stepEnabled:false}` |
+| GET | `/api/hubs` | — | `api.GetHubs` |
+| GET | `/api/projects` | `hubId` | `api.GetProjects` |
+| GET | `/api/projects/contents` | `projectId` | `api.GetFolders` + `api.GetProjectItems` (concurrent; returns `{folders,items}`) |
+| GET | `/api/folders/contents` | `hubId,folderId` | `api.GetItems` |
+| GET | `/api/items/details` | `hubId,itemId` | `api.GetItemDetails` |
+| GET | `/api/items/location` | `hubId,itemId` | `api.GetItemLocation` |
+| GET | `/api/items/uses` | `cvId` *or* `hubId,drawingItemId` | `api.GetOccurrences` / drawing-source |
+| GET | `/api/items/where-used` | `cvId` | `api.GetWhereUsed` |
+| GET | `/api/items/drawings` | `hubId,designItemId` | `api.GetDrawingsForDesign` |
+| GET | `/api/items/classify` | `cvId` | `api.ClassifyAssembly` (per-row async refine; `classifySem` caps at 8) |
+| GET | `/api/pins` | `hubId` | `pins.Load` |
+| POST | `/api/pins` | `hubId` | validate `pins.IsPinnable` → `Load`+`Add`+`Save`; body carries `id,name,kind,project_id,project_alt_id,folder_path` so the bookmark stays navigable (mirrors `ui/app.go` pin capture) |
+| DELETE | `/api/pins` | `hubId,id` | `Load`+`Remove`+`Save` |
+| POST | `/api/fusion/open`, `/api/step/download` | — | `501` stub |
+
+DTOs in `dto.go` mirror `api.NavItem`/`ItemDetails`/`VersionSummary`/`ComponentRef`/
+`DrawingRef`/`ItemLocation`/`FolderRef` with explicit camelCase `json:` tags. Carry
+`componentVersionId` and `subtype` on items so the frontend can drive classify/uses
+and the inline `· asm`/`· part`/`· dwg` type tags. Reuse `pins.Pin` (already a JSON
+type) for pin responses.
+
+### A5. Static embedding (static.go)
+`//go:embed all:webdist` (the `all:` prefix embeds `_`/`.`-prefixed asset files).
+Production: serve embedded FS with SPA fallback (unknown non-`/api` path → `index.html`).
+`-dev`: serve `web/dist` from disk or reverse-proxy the Vite dev server (`:5173`) for HMR.
+Commit `server/webdist/index.html` placeholder so a fresh checkout compiles without
+running Vite; gitignore only the built `assets/`.
+
+### A6. Logging (middleware.go)
+Use stdlib **`log/slog`** (text handler → stdout; no new deps). Request middleware logs
+`method, path, query, status, bytes, dur_ms, remote`. Lifecycle logs: startup
+(addr/version/region/dev), auth events (cache load / refresh / interactive login /
+each refresh with `expires_at`), handler errors, shutdown. Panic-recovery middleware
+wraps all handlers → `500` JSON. Emit a visible WARN that the server is bound to a
+non-loopback address with no auth gate.
+
+---
+
+## Part B — React/MUI frontend (`web/`)
+
+Vite + React + TypeScript + MUI. Source in `web/`; `vite.config.ts` sets
+`build.outDir: '../server/webdist'`, `emptyOutDir: true`.
+
+### B1. Theming (Light/Dark, from PowerTools-Assembly)
+Seed an MUI theme via `createTheme` for both `mode: 'light'` and `mode: 'dark'`, using
+the PowerTools-Assembly palette (`/home/schneik/Source/PowerTools-Assembly/commands/assemblybuilder/resources/html/index.html`):
+accent `#0696d7`; dark bg `#2A3442` / panels `#323E50` / text `#ffffff` / secondary
+`#a0aec0`; light bg `#f4f4f4` / panels `#ffffff` / text `#333333`. Typography:
+Montserrat (fallback Helvetica/Arial). Wrap app in `<ThemeProvider>` + `<CssBaseline>`;
+persist mode choice in `localStorage`, default to `prefers-color-scheme`.
+
+### B2. Iconography
+Font Awesome (open source) via `@fortawesome/react-fontawesome` + free solid/brands
+icon packages. Use for the left-rail icons (hubs/pins/settings), tab glyphs, pin star,
+breadcrumb separators, type tags.
+
+### B3. Layout components
+- `AppLayout` — MUI `AppBar` (global header: app name, version, hub indicator, theme toggle) + permanent left `Drawer` (fat nav rail: Hubs, Pins, Settings icon buttons) + main region.
+- `BreadcrumbBar` — MUI `Breadcrumbs` below header, above columns: Hub › Project › Folder… › Document; segments clickable (dispatch navigate), last (document) inert.
+- `BrowserColumns` — three-pane region: `ProjectsColumn` | `ContentsColumn` | `DetailsPanel`. CSS grid/flex (~35% details, nav columns split the rest). Click selects; selecting a container loads the next column. Loading spinners per column.
+- `DetailsPanel` — MUI `Tabs`: **Details / Uses / Where Used / Drawings**. Tab availability mirrors TUI (designs get all 4; drawings get Details+Uses; basic/configured get Details only). Lazy-fetch + cache per item; spinner while loading.
+- **Pins lightbox** — MUI `Dialog` opened from the left rail Pins icon: stub for now — render the pin list grouped by kind (fetch `/api/pins?hubId=`), star icon, Navigate/Remove actions; Open/Insert buttons disabled.
+- **Settings lightbox** — MUI `Dialog` from the Settings icon: stub — theme (Light/Dark/System), region display (read-only from `/api/meta`), version/about. Stubbed controls clearly marked.
+- **Hub switcher** — opened from Hubs rail icon (Dialog or Menu): list `/api/hubs`, select → reload projects + pins for that hub.
+
+### B4. Data layer
+Thin typed `api` client (`fetch`) with TS interfaces mirroring the Go DTOs. Use
+React Query (TanStack Query) or simple hooks for fetching/caching/loading state.
+After a folder's contents load, fire `/api/items/classify` per design row to upgrade
+icons to assembly/part (mirrors TUI async refinement). All actions click-driven; no
+keyboard nav.
+
+---
+
+## Part C — Build system
+
+- Makefile: add `web` target (`cd web && npm install && npm run build`); make `build`
+  and `install` depend on `web`; keep existing `CLIENT_ID`/`REGION`/`VERSION` ldflags.
+- `dev` target stays Go-only (compiles against the committed `webdist/index.html`
+  placeholder); pair `./fusiondatacli -server -dev` with `cd web && npm run dev` for HMR.
+- `.gitignore`: ignore `server/webdist/assets/` and built artifacts, but **commit**
+  `server/webdist/index.html`. Verify no broad `**/dist` glob accidentally catches
+  `server/webdist`.
+- If releases use `.goreleaser.yaml`, add a `before` hook running `make web`.
+
+---
+
+## Implementation sequencing
+1. `server/token.go` (TokenManager) — testable against a fake `tokens.json`.
+2. `server/dto.go` + `respond.go` — pure mapping.
+3. `server/static.go` + committed `webdist/index.html` placeholder (package compiles).
+4. `server/handlers_*.go` + `routes.go` + `middleware.go`.
+5. `server/server.go` (`Run`, shutdown, logging).
+6. `main.go` flag branch.
+7. Makefile `web` target.
+8. Scaffold `web/` Vite+React+TS+MUI project; theme; layout shell; wire to `/api`;
+   then Pins/Settings lightbox stubs.
+
+---
+
+## Verification
+- **Backend, no UI**: `go build` (uses placeholder) then `./fusiondatacli -server`;
+  watch stdout for startup + auth-bootstrap logs; `curl localhost:8080/api/meta`,
+  `/api/hubs`, `/api/projects?hubId=...`, `/api/projects/contents?projectId=...`,
+  `/api/items/details?hubId=...&itemId=...`, pins POST/GET/DELETE. Confirm request log
+  lines (method/path/status/dur). Confirm token refresh logs after expiry (or force-expire
+  the cache). `go vet ./...` and `go test -race ./...` (existing `make check`).
+- **Full app**: `make build` (runs `vite build` → embeds → ldflags client_id) then
+  `./fusiondatacli -server`; open `http://<host>:8080` in a browser. Verify: header +
+  left rail render; hub switch loads projects; three-column drill-down; breadcrumb
+  clicks navigate; details tabs lazy-load (Uses/Where Used/Drawings); type tags refine
+  to asm/part; Light/Dark toggle; Pins and Settings dialogs open from the rail (stub
+  content); Fusion/STEP buttons disabled. Confirm reachable from a second machine on
+  the LAN (open-network decision) and that the no-auth warning is logged.
+- **TUI regression**: `./fusiondatacli` (no flag) still launches the TUI unchanged.
+
+## Critical files
+- `main.go` — add `-server`/`-addr`/`-dev` flag branch.
+- `auth/oauth.go`, `auth/tokens.go` — `Login`/`Refresh`/`LoadTokens`/`TokenData.Valid` wrapped by TokenManager.
+- `api/client.go` (+ `queries.go`, `details.go`, `refs.go`, `locate.go`, `classify.go`) — shared `httpClient`, `SetRegion`, wrapped funcs/types.
+- `pins/pins.go` — slice-functional pins API the pins endpoints wrap.
+- `Makefile` — `web` build target before `go build`, preserve ldflags.
+- New: `server/*.go`, `server/webdist/index.html` (placeholder), `web/` (Vite project).
+
+## Notes to verify during implementation
+- Exact name of the drawing-source fetch func used by the polymorphic Uses tab (the TUI's Uses tab is `GetOccurrences` for designs, drawing-source for drawings) — confirm in `api/refs.go`.
+- Confirm `pins` exported names (`Load`/`Save`/`Add`/`Remove`/`IsPinnable`/`MigrateLegacy`) and `Pin`/`FolderRef` JSON tags before wiring DTOs.

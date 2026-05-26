@@ -1,0 +1,116 @@
+// TypeScript mirrors of the Go DTOs in server/dto.go. Keep field names in sync
+// with the json tags there.
+
+export interface Meta {
+  version: string
+  region: string
+  fusionEnabled: boolean
+  stepEnabled: boolean
+}
+
+export type ItemKind =
+  | 'hub'
+  | 'project'
+  | 'folder'
+  | 'design'
+  | 'configured'
+  | 'drawing'
+  | 'schematic'
+  | 'pcb'
+  | 'ecad'
+  | 'unknown'
+
+export interface Item {
+  id: string
+  name: string
+  kind: ItemKind | string
+  altId?: string
+  webUrl?: string
+  isContainer: boolean
+  componentVersionId?: string
+  subtype?: string // "assembly" | "part" | "dwg" | "template" | ""
+}
+
+export interface Contents {
+  folders: Item[]
+  items: Item[]
+}
+
+export interface VersionSummary {
+  number: number
+  createdOn?: string
+  createdBy?: string
+  comment?: string
+}
+
+export interface Details {
+  id: string
+  name: string
+  typename: string
+  size?: string
+  mimeType?: string
+  extensionType?: string
+  fusionWebUrl?: string
+  createdOn?: string
+  createdBy?: string
+  modifiedOn?: string
+  modifiedBy?: string
+  versionNumber: number
+  partNumber?: string
+  partDesc?: string
+  material?: string
+  isMilestone: boolean
+  rootComponentVersionId?: string
+  versions: VersionSummary[]
+}
+
+export interface ComponentRef {
+  id: string
+  name: string
+  partNumber?: string
+  partDesc?: string
+  material?: string
+  designItemId?: string
+  designItemName?: string
+  fusionWebUrl?: string
+}
+
+export interface DrawingRef {
+  id: string
+  name: string
+  drawingItemId: string
+  modifiedOn?: string
+  modifiedBy?: string
+  fusionWebUrl?: string
+}
+
+export interface FolderRef {
+  id: string
+  name: string
+}
+
+export interface Location {
+  hubId: string
+  projectId: string
+  projectAltId?: string
+  projectName: string
+  folderPath: FolderRef[]
+}
+
+export interface Classify {
+  componentVersionId: string
+  isAssembly: boolean
+  subtype: string // "assembly" | "part"
+}
+
+// Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
+export interface Pin {
+  id: string
+  name: string
+  kind: string
+  hub_id: string
+  project_id?: string
+  project_alt_id?: string
+  folder_path?: FolderRef[]
+  pinned_at?: string
+}

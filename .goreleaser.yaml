@@ -4,6 +4,9 @@ project_name: FusionDataCLI
 
 before:
   hooks:
+    # Build the embedded web UI before any go build so server/webdist ships
+    # the current React/MUI bundle in release binaries.
+    - make web
     - go mod tidy
 
 builds:

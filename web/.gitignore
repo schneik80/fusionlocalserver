@@ -1,0 +1,26 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules
+
+# Build output goes to ../server/webdist (see vite.config.ts), not web/dist,
+# but ignore web/dist too in case of a stray local build.
+dist
+dist-ssr
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

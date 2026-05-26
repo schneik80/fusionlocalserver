@@ -15,17 +15,25 @@ LDFLAGS    := -X $(MODULE)/config.DefaultClientID=$(CLIENT_ID) \
               -X $(MODULE)/config.DefaultRegion=$(REGION) \
               -X main.version=$(VERSION)
 
-.PHONY: build install clean check
+.PHONY: build install clean check web
 
-build:
+# Build the React/MUI web UI into server/webdist (embedded by go:embed at
+# compile time). build and install depend on this so the binary always ships
+# the current UI. Requires Node/npm.
+web:
+	cd web && npm install && npm run build
+
+build: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
 	go build -ldflags "$(LDFLAGS)" -o fusiondatacli .
 
-install:
+install: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
 	go install -ldflags "$(LDFLAGS)" .
 
-# Build without an embedded client_id — for local dev using env vars or config.json
+# Build without an embedded client_id — for local dev using env vars or config.json.
+# Go-only: compiles against the committed server/webdist/index.html placeholder.
+# Pair with `cd web && npm run dev` and run `./fusiondatacli -server -dev` for HMR.
 dev:
 	go build -o fusiondatacli .
 

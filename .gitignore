@@ -11,6 +11,15 @@ probe-assembly
 dist/
 bin/
 
+# Web UI build artifacts — the vite build writes hashed bundles into
+# server/webdist/assets/ (embedded at compile time via go:embed), but the
+# server/webdist/index.html placeholder IS committed so plain `go build`
+# compiles before vite has ever run.
+server/webdist/assets/
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+
 # Go
 *.test
 *.out

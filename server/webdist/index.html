@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FusionDataCLI</title>
+  </head>
+  <body>
+    <!--
+      Placeholder shell committed so `go build` compiles the //go:embed in
+      server/static.go before the Vite frontend has ever been built.
+      `make web` (vite build) overwrites this file and drops hashed bundles
+      into webdist/assets/. Do not rely on this content at runtime.
+    -->
+    <main style="font-family: sans-serif; padding: 2rem;">
+      <h1>FusionDataCLI server</h1>
+      <p>
+        The web UI has not been built yet. Run <code>make web</code> (or
+        <code>make build</code>) to compile the React/MUI frontend, or start the
+        Vite dev server and run the binary with <code>-server -dev</code>.
+      </p>
+    </main>
+  </body>
+</html>
