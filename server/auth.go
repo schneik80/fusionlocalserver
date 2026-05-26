@@ -230,18 +230,22 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func (s *Server) sessionToken(ctx context.Context, sess *Session) (string, error) {
 	sess.refreshMu.Lock()
 	defer sess.refreshMu.Unlock()
-	if sess.token.Valid() {
-		return sess.token.AccessToken, nil
+	cur := sess.token.Load()
+	if cur.Valid() {
+		return cur.AccessToken, nil
 	}
-	if sess.token == nil || sess.token.RefreshToken == "" {
+	if cur == nil || cur.RefreshToken == "" {
 		return "", errors.New("token expired and not refreshable")
 	}
 	rctx, cancel := context.WithTimeout(ctx, authCtxTimeout)
 	defer cancel()
-	td, err := authRefresh(rctx, s.clientID, s.clientSecret, sess.token.RefreshToken)
+	td, err := authRefresh(rctx, s.clientID, s.clientSecret, cur.RefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("refresh failed: %w", err)
 	}
-	sess.token = td
+	sess.token.Store(td)
+	// Persist the rotated refresh token so a restart keeps this session usable
+	// (an old refresh token would have been invalidated by APS).
+	s.sessions.persist()
 	return td.AccessToken, nil
 }

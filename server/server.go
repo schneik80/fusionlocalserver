@@ -140,6 +140,13 @@ func Run(opts Options) error {
 		warmSem:          make(chan struct{}, 12),
 	}
 
+	// Restore sessions from the last run so a restart doesn't log everyone out.
+	if dir, derr := config.Dir(); derr != nil {
+		logger.Warn("sessions: persistence disabled (config dir unavailable)", "err", derr)
+	} else if lerr := s.sessions.EnablePersistence(dir); lerr != nil {
+		logger.Warn("sessions: could not load persisted sessions", "err", lerr)
+	}
+
 	// Resolve TLS once, before the bind loop spans restarts. A self-signed
 	// cert is generated/cached when -tls is given without a cert pair.
 	if opts.TLS {

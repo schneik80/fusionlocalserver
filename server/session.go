@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/schneik80/fusionlocalserver/auth"
@@ -46,7 +47,10 @@ type Session struct {
 	// session would invalidate each other; the lock plus a re-check of
 	// token.Valid() guarantees at most one refresh per expiry boundary.
 	refreshMu sync.Mutex
-	token     *auth.TokenData // guarded by refreshMu
+	// token is stored atomically so a persistence snapshot can read it without
+	// taking refreshMu (which the refresh round-trip holds across a network
+	// call). refreshMu still serialises the read-modify-write of a refresh.
+	token atomic.Pointer[auth.TokenData]
 }
 
 // SessionStore is an in-memory, expiring set of logged-in sessions keyed by an
@@ -58,6 +62,13 @@ type SessionStore struct {
 	idleTTL time.Duration
 	absTTL  time.Duration
 	logger  *slog.Logger
+
+	// Persistence (optional, enabled via EnablePersistence): the encrypted
+	// session file and its AES key. Empty paths disable persistence (the
+	// default, used by tests). saveMu serialises writes to persistPath.
+	persistPath string
+	keyPath     string
+	saveMu      sync.Mutex
 }
 
 func NewSessionStore(idle, abs time.Duration, logger *slog.Logger) *SessionStore {
@@ -78,10 +89,12 @@ func (s *SessionStore) Create(td *auth.TokenData, p auth.UserProfile) (*Session,
 		return nil, err
 	}
 	now := time.Now()
-	sess := &Session{ID: id, Profile: p, CreatedAt: now, lastSeen: now, token: td}
+	sess := &Session{ID: id, Profile: p, CreatedAt: now, lastSeen: now}
+	sess.token.Store(td)
 	s.mu.Lock()
 	s.byID[id] = sess
 	s.mu.Unlock()
+	s.persist()
 	return sess, nil
 }
 
@@ -107,8 +120,12 @@ func (s *SessionStore) Get(id string) (*Session, bool) {
 
 func (s *SessionStore) Delete(id string) {
 	s.mu.Lock()
+	_, existed := s.byID[id]
 	delete(s.byID, id)
 	s.mu.Unlock()
+	if existed {
+		s.persist()
+	}
 }
 
 // expired reports whether sess is past either deadline. Caller holds s.mu.
@@ -135,11 +152,16 @@ func (s *SessionStore) StartJanitor(ctx context.Context) {
 func (s *SessionStore) sweep() {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	removed := 0
 	for id, sess := range s.byID {
 		if s.expired(sess, now) {
 			delete(s.byID, id)
+			removed++
 		}
+	}
+	s.mu.Unlock()
+	if removed > 0 {
+		s.persist()
 	}
 }
 
