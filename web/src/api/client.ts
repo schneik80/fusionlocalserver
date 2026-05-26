@@ -11,11 +11,13 @@ import type {
   Contents,
   Details,
   DrawingRef,
+  GroupMember,
   Item,
   Location,
   Meta,
   PhysicalProperties,
   Pin,
+  ProjectGroup,
   SetPortResponse,
   Thumbnail,
 } from './types'
@@ -113,6 +115,12 @@ export const api = {
     request<DrawingRef[]>(`/api/items/drawings${qs({ hubId, designItemId })}`),
 
   bom: (cvId: string) => request<BOMRow[]>(`/api/items/bom${qs({ cvId })}`),
+
+  projectGroups: (projectId: string) =>
+    request<ProjectGroup[]>(`/api/projects/groups${qs({ projectId })}`),
+
+  groupMembers: (hubId: string, groupId: string) =>
+    request<GroupMember[]>(`/api/groups/members${qs({ hubId, groupId })}`),
 
   classify: (cvId: string) =>
     request<Classify>(`/api/items/classify${qs({ cvId })}`),

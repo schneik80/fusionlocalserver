@@ -13,11 +13,13 @@ import type {
   Contents,
   Details,
   DrawingRef,
+  GroupMember,
   Item,
   Location,
   Meta,
   PhysicalProperties,
   Pin,
+  ProjectGroup,
   Thumbnail,
 } from './types'
 
@@ -180,6 +182,32 @@ export const useBOM = (
     queryFn: () => api.bom(cvId!),
     enabled: enabled && !!cvId,
     staleTime: STALE,
+  })
+
+export const useProjectGroups = (
+  projectId: string | null | undefined,
+): UseQueryResult<ProjectGroup[]> =>
+  useQuery({
+    queryKey: ['projectGroups', projectId],
+    queryFn: () => api.projectGroups(projectId!),
+    enabled: !!projectId,
+    staleTime: STALE,
+  })
+
+// useGroupMembers loads a group's users lazily (on expand). Listing members
+// needs hub-admin access, so a 403 is expected for ordinary users — don't
+// retry it, and let the caller render it as "no permission".
+export const useGroupMembers = (
+  hubId: string | null,
+  groupId: string | null,
+  enabled: boolean,
+): UseQueryResult<GroupMember[]> =>
+  useQuery({
+    queryKey: ['groupMembers', hubId, groupId],
+    queryFn: () => api.groupMembers(hubId!, groupId!),
+    enabled: enabled && !!hubId && !!groupId,
+    staleTime: STALE,
+    retry: false,
   })
 
 export const useItemLocation = (

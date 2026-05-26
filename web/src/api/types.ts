@@ -136,6 +136,23 @@ export interface DrawingRef {
   fusionWebUrl?: string
 }
 
+// ProjectGroup mirrors server.ProjectGroupDTO — a group with access to the
+// item's project, and its role.
+export interface ProjectGroup {
+  id: string
+  name: string
+  role: string
+}
+
+// GroupMember mirrors server.GroupMemberDTO — a user in a group (listable only
+// with hub-admin access; otherwise the members request returns 403).
+export interface GroupMember {
+  userId: string
+  name: string
+  email?: string
+  status?: string
+}
+
 export interface FolderRef {
   id: string
   name: string

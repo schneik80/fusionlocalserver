@@ -106,6 +106,23 @@ type BOMRowDTO struct {
 	Quantity           int    `json:"quantity"`
 }
 
+// ProjectGroupDTO mirrors api.ProjectGroup — a group with access to a project
+// and its role, shown in the Permissions tab.
+type ProjectGroupDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// GroupMemberDTO mirrors api.GroupMember — a user in a group (only listable
+// with hub-admin access).
+type GroupMemberDTO struct {
+	UserID string `json:"userId"`
+	Name   string `json:"name"`
+	Email  string `json:"email,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
 // DrawingRefDTO mirrors api.DrawingRef — a row in the Drawings tab.
 type DrawingRefDTO struct {
 	ID            string `json:"id"`
