@@ -317,6 +317,21 @@ query GetItemDetails($hubId: ID!, $itemId: ID!) {
 
 ---
 
+### GetBOM
+
+Builds a flat bill of materials from `componentVersion.allOccurrences` (every descendant instance, paginated at limit 50). Results are grouped by `componentVersion.id`, and **quantity is the occurrence count** — the v2 Manufacturing Data Model has no explicit quantity field. Each row carries name, part number, description, and material.
+
+### GetProjectGroups / GetGroupMembers
+
+Access in the Manufacturing Data Model is **per-project and group-based** — there is no per-item or per-user access query.
+
+- `GetProjectGroups` → `project(projectId).groups { results { id name role } }` — the groups with access and their role (e.g. `ADMINISTRATOR`, `EDITOR`). Available to ordinary users.
+- `GetGroupMembers` → `group(hubId, groupId).members { results { status user { … } } }` — the users in a group. **Requires hub-admin access**; returns an authorization error (surfaced as HTTP 403) otherwise. `group()` requires both `hubId` and `groupId`.
+
+`project.users` / `project.members` / `hub.users` do **not** exist on the endpoint, and `hub.members` is permission-gated — confirmed by probing the live API.
+
+---
+
 ## NavItem Struct
 
 All list queries produce `[]NavItem`. This is the fundamental navigation unit the `api` package returns; the server maps it to the JSON `ItemDTO` the web UI consumes.

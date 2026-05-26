@@ -48,19 +48,23 @@ See [`docs/authentication.md`](authentication.md) for the full flow.
 ## Details panel
 
 Metadata (type, part number, description, material, version, dates) shows beside
-the document's **thumbnail**. Tabs:
+the document's **thumbnail**. The **type** reads as a friendly label and, for
+designs, appends the assembly/part classification — e.g. "3D Design — Assembly",
+"3D Design — Part". Tabs:
 
 | Tab | Shows |
 |-----|-------|
-| **Details** | Core metadata and the thumbnail |
 | **History** | Version history (newest first) |
 | **Properties** | Physical/mass properties — mass, volume, surface area, density, bounding box (v2 Manufacturing Data Model) |
+| **BOM** | Flat bill of materials — Component / Part № / Material / Qty. Quantity is the occurrence count (the v2 API has no explicit quantity field) |
 | **Uses** | Components used by this design (or, for a drawing, its source design) |
 | **Where Used** | Designs that use this component |
 | **Drawings** | Drawings made from this design |
+| **Permissions** | The groups (and roles) with access to the item's project; expand a group to list its member users (member listing needs hub-admin access, otherwise a "no permission" note is shown) |
 
-Rows in **Uses / Where Used / Drawings** are clickable — selecting one navigates
-the browser straight to that document.
+The core metadata and thumbnail are always shown above the tabs (there is no
+separate "Details" tab). Rows in **Uses / Where Used / Drawings** are clickable —
+selecting one navigates the browser straight to that document.
 
 Thumbnails and physical properties are generated asynchronously by APS; the UI
 polls until each settles. Thumbnails are cached server-side and streamed
