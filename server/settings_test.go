@@ -66,22 +66,30 @@ func TestResolveAddr(t *testing.T) {
 
 func TestLanURLs(t *testing.T) {
 	t.Run("wildcard host includes localhost", func(t *testing.T) {
-		urls := lanURLs("0.0.0.0:8080")
+		urls := lanURLs("http", "0.0.0.0:8080")
 		if !slices.Contains(urls, "http://localhost:8080") {
 			t.Errorf("urls = %v, want to contain http://localhost:8080", urls)
 		}
 	})
 
 	t.Run("specific host returns just that host", func(t *testing.T) {
-		urls := lanURLs("192.168.1.5:8080")
+		urls := lanURLs("http", "192.168.1.5:8080")
 		want := []string{"http://192.168.1.5:8080"}
 		if !slices.Equal(urls, want) {
 			t.Errorf("urls = %v, want %v", urls, want)
 		}
 	})
 
+	t.Run("https scheme is honored", func(t *testing.T) {
+		urls := lanURLs("https", "192.168.1.5:8443")
+		want := []string{"https://192.168.1.5:8443"}
+		if !slices.Equal(urls, want) {
+			t.Errorf("urls = %v, want %v", urls, want)
+		}
+	})
+
 	t.Run("loopback host returns just that host", func(t *testing.T) {
-		urls := lanURLs("127.0.0.1:9000")
+		urls := lanURLs("http", "127.0.0.1:9000")
 		want := []string{"http://127.0.0.1:9000"}
 		if !slices.Equal(urls, want) {
 			t.Errorf("urls = %v, want %v", urls, want)

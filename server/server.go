@@ -33,7 +33,13 @@ type Options struct {
 	// Dev proxies the web UI to the Vite dev server for HMR and pins the listen
 	// port to the default (so the proxy target is stable); the runtime
 	// port-change endpoint is disabled in this mode.
-	Dev     bool
+	Dev bool
+	// TLS serves over HTTPS. TLSCert/TLSKey are an optional caller-supplied
+	// PEM pair; when TLS is set but they are empty, a self-signed cert is
+	// generated and cached under config.Dir().
+	TLS     bool
+	TLSCert string
+	TLSKey  string
 	Config  *config.Config
 	CfgErr  error
 	Version string
@@ -54,6 +60,12 @@ type Server struct {
 	// in-flight logins between the authorize redirect and the callback.
 	sessions *SessionStore
 	pending  *PendingStore
+
+	// TLS state, resolved once in Run. When tlsEnabled, the listener serves
+	// HTTPS from tlsCertFile/tlsKeyFile and the session cookie is Secure.
+	tlsEnabled  bool
+	tlsCertFile string
+	tlsKeyFile  string
 
 	// portConfigurable gates the runtime port-change endpoint. The server owns
 	// the port (and so derives the bind address from server.json) unless it is
@@ -128,6 +140,26 @@ func Run(opts Options) error {
 		warmSem:          make(chan struct{}, 12),
 	}
 
+	// Resolve TLS once, before the bind loop spans restarts. A self-signed
+	// cert is generated/cached when -tls is given without a cert pair.
+	if opts.TLS {
+		if (opts.TLSCert == "") != (opts.TLSKey == "") {
+			return fmt.Errorf("-tls-cert and -tls-key must be given together")
+		}
+		certFile, keyFile, selfSigned, err := resolveTLSPaths(opts.TLSCert, opts.TLSKey)
+		if err != nil {
+			return fmt.Errorf("preparing TLS: %w", err)
+		}
+		s.tlsEnabled = true
+		s.tlsCertFile = certFile
+		s.tlsKeyFile = keyFile
+		if selfSigned {
+			logger.Info("TLS: using self-signed certificate (browsers will warn once)", "cert", certFile)
+		} else {
+			logger.Info("TLS: using provided certificate", "cert", certFile)
+		}
+	}
+
 	// Lifecycle context cancelled on first interrupt signal.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -166,10 +198,15 @@ func Run(opts Options) error {
 			"version", opts.Version,
 			"region", regionLabel(region),
 			"dev", opts.Dev,
+			"tls", s.tlsEnabled,
 			"portConfigurable", s.portConfigurable,
 		)
-		warnOpenNetwork(logger, addr)
-		for _, u := range lanURLs(addr) {
+		warnOpenNetwork(logger, addr, s.tlsEnabled)
+		scheme := "http"
+		if s.tlsEnabled {
+			scheme = "https"
+		}
+		for _, u := range lanURLs(scheme, addr) {
 			logger.Info("reachable on the LAN", "url", u)
 		}
 
@@ -208,7 +245,12 @@ func Run(opts Options) error {
 func (s *Server) serveUntil(ctx context.Context, srv *http.Server) (serveReason, error) {
 	errCh := make(chan error, 1)
 	go func() {
-		err := srv.ListenAndServe()
+		var err error
+		if s.tlsEnabled {
+			err = srv.ListenAndServeTLS(s.tlsCertFile, s.tlsKeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -299,19 +341,20 @@ func regionLabel(region string) string {
 	return region
 }
 
-// lanURLs returns the browser URLs the server is reachable at. When bound to a
-// wildcard host it enumerates the machine's non-loopback IPv4 interface
-// addresses so an operator can copy a LAN URL straight from the startup log.
-func lanURLs(addr string) []string {
+// lanURLs returns the browser URLs the server is reachable at, using the given
+// scheme ("http" or "https"). When bound to a wildcard host it enumerates the
+// machine's non-loopback IPv4 interface addresses so an operator can copy a LAN
+// URL straight from the startup log.
+func lanURLs(scheme, addr string) []string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return []string{"http://" + addr}
+		return []string{scheme + "://" + addr}
 	}
 	if host != "" && host != "0.0.0.0" && host != "::" {
-		return []string{"http://" + net.JoinHostPort(host, port)}
+		return []string{scheme + "://" + net.JoinHostPort(host, port)}
 	}
 
-	urls := []string{"http://" + net.JoinHostPort("localhost", port)}
+	urls := []string{scheme + "://" + net.JoinHostPort("localhost", port)}
 	ifaceAddrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return urls
@@ -328,19 +371,21 @@ func lanURLs(addr string) []string {
 			continue
 		}
 		if ip4 := ip.To4(); ip4 != nil {
-			urls = append(urls, "http://"+net.JoinHostPort(ip4.String(), port))
+			urls = append(urls, scheme+"://"+net.JoinHostPort(ip4.String(), port))
 		}
 	}
 	return urls
 }
 
 // warnOpenNetwork emits a visible warning when the server is bound to a
-// non-loopback address. Each user now signs in with their own Autodesk
-// account, but the LAN listener is plain HTTP: the session cookie is not
-// Secure (browsers drop Secure cookies over http), so a wire sniffer on the
-// network can capture a cookie and hijack that user's session until it
-// expires. Run on a trusted LAN, or front it with TLS.
-func warnOpenNetwork(logger *slog.Logger, addr string) {
+// non-loopback address over plain HTTP: the session cookie is then not Secure
+// (browsers drop Secure cookies over http), so a wire sniffer on the network
+// can capture a cookie and hijack that user's session. TLS closes this (the
+// cookie becomes Secure), so the warning is suppressed when tls is set.
+func warnOpenNetwork(logger *slog.Logger, addr string, tls bool) {
+	if tls {
+		return
+	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
@@ -350,7 +395,7 @@ func warnOpenNetwork(logger *slog.Logger, addr string) {
 		loopback = true
 	}
 	if !loopback {
-		logger.Warn("server is reachable on the network over plain HTTP — session cookies are not encrypted in transit; use a trusted LAN or front with TLS",
+		logger.Warn("server is reachable on the network over plain HTTP — session cookies are not encrypted in transit; use -tls or front with TLS",
 			"addr", addr)
 	}
 }
