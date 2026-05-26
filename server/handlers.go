@@ -18,13 +18,13 @@ func (s *Server) reqCtx(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), handlerTimeout)
 }
 
-// token fetches a valid APS access token, or writes a 401 envelope and reports
-// ok=false so the handler can return early.
+// token returns the caller's APS access token, which requireAuth resolved from
+// their session and placed in the request context. It writes a 401 envelope and
+// reports ok=false if absent (which shouldn't happen on a requireAuth'd route).
 func (s *Server) token(ctx context.Context, w http.ResponseWriter, r *http.Request) (string, bool) {
-	tok, err := s.tm.Token(ctx)
-	if err != nil {
-		s.logger.Error("auth: token unavailable", "path", r.URL.Path, "err", err)
-		writeError(w, statusForError(err), "authentication unavailable: "+err.Error())
+	tok, ok := tokenFromCtx(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return "", false
 	}
 	return tok, true

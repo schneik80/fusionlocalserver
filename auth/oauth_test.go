@@ -47,8 +47,22 @@ func TestVerifierToChallenge_RFCExample(t *testing.T) {
 	}
 }
 
+func TestNewPKCE(t *testing.T) {
+	v, c, err := NewPKCE()
+	if err != nil {
+		t.Fatalf("NewPKCE() returned error: %v", err)
+	}
+	if len(v) != 86 {
+		t.Errorf("verifier length = %d, want 86", len(v))
+	}
+	if c != verifierToChallenge(v) {
+		t.Errorf("challenge does not match S256(verifier)")
+	}
+}
+
 func TestBuildAuthURL_Shape(t *testing.T) {
-	raw := buildAuthURL("my-client-id", "my-challenge")
+	const redirectURI = "http://192.168.1.5:8080/api/auth/callback"
+	raw := BuildAuthURL("my-client-id", "my-challenge", redirectURI, "the-state")
 	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("url.Parse(%q) returned error: %v", raw, err)
@@ -65,8 +79,9 @@ func TestBuildAuthURL_Shape(t *testing.T) {
 	wantParams := map[string]string{
 		"client_id":             "my-client-id",
 		"response_type":         "code",
-		"redirect_uri":          CallbackURL,
+		"redirect_uri":          redirectURI,
 		"scope":                 "data:read user-profile:read",
+		"state":                 "the-state",
 		"code_challenge":        "my-challenge",
 		"code_challenge_method": "S256",
 	}
@@ -104,7 +119,7 @@ func TestExchangeCode_PublicClient_PutsClientIDInBody(t *testing.T) {
 			"client_id":     "pub-client",
 			"grant_type":    "authorization_code",
 			"code":          "the-code",
-			"redirect_uri":  CallbackURL,
+			"redirect_uri":  "http://localhost:8080/api/auth/callback",
 			"code_verifier": "the-verifier",
 		}
 		for k, want := range wantParams {
@@ -120,7 +135,7 @@ func TestExchangeCode_PublicClient_PutsClientIDInBody(t *testing.T) {
 	t.Cleanup(srv.Close)
 	swapTokenEndpoint(t, srv.URL)
 
-	td, err := exchangeCode(context.Background(), "pub-client", "", "the-code", "the-verifier")
+	td, err := ExchangeCode(context.Background(), "pub-client", "", "the-code", "the-verifier", "http://localhost:8080/api/auth/callback")
 	if err != nil {
 		t.Fatalf("exchangeCode returned error: %v", err)
 	}
@@ -162,9 +177,9 @@ func TestExchangeCode_ConfidentialClient_UsesBasicAuth(t *testing.T) {
 	t.Cleanup(srv.Close)
 	swapTokenEndpoint(t, srv.URL)
 
-	td, err := exchangeCode(context.Background(), "conf-client", "secret", "the-code", "the-verifier")
+	td, err := ExchangeCode(context.Background(), "conf-client", "secret", "the-code", "the-verifier", "http://localhost:8080/api/auth/callback")
 	if err != nil {
-		t.Fatalf("exchangeCode returned error: %v", err)
+		t.Fatalf("ExchangeCode returned error: %v", err)
 	}
 	if td.AccessToken != "AT" {
 		t.Errorf("AccessToken = %q, want %q", td.AccessToken, "AT")
@@ -174,9 +189,7 @@ func TestExchangeCode_ConfidentialClient_UsesBasicAuth(t *testing.T) {
 	}
 }
 
-func TestRefresh_RefreshesAndSaves(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
+func TestRefresh_ReturnsNewTokensWithoutPersisting(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("ParseForm: %v", err)
@@ -204,22 +217,10 @@ func TestRefresh_RefreshesAndSaves(t *testing.T) {
 	if td.RefreshToken != "new-RT" {
 		t.Errorf("RefreshToken = %q, want %q", td.RefreshToken, "new-RT")
 	}
-
-	loaded, err := LoadTokens()
-	if err != nil {
-		t.Fatalf("LoadTokens returned error: %v", err)
-	}
-	if loaded == nil {
-		t.Fatal("LoadTokens returned nil; expected SaveTokens to have persisted")
-	}
-	if loaded.AccessToken != td.AccessToken {
-		t.Errorf("loaded.AccessToken = %q, want %q", loaded.AccessToken, td.AccessToken)
-	}
-	if loaded.RefreshToken != td.RefreshToken {
-		t.Errorf("loaded.RefreshToken = %q, want %q", loaded.RefreshToken, td.RefreshToken)
-	}
-	if !loaded.ExpiresAt.Equal(td.ExpiresAt) {
-		t.Errorf("loaded.ExpiresAt = %v, want %v", loaded.ExpiresAt, td.ExpiresAt)
+	// APS rotates the refresh token; the new one must be returned so the
+	// session can replace the consumed one.
+	if td.RefreshToken == "old-rt" {
+		t.Error("Refresh did not return the rotated refresh token")
 	}
 }
 
@@ -290,4 +291,3 @@ func TestDoTokenRequest_ErrorPaths(t *testing.T) {
 		})
 	}
 }
-

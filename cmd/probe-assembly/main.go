@@ -10,9 +10,11 @@
 //	go run ./cmd/probe-assembly -hub <hubID>        # specific hub
 //	go run ./cmd/probe-assembly -project <projID>   # specific project
 //
-// Reads cached tokens from ~/.config/fusiondatacli/tokens.json. Will not
-// open a browser to log in — if tokens are missing run the main app
-// first.
+// Authenticate by supplying a token via the environment (the server no longer
+// caches tokens to disk):
+//
+//	APS_ACCESS_TOKEN   a bearer token to use directly, or
+//	APS_REFRESH_TOKEN  refreshed via APS_CLIENT_ID (+ APS_CLIENT_SECRET).
 //
 // This tool is intentionally outside api/ because it doesn't ship in the
 // release binary; delete the directory once the schema decision is made.
@@ -41,9 +43,9 @@ type gqlReq struct {
 }
 
 type gqlErr struct {
-	Message    string                 `json:"message"`
-	Extensions map[string]any         `json:"extensions,omitempty"`
-	Path       []any                  `json:"path,omitempty"`
+	Message    string         `json:"message"`
+	Extensions map[string]any `json:"extensions,omitempty"`
+	Path       []any          `json:"path,omitempty"`
 }
 
 type gqlResp struct {
@@ -85,45 +87,27 @@ func main() {
 }
 
 func loadOrRefreshToken() (string, error) {
-	td, err := auth.LoadTokens()
-	if err != nil {
-		return "", err
+	if tok := os.Getenv("APS_ACCESS_TOKEN"); tok != "" {
+		return tok, nil
 	}
-	if td == nil {
-		return "", fmt.Errorf("no cached tokens — run the main app once to log in")
+	rt := os.Getenv("APS_REFRESH_TOKEN")
+	if rt == "" {
+		return "", fmt.Errorf("set APS_ACCESS_TOKEN (or APS_REFRESH_TOKEN + APS_CLIENT_ID) to authenticate the probe")
 	}
-	if td.Valid() {
-		return td.AccessToken, nil
-	}
-	cfg, _ := loadConfig()
-	clientID := cfg.ClientID
+	clientID := os.Getenv("APS_CLIENT_ID")
 	if clientID == "" {
 		clientID = config.DefaultClientID
 	}
 	if clientID == "" {
-		clientID = os.Getenv("APS_CLIENT_ID")
-	}
-	if clientID == "" {
-		return "", fmt.Errorf("token expired and no client_id available to refresh")
+		return "", fmt.Errorf("APS_REFRESH_TOKEN set but no APS_CLIENT_ID to refresh with")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	td2, err := auth.Refresh(ctx, clientID, cfg.ClientSecret, td.RefreshToken)
+	td, err := auth.Refresh(ctx, clientID, os.Getenv("APS_CLIENT_SECRET"), rt)
 	if err != nil {
 		return "", fmt.Errorf("refresh: %w", err)
 	}
-	_ = auth.SaveTokens(td2)
-	return td2.AccessToken, nil
-}
-
-func loadConfig() (config.Config, error) {
-	var cfg config.Config
-	data, err := os.ReadFile(config.Path())
-	if err != nil {
-		return cfg, nil
-	}
-	_ = json.Unmarshal(data, &cfg)
-	return cfg, nil
+	return td.AccessToken, nil
 }
 
 func firstHub(ctx context.Context, token string) (string, error) {

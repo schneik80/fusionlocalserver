@@ -10,36 +10,46 @@ import "net/http"
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
-	// Meta.
+	// Public: server self-description, the auth flow, and the /api 404
+	// backstop. These must be reachable before a user has a session.
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
+	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
+	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/", s.handleAPINotFound)
+
+	// Protected: every data route requires a logged-in session. prot wraps a
+	// handler with requireAuth, which resolves the session's APS token into the
+	// request context (or replies 401).
+	prot := func(h http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(h).ServeHTTP
+	}
 
 	// Navigation.
-	mux.HandleFunc("GET /api/hubs", s.handleHubs)
-	mux.HandleFunc("GET /api/projects", s.handleProjects)
-	mux.HandleFunc("GET /api/projects/contents", s.handleProjectContents)
-	mux.HandleFunc("GET /api/folders/contents", s.handleFolderContents)
-	mux.HandleFunc("GET /api/items/details", s.handleItemDetails)
-	mux.HandleFunc("GET /api/items/location", s.handleItemLocation)
+	mux.HandleFunc("GET /api/hubs", prot(s.handleHubs))
+	mux.HandleFunc("GET /api/projects", prot(s.handleProjects))
+	mux.HandleFunc("GET /api/projects/contents", prot(s.handleProjectContents))
+	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
+	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
+	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))
 
 	// References.
-	mux.HandleFunc("GET /api/items/uses", s.handleUses)
-	mux.HandleFunc("GET /api/items/where-used", s.handleWhereUsed)
-	mux.HandleFunc("GET /api/items/drawings", s.handleDrawings)
-	mux.HandleFunc("GET /api/items/classify", s.handleClassify)
-	mux.HandleFunc("GET /api/items/thumbnail", s.handleThumbnail)
-	mux.HandleFunc("GET /api/items/thumbnail/image", s.handleThumbnailImage)
-	mux.HandleFunc("GET /api/items/properties", s.handleProperties)
+	mux.HandleFunc("GET /api/items/uses", prot(s.handleUses))
+	mux.HandleFunc("GET /api/items/where-used", prot(s.handleWhereUsed))
+	mux.HandleFunc("GET /api/items/drawings", prot(s.handleDrawings))
+	mux.HandleFunc("GET /api/items/classify", prot(s.handleClassify))
+	mux.HandleFunc("GET /api/items/thumbnail", prot(s.handleThumbnail))
+	mux.HandleFunc("GET /api/items/thumbnail/image", prot(s.handleThumbnailImage))
+	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 
 	// Settings.
-	mux.HandleFunc("POST /api/settings/port", s.handleSetPort)
+	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))
 
 	// Pins.
-	mux.HandleFunc("GET /api/pins", s.handlePinsList)
-	mux.HandleFunc("POST /api/pins", s.handlePinsAdd)
-	mux.HandleFunc("DELETE /api/pins", s.handlePinsRemove)
-
-	// Unmatched API paths -> JSON 404 (kept off the SPA fallback).
-	mux.HandleFunc("/api/", s.handleAPINotFound)
+	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
+	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))
+	mux.HandleFunc("DELETE /api/pins", prot(s.handlePinsRemove))
 
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())

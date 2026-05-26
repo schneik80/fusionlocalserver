@@ -1,7 +1,8 @@
 // Package server runs fusionlocalserver as an HTTP service: a JSON REST API over
-// the shared api/auth/config/pins packages, plus an embedded React/MUI SPA. It
-// holds one APS identity (reused from the TUI's cached tokens) and proxies
-// every data call through it. The package has no TUI dependencies.
+// the shared api/config/pins packages, plus an embedded React/MUI SPA. Each
+// browser user logs in with their own Autodesk account; the server holds their
+// APS tokens in a per-session store and proxies their data calls under their
+// own identity.
 package server
 
 import (
@@ -24,7 +25,7 @@ import (
 )
 
 // Options configures a server run. Config may be nil when CfgErr is set (no
-// usable APS configuration); Bootstrap then fails fast with a clear message.
+// usable APS configuration); Run then fails fast with a clear message.
 type Options struct {
 	// Verbose raises the log level to debug and adds per-request and upstream
 	// API tracing, to both the console and the log file.
@@ -42,8 +43,17 @@ type Options struct {
 type Server struct {
 	opts   Options
 	logger *slog.Logger
-	tm     *TokenManager
 	region string // resolved APS region ("" == US)
+
+	// APS app credentials, used by the login/callback handlers and per-session
+	// token refresh. clientSecret is empty for public (PKCE) clients.
+	clientID     string
+	clientSecret string
+
+	// sessions holds one logged-in identity per browser user; pending holds
+	// in-flight logins between the authorize redirect and the callback.
+	sessions *SessionStore
+	pending  *PendingStore
 
 	// portConfigurable gates the runtime port-change endpoint. The server owns
 	// the port (and so derives the bind address from server.json) unless it is
@@ -78,8 +88,8 @@ const (
 )
 
 // Run starts the HTTP server and blocks until it shuts down (SIGINT/SIGTERM)
-// or fails to start. It performs the one-time interactive auth bootstrap
-// before binding the listener, so any browser login happens up front.
+// or fails to start. There is no startup login: each browser user signs in
+// through the /api/auth flow once the listener is up.
 func Run(opts Options) error {
 	logger, closeLog := setupLogging(opts.Verbose)
 	defer closeLog()
@@ -91,6 +101,9 @@ func Run(opts Options) error {
 		region = opts.Config.Region
 	} else if opts.CfgErr != nil {
 		logger.Warn("config load failed", "err", opts.CfgErr)
+	}
+	if clientID == "" {
+		return fmt.Errorf("no APS client_id configured (build with CLIENT_ID, or set APS_CLIENT_ID / config.json)")
 	}
 
 	// Region is process-global; set once before any API call.
@@ -104,27 +117,24 @@ func Run(opts Options) error {
 	s := &Server{
 		opts:             opts,
 		logger:           logger,
-		tm:               NewTokenManager(clientID, clientSecret, logger),
+		clientID:         clientID,
+		clientSecret:     clientSecret,
 		region:           region,
+		sessions:         NewSessionStore(sessionIdleTTL, sessionAbsTTL, logger),
+		pending:          NewPendingStore(pendingTTL),
 		portConfigurable: !opts.Dev,
 		restartCh:        make(chan struct{}, 1),
 		thumbs:           newThumbCache(512, 10*time.Minute),
 		warmSem:          make(chan struct{}, 12),
 	}
 
-	// Authenticate before serving. A generous window covers an interactive
-	// browser login on first run.
-	bootCtx, cancelBoot := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancelBoot()
-	if err := s.tm.Bootstrap(bootCtx); err != nil {
-		return fmt.Errorf("auth bootstrap: %w", err)
-	}
-
 	// Lifecycle context cancelled on first interrupt signal.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s.tm.StartRefresher(ctx)
+	// Expire idle/old sessions and abandoned in-flight logins in the background.
+	s.sessions.StartJanitor(ctx)
+	s.pending.StartJanitor(ctx)
 
 	// Listener (re)bind loop. Auth + the token refresher above are set up once
 	// and span restarts; only the HTTP listener is recreated. A runtime port
@@ -325,8 +335,11 @@ func lanURLs(addr string) []string {
 }
 
 // warnOpenNetwork emits a visible warning when the server is bound to a
-// non-loopback address, since there is no auth gate — anyone who can reach the
-// address browses as the server's APS identity.
+// non-loopback address. Each user now signs in with their own Autodesk
+// account, but the LAN listener is plain HTTP: the session cookie is not
+// Secure (browsers drop Secure cookies over http), so a wire sniffer on the
+// network can capture a cookie and hijack that user's session until it
+// expires. Run on a trusted LAN, or front it with TLS.
 func warnOpenNetwork(logger *slog.Logger, addr string) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -337,7 +350,7 @@ func warnOpenNetwork(logger *slog.Logger, addr string) {
 		loopback = true
 	}
 	if !loopback {
-		logger.Warn("SERVER IS OPEN ON THE NETWORK WITH NO AUTH GATE — anyone who can reach this address browses as the server's APS identity",
+		logger.Warn("server is reachable on the network over plain HTTP — session cookies are not encrypted in transit; use a trusted LAN or front with TLS",
 			"addr", addr)
 	}
 }

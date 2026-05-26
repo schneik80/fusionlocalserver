@@ -35,8 +35,6 @@ func statusForError(err error) int {
 	switch {
 	case err == nil:
 		return http.StatusOK
-	case errors.Is(err, errNoRefresh):
-		return http.StatusUnauthorized
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout
 	case errors.Is(err, context.Canceled):

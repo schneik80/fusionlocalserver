@@ -1,3 +1,10 @@
+// Package auth implements the OAuth 2.0 Authorization Code + PKCE primitives
+// the server uses to log each user in against Autodesk APS. It is deliberately
+// transport-agnostic: it builds authorize URLs, exchanges codes, and refreshes
+// tokens, but it never opens a browser, runs a local listener, or persists
+// anything — the server owns the redirect endpoint and the per-user session
+// store. The redirect URI is passed in by the caller (derived per request) so
+// the same code serves localhost, a LAN IP, or a future TLS origin.
 package auth
 
 import (
@@ -10,8 +17,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -24,64 +29,26 @@ var (
 	authScope     = "data:read user-profile:read"
 )
 
-// Login performs the full 3-legged PKCE OAuth flow.
-// It opens the system browser, starts a local callback server, exchanges the
-// authorization code for tokens, saves them to disk, and returns them.
-// clientSecret may be empty for public clients; confidential APS apps require it.
-func Login(ctx context.Context, clientID, clientSecret string) (*TokenData, error) {
-	verifier, err := newVerifier()
+// NewPKCE generates a fresh PKCE verifier and its S256 challenge. The caller
+// holds the verifier through the redirect and presents it at the token
+// exchange; the challenge travels on the authorize URL.
+func NewPKCE() (verifier, challenge string, err error) {
+	verifier, err = newVerifier()
 	if err != nil {
-		return nil, fmt.Errorf("generating PKCE verifier: %w", err)
+		return "", "", fmt.Errorf("generating PKCE verifier: %w", err)
 	}
-	challenge := verifierToChallenge(verifier)
-
-	authURL := buildAuthURL(clientID, challenge)
-	if err := OpenBrowser(authURL); err != nil {
-		// Non-fatal: user can open manually.
-		fmt.Printf("Open this URL in your browser to authenticate:\n\n  %s\n\n", authURL)
-	}
-
-	code, err := WaitForCallback(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("waiting for OAuth callback: %w", err)
-	}
-
-	td, err := exchangeCode(ctx, clientID, clientSecret, code, verifier)
-	if err != nil {
-		return nil, fmt.Errorf("exchanging code for token: %w", err)
-	}
-	if err := SaveTokens(td); err != nil {
-		return nil, fmt.Errorf("saving tokens: %w", err)
-	}
-	return td, nil
+	return verifier, verifierToChallenge(verifier), nil
 }
 
-// Refresh exchanges a refresh token for a new access token and saves it.
+// Refresh exchanges a refresh token for a new access/refresh token pair. It
+// does not persist anything; the caller (the session store) holds the result.
+// APS rotates the refresh token on every use, so callers must serialise
+// concurrent refreshes of the same token.
 func Refresh(ctx context.Context, clientID, clientSecret, refreshToken string) (*TokenData, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-
-	td, err := doTokenRequest(ctx, clientID, clientSecret, form)
-	if err != nil {
-		return nil, err
-	}
-	if err := SaveTokens(td); err != nil {
-		return nil, fmt.Errorf("saving refreshed tokens: %w", err)
-	}
-	return td, nil
-}
-
-// OpenBrowser opens url in the default system browser.
-func OpenBrowser(u string) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", u).Start()
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
-	default:
-		return exec.Command("xdg-open", u).Start()
-	}
+	return doTokenRequest(ctx, clientID, clientSecret, form)
 }
 
 func newVerifier() (string, error) {
@@ -97,22 +64,29 @@ func verifierToChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-func buildAuthURL(clientID, challenge string) string {
+// BuildAuthURL constructs the APS authorize URL for the Authorization Code +
+// PKCE flow. state is the CSRF token echoed back on the callback; redirectURI
+// must match the one later sent to ExchangeCode and be registered on the APS
+// app.
+func BuildAuthURL(clientID, challenge, redirectURI, state string) string {
 	p := url.Values{}
 	p.Set("client_id", clientID)
 	p.Set("response_type", "code")
-	p.Set("redirect_uri", CallbackURL)
+	p.Set("redirect_uri", redirectURI)
 	p.Set("scope", authScope)
+	p.Set("state", state)
 	p.Set("code_challenge", challenge)
 	p.Set("code_challenge_method", "S256")
 	return authEndpoint + "?" + p.Encode()
 }
 
-func exchangeCode(ctx context.Context, clientID, clientSecret, code, verifier string) (*TokenData, error) {
+// ExchangeCode trades an authorization code for tokens. redirectURI must be
+// byte-identical to the one used in BuildAuthURL (APS rejects a mismatch).
+func ExchangeCode(ctx context.Context, clientID, clientSecret, code, verifier, redirectURI string) (*TokenData, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
-	form.Set("redirect_uri", CallbackURL)
+	form.Set("redirect_uri", redirectURI)
 	form.Set("code_verifier", verifier)
 	return doTokenRequest(ctx, clientID, clientSecret, form)
 }
