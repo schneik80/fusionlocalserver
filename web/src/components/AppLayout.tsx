@@ -14,11 +14,11 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import { useAuthMe, useMeta } from '../api/queries'
+import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
-import { useNav } from '../state/nav'
+import { loadLastHub, useNav } from '../state/nav'
 import { BreadcrumbBar } from './BreadcrumbBar'
 import { BrowserColumns } from './BrowserColumns'
 import { HubSwitcher } from './HubSwitcher'
@@ -33,7 +33,19 @@ export function AppLayout() {
   const nav = useNav()
   const metaQ = useMeta()
   const authQ = useAuthMe()
+  const hubsQ = useHubs()
   const { mode, toggle } = useColorMode()
+
+  // Restore the last-used hub once the hub list loads, but only if it's still
+  // one of the user's hubs (so a since-revoked hub or a different user on this
+  // browser falls back to picking manually).
+  useEffect(() => {
+    if (nav.hubId || !hubsQ.data) return
+    const saved = loadLastHub()
+    if (!saved) return
+    const hub = hubsQ.data.find((h) => h.id === saved.id)
+    if (hub) nav.selectHub(hub.id, hub.name)
+  }, [nav.hubId, hubsQ.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // logout drops the server session, then reloads at the root so the gate
   // re-evaluates and shows the login screen.

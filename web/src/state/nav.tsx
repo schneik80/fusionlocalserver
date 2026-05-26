@@ -7,6 +7,36 @@ import {
 } from 'react'
 import type { Item } from '../api/types'
 
+// The last selected hub is remembered in localStorage (per browser) so a
+// reload/return lands back in the hub you were using. It is restored only after
+// the hub list loads and only if the saved hub is still in it (see AppLayout),
+// so it can't strand a user on a hub they no longer have.
+const HUB_STORAGE_KEY = 'fls.lastHub'
+
+interface SavedHub {
+  id: string
+  name: string
+}
+
+export function loadLastHub(): SavedHub | null {
+  try {
+    const raw = localStorage.getItem(HUB_STORAGE_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw) as SavedHub
+    return v && typeof v.id === 'string' ? v : null
+  } catch {
+    return null
+  }
+}
+
+function saveLastHub(id: string, name: string) {
+  try {
+    localStorage.setItem(HUB_STORAGE_KEY, JSON.stringify({ id, name }))
+  } catch {
+    /* storage unavailable (private mode / quota) — non-fatal */
+  }
+}
+
 // Navigation state for the three-column browser. The hub is chosen from the
 // rail/switcher; project lives in the Projects column; folderStack is the
 // drill-down path inside the Contents column (mirrored by the breadcrumb);
@@ -98,7 +128,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
     return {
       ...state,
       currentFolderId: top ? top.id : null,
-      selectHub: (id, name) => dispatch({ type: 'selectHub', id, name }),
+      selectHub: (id, name) => {
+        saveLastHub(id, name)
+        dispatch({ type: 'selectHub', id, name })
+      },
       selectProject: (project) => dispatch({ type: 'selectProject', project }),
       enterFolder: (folder) => dispatch({ type: 'enterFolder', folder }),
       selectItem: (item) => dispatch({ type: 'selectItem', item }),
