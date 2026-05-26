@@ -27,10 +27,11 @@ const (
 // resolveTLSPaths returns the cert and key paths for a TLS run. A
 // caller-supplied pair (cert and key both set) is used as-is; otherwise a
 // self-signed pair is generated once and cached under config.Dir(), then
-// reused. Browsers warn on the self-signed cert — that's expected on a LAN
-// without a real CA; the point is to encrypt the wire so the session cookie can
-// carry the Secure flag.
-func resolveTLSPaths(cert, key string) (certPath, keyPath string, selfSigned bool, err error) {
+// reused. extraHosts (e.g. the -public-url hostname) are added to the cert's
+// SANs so the canonical address validates. Browsers warn on the self-signed
+// cert — that's expected on a LAN without a real CA; the point is to encrypt
+// the wire so the session cookie can carry the Secure flag.
+func resolveTLSPaths(cert, key string, extraHosts []string) (certPath, keyPath string, selfSigned bool, err error) {
 	if cert != "" && key != "" {
 		return cert, key, false, nil
 	}
@@ -40,19 +41,20 @@ func resolveTLSPaths(cert, key string) (certPath, keyPath string, selfSigned boo
 	}
 	certPath = filepath.Join(dir, tlsCertFile)
 	keyPath = filepath.Join(dir, tlsKeyFile)
-	if err := ensureSelfSignedCert(certPath, keyPath); err != nil {
+	if err := ensureSelfSignedCert(certPath, keyPath, extraHosts); err != nil {
 		return "", "", false, err
 	}
 	return certPath, keyPath, true, nil
 }
 
 // ensureSelfSignedCert writes a self-signed cert+key to the given paths unless
-// both already exist. The cert covers localhost, the loopback addresses, the
-// machine's hostname, and its non-loopback IPv4 interface addresses, so a
-// browser reaching the server by any of those validates the hostname (after the
-// one-time "untrusted issuer" click-through).
-func ensureSelfSignedCert(certPath, keyPath string) error {
-	if fileExists(certPath) && fileExists(keyPath) {
+// a usable pair already exists that covers every host in extraHosts. The cert
+// covers localhost, the loopback addresses, the machine's hostname, its
+// non-loopback IPv4 interface addresses, and any extraHosts (each treated as an
+// IP SAN if it parses as an IP, else a DNS SAN). A cached cert that doesn't
+// cover a newly-required host is regenerated.
+func ensureSelfSignedCert(certPath, keyPath string, extraHosts []string) error {
+	if fileExists(certPath) && fileExists(keyPath) && certCovers(certPath, extraHosts) {
 		return nil
 	}
 
@@ -65,6 +67,16 @@ func ensureSelfSignedCert(certPath, keyPath string) error {
 		return fmt.Errorf("generating serial: %w", err)
 	}
 
+	dnsNames := certDNSNames()
+	ips := certIPs()
+	for _, h := range extraHosts {
+		if ip := net.ParseIP(h); ip != nil {
+			ips = append(ips, ip)
+		} else if h != "" {
+			dnsNames = append(dnsNames, h)
+		}
+	}
+
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "fusionlocalserver"},
@@ -73,8 +85,8 @@ func ensureSelfSignedCert(certPath, keyPath string) error {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		DNSNames:              certDNSNames(),
-		IPAddresses:           certIPs(),
+		DNSNames:              dnsNames,
+		IPAddresses:           ips,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
 	if err != nil {
@@ -132,4 +144,34 @@ func writePEM(path, blockType string, der []byte, mode os.FileMode) error {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// certCovers reports whether the cert at certPath validates for every host in
+// hosts (DNS name or IP literal). An empty list is trivially covered. Used to
+// decide whether a cached self-signed cert must be regenerated to add a SAN.
+func certCovers(certPath string, hosts []string) bool {
+	if len(hosts) == 0 {
+		return true
+	}
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
+		if cert.VerifyHostname(h) != nil {
+			return false
+		}
+	}
+	return true
 }

@@ -178,7 +178,13 @@ func Run(opts Options) error {
 		if (opts.TLSCert == "") != (opts.TLSKey == "") {
 			return fmt.Errorf("-tls-cert and -tls-key must be given together")
 		}
-		certFile, keyFile, selfSigned, err := resolveTLSPaths(opts.TLSCert, opts.TLSKey)
+		// Make sure a self-signed cert covers the canonical hostname, so the
+		// address clients are redirected to validates.
+		var extraHosts []string
+		if u, e := url.Parse(s.publicURL); s.publicURL != "" && e == nil && u.Hostname() != "" {
+			extraHosts = append(extraHosts, u.Hostname())
+		}
+		certFile, keyFile, selfSigned, err := resolveTLSPaths(opts.TLSCert, opts.TLSKey, extraHosts)
 		if err != nil {
 			return fmt.Errorf("preparing TLS: %w", err)
 		}

@@ -17,7 +17,7 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 	certPath := filepath.Join(dir, "c.pem")
 	keyPath := filepath.Join(dir, "k.pem")
 
-	if err := ensureSelfSignedCert(certPath, keyPath); err != nil {
+	if err := ensureSelfSignedCert(certPath, keyPath, nil); err != nil {
 		t.Fatalf("ensureSelfSignedCert: %v", err)
 	}
 
@@ -58,12 +58,54 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 
 	// Idempotent: a second call leaves the existing cert untouched.
 	before, _ := os.ReadFile(certPath)
-	if err := ensureSelfSignedCert(certPath, keyPath); err != nil {
+	if err := ensureSelfSignedCert(certPath, keyPath, nil); err != nil {
 		t.Fatalf("second ensureSelfSignedCert: %v", err)
 	}
 	after, _ := os.ReadFile(certPath)
 	if string(before) != string(after) {
 		t.Error("cert was regenerated on the second call; expected reuse")
+	}
+}
+
+func TestEnsureSelfSignedCert_CoversExtraHostAndRegenerates(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "c.pem")
+	keyPath := filepath.Join(dir, "k.pem")
+
+	// Generate covering only the defaults.
+	if err := ensureSelfSignedCert(certPath, keyPath, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.ReadFile(certPath)
+
+	// Requiring a host not in the default set must regenerate the cert.
+	if err := ensureSelfSignedCert(certPath, keyPath, []string{"ryzen-nobara.local"}); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(certPath)
+	if string(first) == string(second) {
+		t.Fatal("cert was not regenerated to add the extra-host SAN")
+	}
+
+	block, _ := pem.Decode(second)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cert.VerifyHostname("ryzen-nobara.local"); err != nil {
+		t.Errorf("cert does not cover ryzen-nobara.local: %v", err)
+	}
+	if err := cert.VerifyHostname("localhost"); err != nil {
+		t.Errorf("cert lost localhost coverage: %v", err)
+	}
+
+	// Now that it covers the host, a repeat call must NOT regenerate.
+	if err := ensureSelfSignedCert(certPath, keyPath, []string{"ryzen-nobara.local"}); err != nil {
+		t.Fatal(err)
+	}
+	third, _ := os.ReadFile(certPath)
+	if string(second) != string(third) {
+		t.Error("cert regenerated despite already covering the host")
 	}
 }
 
