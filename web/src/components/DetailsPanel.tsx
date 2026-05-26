@@ -8,6 +8,11 @@ import {
   Paper,
   Stack,
   Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Tabs,
   Typography,
 } from '@mui/material'
@@ -15,6 +20,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import {
+  useBOM,
   useClassify,
   useDrawings,
   useItemDetails,
@@ -28,21 +34,22 @@ import { useNav } from '../state/nav'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
-type TabKey = 'history' | 'properties' | 'uses' | 'whereUsed' | 'drawings'
+type TabKey = 'history' | 'properties' | 'bom' | 'uses' | 'whereUsed' | 'drawings'
 
 const TAB_LABEL: Record<TabKey, string> = {
   history: 'History',
   properties: 'Properties',
+  bom: 'BOM',
   uses: 'Uses',
   whereUsed: 'Where Used',
   drawings: 'Drawings',
 }
 
-// Designs get the full set; configured designs add Properties; drawings get
-// Uses (the source design); everything else is History only.
+// Designs get the full set; configured designs add Properties + BOM; drawings
+// get Uses (the source design); everything else is History only.
 function tabsFor(kind: string): TabKey[] {
-  if (kind === 'design') return ['history', 'properties', 'uses', 'whereUsed', 'drawings']
-  if (kind === 'configured') return ['history', 'properties']
+  if (kind === 'design') return ['history', 'properties', 'bom', 'uses', 'whereUsed', 'drawings']
+  if (kind === 'configured') return ['history', 'properties', 'bom']
   if (kind === 'drawing') return ['history', 'uses']
   return ['history']
 }
@@ -143,6 +150,7 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
           <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
         {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
+        {tab === 'bom' && <BOMTab cvId={cvId} active />}
         {tab === 'uses' && (
           <UsesTab kind={item.kind} hubId={hubId} itemId={item.id} cvId={cvId} active />
         )}
@@ -345,6 +353,45 @@ function PropertiesTab({ cvId, active }: { cvId?: string; active: boolean }) {
   ]
   if (!rows.some(([, v]) => !!v)) return <TabEmpty text="No physical properties" />
   return <LabelGrid rows={rows} />
+}
+
+// BOMTab shows a flat bill of materials: one row per unique sub-component with
+// a quantity (the occurrence count — the v2 API has no explicit quantity field).
+function BOMTab({ cvId, active }: { cvId?: string; active: boolean }) {
+  const q = useBOM(cvId, active)
+  if (q.isLoading) return <TabSpinner />
+  if (q.error) return <TabError error={q.error as Error} />
+  const rows = q.data ?? []
+  if (rows.length === 0) return <TabEmpty text="No bill of materials" />
+
+  const total = rows.reduce((n, r) => n + r.quantity, 0)
+  return (
+    <>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        {rows.length} component{rows.length === 1 ? '' : 's'} · {total} occurrence{total === 1 ? '' : 's'}
+      </Typography>
+      <Table size="small" sx={{ '& td, & th': { px: 1, py: 0.5 } }}>
+        <TableHead>
+          <TableRow>
+            <TableCell>Component</TableCell>
+            <TableCell>Part №</TableCell>
+            <TableCell>Material</TableCell>
+            <TableCell align="right">Qty</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((b) => (
+            <TableRow key={b.componentVersionId}>
+              <TableCell title={b.partDesc || undefined}>{b.name}</TableCell>
+              <TableCell>{b.partNumber || '—'}</TableCell>
+              <TableCell>{b.material || '—'}</TableCell>
+              <TableCell align="right">{b.quantity}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </>
+  )
 }
 
 // HistoryTab lists the item's version history (most recent first).

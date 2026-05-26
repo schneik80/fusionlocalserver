@@ -95,6 +95,17 @@ type ComponentRefDTO struct {
 	FusionWebURL   string `json:"fusionWebUrl,omitempty"`
 }
 
+// BOMRowDTO mirrors api.BOMRow — one line of a design's bill of materials.
+// quantity is the occurrence count (v2 has no explicit quantity field).
+type BOMRowDTO struct {
+	ComponentVersionID string `json:"componentVersionId"`
+	Name               string `json:"name"`
+	PartNumber         string `json:"partNumber,omitempty"`
+	PartDesc           string `json:"partDesc,omitempty"`
+	Material           string `json:"material,omitempty"`
+	Quantity           int    `json:"quantity"`
+}
+
 // DrawingRefDTO mirrors api.DrawingRef — a row in the Drawings tab.
 type DrawingRefDTO struct {
 	ID            string `json:"id"`
@@ -248,6 +259,21 @@ func componentRefDTOs(refs []api.ComponentRef) []ComponentRefDTO {
 			DesignItemID:   r.DesignItemID,
 			DesignItemName: r.DesignItemName,
 			FusionWebURL:   r.FusionWebURL,
+		})
+	}
+	return out
+}
+
+func bomRowDTOs(rows []api.BOMRow) []BOMRowDTO {
+	out := make([]BOMRowDTO, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, BOMRowDTO{
+			ComponentVersionID: r.ComponentVersionID,
+			Name:               r.Name,
+			PartNumber:         r.PartNumber,
+			PartDesc:           r.PartDesc,
+			Material:           r.Material,
+			Quantity:           r.Quantity,
 		})
 	}
 	return out

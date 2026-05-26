@@ -50,9 +50,11 @@ func GetItemLocation(ctx context.Context, token, hubID, itemID string) (*ItemLoc
 	var raw struct {
 		Item struct {
 			Project struct {
-				ID                     string `json:"id"`
-				Name                   string `json:"name"`
-				Hub                    struct{ ID string `json:"id"` } `json:"hub"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Hub  struct {
+					ID string `json:"id"`
+				} `json:"hub"`
 				AlternativeIdentifiers struct {
 					DataManagementAPIProjectID string `json:"dataManagementAPIProjectId"`
 				} `json:"alternativeIdentifiers"`

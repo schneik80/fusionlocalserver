@@ -5,6 +5,7 @@
 
 import type {
   AuthMe,
+  BOMRow,
   Classify,
   ComponentRef,
   Contents,
@@ -110,6 +111,8 @@ export const api = {
 
   drawings: (hubId: string, designItemId: string) =>
     request<DrawingRef[]>(`/api/items/drawings${qs({ hubId, designItemId })}`),
+
+  bom: (cvId: string) => request<BOMRow[]>(`/api/items/bom${qs({ cvId })}`),
 
   classify: (cvId: string) =>
     request<Classify>(`/api/items/classify${qs({ cvId })}`),

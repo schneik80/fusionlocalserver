@@ -301,10 +301,10 @@ func TestGetItems_PopulatesComponentVersionID(t *testing.T) {
 				"results": []map[string]any{
 					// Design with tipRoot present.
 					{
-						"__typename":               "DesignItem",
-						"id":                       "i1",
-						"name":                     "WithRoot",
-						"tipRootComponentVersion":  map[string]any{"id": "urn:cv:1"},
+						"__typename":              "DesignItem",
+						"id":                      "i1",
+						"name":                    "WithRoot",
+						"tipRootComponentVersion": map[string]any{"id": "urn:cv:1"},
 					},
 					// Design without tipRoot (milestone-less, mid-translation, etc.)
 					{
@@ -350,17 +350,17 @@ func TestGetItems_PopulatesComponentVersionID(t *testing.T) {
 
 func TestKindFromExtension(t *testing.T) {
 	cases := map[string]string{
-		"Assembly.f3d":     "design",
-		"Plan-A1.f2d":      "drawing",
-		"BlankTitle.f2t":   "drawing",
-		"PowerStage.fsch":  "schematic",
-		"MainBoard.fbrd":   "pcb",
-		"RobotECAD.fprj":    "ecad",
-		"Untitled":         "",       // no extension
-		"Folder/name.f3d":  "design", // last . wins, path separators ignored
-		"weird/name":       "",
-		"MixedCase.F3D":    "design", // case-insensitive
-		"":                 "",
+		"Assembly.f3d":    "design",
+		"Plan-A1.f2d":     "drawing",
+		"BlankTitle.f2t":  "drawing",
+		"PowerStage.fsch": "schematic",
+		"MainBoard.fbrd":  "pcb",
+		"RobotECAD.fprj":  "ecad",
+		"Untitled":        "",       // no extension
+		"Folder/name.f3d": "design", // last . wins, path separators ignored
+		"weird/name":      "",
+		"MixedCase.F3D":   "design", // case-insensitive
+		"":                "",
 	}
 	for name, want := range cases {
 		if got := kindFromExtension(name); got != want {
@@ -371,11 +371,11 @@ func TestKindFromExtension(t *testing.T) {
 
 func TestDrawingSubtypeFromExtension(t *testing.T) {
 	cases := map[string]string{
-		"Plan-A1.f2d":     "dwg",
-		"Standard.f2t":    "template",
-		"STANDARD.F2T":    "template", // case-insensitive
-		"Untitled":        "dwg",      // default
-		"weird.txt":       "dwg",      // unknown extensions still get "dwg"
+		"Plan-A1.f2d":  "dwg",
+		"Standard.f2t": "template",
+		"STANDARD.F2T": "template", // case-insensitive
+		"Untitled":     "dwg",      // default
+		"weird.txt":    "dwg",      // unknown extensions still get "dwg"
 	}
 	for name, want := range cases {
 		if got := drawingSubtypeFromExtension(name); got != want {

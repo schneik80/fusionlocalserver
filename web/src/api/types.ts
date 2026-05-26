@@ -116,6 +116,17 @@ export interface ComponentRef {
   fusionWebUrl?: string
 }
 
+// BOMRow mirrors server.BOMRowDTO — one line of a design's bill of materials.
+// quantity is the occurrence count (the v2 API has no explicit quantity field).
+export interface BOMRow {
+  componentVersionId: string
+  name: string
+  partNumber?: string
+  partDesc?: string
+  material?: string
+  quantity: number
+}
+
 export interface DrawingRef {
   id: string
   name: string

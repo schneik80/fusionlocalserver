@@ -69,6 +69,27 @@ func (s *Server) handleWhereUsed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, componentRefDTOs(refs))
 }
 
+// handleBOM -> api.GetBOM (query: cvId). Flat bill of materials; quantity is
+// the occurrence count.
+func (s *Server) handleBOM(w http.ResponseWriter, r *http.Request) {
+	cvID, ok := reqParam(w, r, "cvId")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	token, ok := s.token(ctx, w, r)
+	if !ok {
+		return
+	}
+	rows, err := api.GetBOM(ctx, token, cvID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bomRowDTOs(rows))
+}
+
 // handleDrawings -> api.GetDrawingsForDesign (query: hubId, designItemId).
 func (s *Server) handleDrawings(w http.ResponseWriter, r *http.Request) {
 	hubID, ok := reqParam(w, r, "hubId")

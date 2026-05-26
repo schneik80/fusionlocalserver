@@ -7,6 +7,7 @@ import {
 import { api } from './client'
 import type {
   AuthMe,
+  BOMRow,
   Classify,
   ComponentRef,
   Contents,
@@ -167,6 +168,17 @@ export const useDrawings = (
     queryKey: ['drawings', hubId, designItemId],
     queryFn: () => api.drawings(hubId!, designItemId!),
     enabled: enabled && !!hubId && !!designItemId,
+    staleTime: STALE,
+  })
+
+export const useBOM = (
+  cvId: string | undefined,
+  enabled: boolean,
+): UseQueryResult<BOMRow[]> =>
+  useQuery({
+    queryKey: ['bom', cvId],
+    queryFn: () => api.bom(cvId!),
+    enabled: enabled && !!cvId,
     staleTime: STALE,
   })
 

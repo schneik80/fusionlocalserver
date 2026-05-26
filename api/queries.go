@@ -23,7 +23,8 @@ const pageSize = 50
 // queryNext  is used for all subsequent calls ($cursor: String! is required).
 // baseVars   is the base variable map (without cursor); copied each call.
 // extract    receives the raw JSON data and returns the next cursor plus the
-//            decoded slice of T for that page.
+//
+//	decoded slice of T for that page.
 func allPages[T any](
 	ctx context.Context,
 	token string,

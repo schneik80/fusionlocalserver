@@ -188,7 +188,7 @@ func TestGetItemDetails_DrawingItem_NoComponentVersion(t *testing.T) {
 			"name":           "Sheet 1",
 			"size":           "0",
 			"mimeType":       "application/dwg",
-			"extensionType": "DrawingItem",
+			"extensionType":  "DrawingItem",
 			"createdOn":      "2024-03-01T09:00:00Z",
 			"createdBy":      map[string]any{"firstName": "X", "lastName": "Y"},
 			"lastModifiedOn": "2024-03-02T09:00:00Z",
