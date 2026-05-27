@@ -14,8 +14,10 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { QUERY_CACHE_KEY } from '../queryPersist'
 import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { loadLastHub, useNav } from '../state/nav'
@@ -34,6 +36,7 @@ export function AppLayout() {
   const metaQ = useMeta()
   const authQ = useAuthMe()
   const hubsQ = useHubs()
+  const qc = useQueryClient()
   const { mode, toggle } = useColorMode()
 
   // Restore the last-used hub once the hub list loads, but only if it's still
@@ -47,12 +50,19 @@ export function AppLayout() {
     if (hub) nav.selectHub(hub.id, hub.name)
   }, [nav.hubId, hubsQ.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // logout drops the server session, then reloads at the root so the gate
-  // re-evaluates and shows the login screen.
+  // logout drops the server session and clears the persisted query cache (so a
+  // different user on this browser doesn't briefly see the prior user's data),
+  // then reloads at the root so the gate shows the login screen.
   const logout = async () => {
     try {
       await api.logout()
     } finally {
+      qc.clear()
+      try {
+        localStorage.removeItem(QUERY_CACHE_KEY)
+      } catch {
+        /* storage unavailable — nothing to clear */
+      }
       window.location.assign('/')
     }
   }
