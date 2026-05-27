@@ -26,9 +26,10 @@ import { BrowserColumns } from './BrowserColumns'
 import { HubSwitcher } from './HubSwitcher'
 import { NavRail } from './NavRail'
 import { PinsDialog } from './PinsDialog'
+import { SearchDialog } from './SearchDialog'
 import { SettingsDialog } from './SettingsDialog'
 
-type DialogKind = 'hubs' | 'pins' | 'settings' | null
+type DialogKind = 'search' | 'hubs' | 'pins' | 'settings' | null
 
 export function AppLayout() {
   const [dialog, setDialog] = useState<DialogKind>(null)
@@ -110,6 +111,7 @@ export function AppLayout() {
 
       <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <NavRail
+          onOpenSearch={() => setDialog('search')}
           onOpenHubs={() => setDialog('hubs')}
           onOpenPins={() => setDialog('pins')}
           onOpenSettings={() => setDialog('settings')}
@@ -120,6 +122,12 @@ export function AppLayout() {
         </Box>
       </Box>
 
+      <SearchDialog
+        open={dialog === 'search'}
+        onClose={() => setDialog(null)}
+        hubId={nav.hubId}
+        hubName={nav.hubName}
+      />
       <HubSwitcher open={dialog === 'hubs'} onClose={() => setDialog(null)} />
       <PinsDialog open={dialog === 'pins'} onClose={() => setDialog(null)} />
       <SettingsDialog open={dialog === 'settings'} onClose={() => setDialog(null)} />

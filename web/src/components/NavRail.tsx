@@ -1,15 +1,26 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
-import { faBuilding, faGear, faStar } from '@fortawesome/free-solid-svg-icons'
+import {
+  faBuilding,
+  faGear,
+  faMagnifyingGlass,
+  faStar,
+} from '@fortawesome/free-solid-svg-icons'
 import { IconButton, Paper, Stack, Tooltip } from '@mui/material'
 
 interface NavRailProps {
+  onOpenSearch: () => void
   onOpenHubs: () => void
   onOpenPins: () => void
   onOpenSettings: () => void
 }
 
-export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps) {
+export function NavRail({
+  onOpenSearch,
+  onOpenHubs,
+  onOpenPins,
+  onOpenSettings,
+}: NavRailProps) {
   return (
     <Paper
       square
@@ -27,6 +38,7 @@ export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps
       }}
     >
       <Stack spacing={1.5}>
+        <RailButton icon={faMagnifyingGlass} label="Search" onClick={onOpenSearch} />
         <RailButton icon={faBuilding} label="Hubs" onClick={onOpenHubs} />
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />

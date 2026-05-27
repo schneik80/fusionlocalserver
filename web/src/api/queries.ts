@@ -21,6 +21,8 @@ import type {
   PhysicalProperties,
   Pin,
   ProjectGroup,
+  SearchableProperty,
+  SearchResponse,
   Thumbnail,
 } from './types'
 
@@ -231,6 +233,41 @@ export const useItemLocation = (
     queryKey: ['location', hubId, itemId],
     queryFn: () => api.itemLocation(hubId!, itemId!),
     enabled: enabled && !!hubId && !!itemId,
+    staleTime: STALE,
+  })
+
+// useSearchableProperties loads the hub's filterable properties for the search
+// form's property picker.
+export const useSearchableProperties = (
+  hubId: string | null,
+): UseQueryResult<SearchableProperty[]> =>
+  useQuery({
+    queryKey: ['searchableProperties', hubId],
+    queryFn: () => api.searchableProperties(hubId!),
+    enabled: !!hubId,
+    staleTime: STALE,
+  })
+
+// useSearch runs a hub search. It's gated on `enabled` so it only fires once the
+// user submits a query (not on every keystroke). The query key includes all
+// criteria so distinct searches cache independently.
+export const useSearch = (args: {
+  hubId: string | null
+  q?: string
+  propId?: string
+  propValue?: string
+  enabled: boolean
+}): UseQueryResult<SearchResponse> =>
+  useQuery({
+    queryKey: ['search', args.hubId, args.q, args.propId, args.propValue],
+    queryFn: () =>
+      api.search({
+        hubId: args.hubId!,
+        q: args.q,
+        propId: args.propId,
+        propValue: args.propValue,
+      }),
+    enabled: args.enabled && !!args.hubId,
     staleTime: STALE,
   })
 

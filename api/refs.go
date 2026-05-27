@@ -340,9 +340,13 @@ func GetDrawingsForDesign(ctx context.Context, token, hubID, designItemID string
 		return nil, nil
 	}
 
+	// Page size is capped low: each row's tipDrawing.model.designItem chain is
+	// expensive, and the v3 gateway enforces a 1000-point query-complexity cap
+	// (limit 50 scored 1061). 20 keeps a single page well under the cap; large
+	// projects just take more pages.
 	const qFirst = `
 		query ProjectDrawings($projectId: ID!) {
-			itemsByProject(projectId: $projectId, pagination: { limit: 50 }) {
+			itemsByProject(projectId: $projectId, pagination: { limit: 20 }) {
 				pagination { cursor }
 				results {
 					__typename
@@ -356,7 +360,7 @@ func GetDrawingsForDesign(ctx context.Context, token, hubID, designItemID string
 		}`
 	const qNext = `
 		query ProjectDrawingsNext($projectId: ID!, $cursor: String!) {
-			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
+			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 20 }) {
 				pagination { cursor }
 				results {
 					__typename

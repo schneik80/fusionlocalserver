@@ -40,6 +40,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/drawings", prot(s.handleDrawings))
 	mux.HandleFunc("GET /api/items/bom", prot(s.handleBOM))
 
+	// Search (hub-wide, v3 searchByHub + searchablePropertiesByHub).
+	mux.HandleFunc("GET /api/search", prot(s.handleSearch))
+	mux.HandleFunc("GET /api/search/properties", prot(s.handleSearchableProperties))
+
 	// Permissions (project groups + roles; group members need hub-admin access).
 	mux.HandleFunc("GET /api/projects/groups", prot(s.handleProjectGroups))
 	mux.HandleFunc("GET /api/groups/members", prot(s.handleGroupMembers))

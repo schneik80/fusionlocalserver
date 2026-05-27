@@ -163,6 +163,29 @@ export interface GroupMember {
   status?: string
 }
 
+// SearchHit mirrors server.SearchHitDTO — one row in the hub search results.
+// itemId + hubId identify the navigable document for Show-in-Location.
+export interface SearchHit {
+  name: string
+  thumbnailUrl?: string
+  matched?: string
+  itemId?: string
+  hubId?: string
+  kind: string
+}
+
+export interface SearchResponse {
+  hits: SearchHit[]
+  nextCursor?: string
+}
+
+// SearchableProperty mirrors server.SearchablePropertyDTO — one option in the
+// search form's property picker; id is the propertyDefinition id.
+export interface SearchableProperty {
+  displayName: string
+  id: string
+}
+
 export interface FolderRef {
   id: string
   name: string

@@ -19,6 +19,8 @@ import type {
   PhysicalProperties,
   Pin,
   ProjectGroup,
+  SearchableProperty,
+  SearchResponse,
   SetPortResponse,
   Thumbnail,
 } from './types'
@@ -122,6 +124,17 @@ export const api = {
 
   groupMembers: (hubId: string, groupId: string) =>
     request<GroupMember[]>(`/api/groups/members${qs({ hubId, groupId })}`),
+
+  search: (args: {
+    hubId: string
+    q?: string
+    propId?: string
+    propValue?: string
+    cursor?: string
+  }) => request<SearchResponse>(`/api/search${qs(args)}`),
+
+  searchableProperties: (hubId: string) =>
+    request<SearchableProperty[]>(`/api/search/properties${qs({ hubId })}`),
 
   classify: (cvId: string) =>
     request<Classify>(`/api/items/classify${qs({ cvId })}`),
