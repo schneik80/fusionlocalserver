@@ -9,31 +9,31 @@ import (
 	"strings"
 )
 
-// Thumbnail status values returned by the Manufacturing Data Model API.
-// Generation is asynchronous, mirroring STEP derivatives: the first call on a
-// freshly-saved version may report PENDING with an empty URL.
+// Thumbnail status values returned by the v3 Manufacturing Data Model API
+// (IN_PROGRESS | SUCCESS | PENDING | FAILED | TIMEOUT). Generation is
+// asynchronous: the first call on a freshly-saved component may report
+// PENDING/IN_PROGRESS with an empty URL.
 const (
 	ThumbnailStatusPending = "PENDING"
 	ThumbnailStatusSuccess = "SUCCESS"
 	ThumbnailStatusFailed  = "FAILED"
 )
 
-// GetThumbnail asks the Manufacturing Data Model API for the thumbnail of a
-// component version. Returns the generation status and, once status is
-// SUCCESS, a signed download URL (empty otherwise). Callers should poll until
-// status is SUCCESS or FAILED.
+// GetThumbnail asks the v3 Manufacturing Data Model API for the thumbnail of a
+// component. componentID is the v3 Component id. Returns the generation status
+// and, once status is SUCCESS, a signed download URL (empty otherwise). Callers
+// should poll until status is SUCCESS or FAILED.
 //
 // The signed URL is self-authenticated (the signature is embedded in the URL),
-// so it can be loaded directly as an <img> src without the bearer token — the
-// same reasoning that keeps DownloadFile from attaching the token.
-func GetThumbnail(ctx context.Context, token, componentVersionID string) (status, signedURL string, err error) {
-	if componentVersionID == "" {
-		return "", "", fmt.Errorf("thumbnail: empty componentVersionID")
+// so it can be loaded directly as an <img> src without the bearer token.
+func GetThumbnail(ctx context.Context, token, componentID string) (status, signedURL string, err error) {
+	if componentID == "" {
+		return "", "", fmt.Errorf("thumbnail: empty componentID")
 	}
 
 	const q = `
-		query GetThumbnail($componentVersionId: ID!) {
-			componentVersion(componentVersionId: $componentVersionId) {
+		query GetThumbnail($cv: ID!) {
+			component(componentId: $cv) {
 				thumbnail {
 					status
 					signedUrl
@@ -41,48 +41,50 @@ func GetThumbnail(ctx context.Context, token, componentVersionID string) (status
 			}
 		}`
 
-	data, err := gqlQuery(ctx, token, q, map[string]any{"componentVersionId": componentVersionID})
+	data, err := gqlQuery(ctx, token, q, map[string]any{"cv": componentID})
 	if err != nil {
 		return "", "", fmt.Errorf("thumbnail: %w", err)
 	}
 
 	var raw struct {
-		ComponentVersion struct {
+		Component struct {
 			Thumbnail struct {
 				Status    string `json:"status"`
 				SignedURL string `json:"signedUrl"`
 			} `json:"thumbnail"`
-		} `json:"componentVersion"`
+		} `json:"component"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return "", "", fmt.Errorf("thumbnail decode: %w", err)
 	}
-	t := raw.ComponentVersion.Thumbnail
+	t := raw.Component.Thumbnail
 	return normalizeThumbStatus(t.Status), t.SignedURL, nil
 }
 
-// normalizeThumbStatus upper-cases the status and maps the empty/absent case
-// (a nullable componentVersion/thumbnail with no GraphQL error) to FAILED, so
-// a poller never waits forever for a SUCCESS that will never arrive.
+// normalizeThumbStatus upper-cases the status, maps the empty/absent case (a
+// nullable component/thumbnail with no GraphQL error) to FAILED, and treats the
+// v3 TIMEOUT status as terminal failure — so a poller never waits forever for a
+// SUCCESS that will never arrive.
 func normalizeThumbStatus(s string) string {
 	s = strings.ToUpper(s)
-	if s == "" {
+	if s == "" || s == "TIMEOUT" {
 		return ThumbnailStatusFailed
 	}
 	return s
 }
 
-// ClassifyAndThumbnail issues a single componentVersion query that both
-// classifies the design (assembly vs part, via a one-result occurrences probe)
-// and fetches its thumbnail status/URL. The server fires one of these per
-// design row as a folder loads, so combining them halves the per-row APS round
-// trips and lets the thumbnail cache warm in the background off the same call.
+// ClassifyAndThumbnail issues a single component query that both classifies the
+// design (assembly vs part, via the v3 Component.hasChildren flag) and fetches
+// its thumbnail status/URL. The server fires one of these per design row as a
+// folder loads, so combining them halves the per-row APS round trips and lets
+// the thumbnail cache warm in the background off the same call. componentID is
+// the v3 Component id.
 //
 // Shares classifySem with ClassifyAssembly so the combined fan-out stays within
 // the same concurrency budget.
-func ClassifyAndThumbnail(ctx context.Context, token, componentVersionID string) (isAssembly bool, status, signedURL string, err error) {
-	if componentVersionID == "" {
-		return false, "", "", fmt.Errorf("classify+thumbnail: empty componentVersionID")
+func ClassifyAndThumbnail(ctx context.Context, token, componentID string) (isAssembly bool, status, signedURL string, err error) {
+	if componentID == "" {
+		return false, "", "", fmt.Errorf("classify+thumbnail: empty componentID")
 	}
 	select {
 	case classifySem <- struct{}{}:
@@ -93,40 +95,34 @@ func ClassifyAndThumbnail(ctx context.Context, token, componentVersionID string)
 
 	const q = `
 		query ClassifyAndThumbnail($cv: ID!) {
-			componentVersion(componentVersionId: $cv) {
-				occurrences(pagination: { limit: 1 }) {
-					results { id }
-				}
+			component(componentId: $cv) {
+				hasChildren
 				thumbnail {
 					status
 					signedUrl
 				}
 			}
 		}`
-	data, err := gqlQuery(ctx, token, q, map[string]any{"cv": componentVersionID})
+	data, err := gqlQuery(ctx, token, q, map[string]any{"cv": componentID})
 	if err != nil {
 		return false, "", "", err
 	}
 	var raw struct {
-		ComponentVersion struct {
-			Occurrences struct {
-				Results []struct {
-					ID string `json:"id"`
-				} `json:"results"`
-			} `json:"occurrences"`
-			Thumbnail struct {
+		Component struct {
+			HasChildren bool `json:"hasChildren"`
+			Thumbnail   struct {
 				Status    string `json:"status"`
 				SignedURL string `json:"signedUrl"`
 			} `json:"thumbnail"`
-		} `json:"componentVersion"`
+		} `json:"component"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return false, "", "", fmt.Errorf("classify+thumbnail decode: %w", err)
 	}
-	cv := raw.ComponentVersion
-	return len(cv.Occurrences.Results) > 0,
-		normalizeThumbStatus(cv.Thumbnail.Status),
-		cv.Thumbnail.SignedURL,
+	c := raw.Component
+	return c.HasChildren,
+		normalizeThumbStatus(c.Thumbnail.Status),
+		c.Thumbnail.SignedURL,
 		nil
 }
 

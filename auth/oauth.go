@@ -26,7 +26,11 @@ import (
 var (
 	authEndpoint  = "https://developer.api.autodesk.com/authentication/v2/authorize"
 	tokenEndpoint = "https://developer.api.autodesk.com/authentication/v2/token"
-	authScope     = "data:read user-profile:read"
+	// v3 needs the full data scope set: data:search for searchByHub /
+	// searchablePropertiesByHub, and data:write + data:create for the project
+	// create/rename/archive and property-write mutations. Widening the scope
+	// forces every user to re-consent (re-login) once.
+	authScope = "data:read data:write data:create data:search user-profile:read"
 )
 
 // NewPKCE generates a fresh PKCE verifier and its S256 challenge. The caller

@@ -53,34 +53,36 @@ type ContentsDTO struct {
 	Items   []ItemDTO `json:"items"`
 }
 
-// VersionDTO mirrors api.VersionSummary — one row of an item's version history.
-type VersionDTO struct {
-	Number    int    `json:"number"`
-	CreatedOn string `json:"createdOn,omitempty"`
-	CreatedBy string `json:"createdBy,omitempty"`
-	Comment   string `json:"comment,omitempty"`
+// HistoryEntryDTO mirrors api.HistoryEntry — one entry in an item's time-based
+// change log. v3 has no integer version numbers, so entries are keyed by
+// timestamp + id and labelled by change type.
+type HistoryEntryDTO struct {
+	ID          string `json:"id"`
+	Timestamp   string `json:"timestamp,omitempty"`
+	ChangeType  string `json:"changeType,omitempty"`
+	Description string `json:"description,omitempty"`
+	Author      string `json:"author,omitempty"`
 }
 
 // DetailsDTO mirrors api.ItemDetails — the rich metadata for one item.
 type DetailsDTO struct {
-	ID                     string       `json:"id"`
-	Name                   string       `json:"name"`
-	Typename               string       `json:"typename"`
-	Size                   string       `json:"size,omitempty"`
-	MimeType               string       `json:"mimeType,omitempty"`
-	ExtensionType          string       `json:"extensionType,omitempty"`
-	FusionWebURL           string       `json:"fusionWebUrl,omitempty"`
-	CreatedOn              string       `json:"createdOn,omitempty"`
-	CreatedBy              string       `json:"createdBy,omitempty"`
-	ModifiedOn             string       `json:"modifiedOn,omitempty"`
-	ModifiedBy             string       `json:"modifiedBy,omitempty"`
-	VersionNumber          int          `json:"versionNumber"`
-	PartNumber             string       `json:"partNumber,omitempty"`
-	PartDesc               string       `json:"partDesc,omitempty"`
-	Material               string       `json:"material,omitempty"`
-	IsMilestone            bool         `json:"isMilestone"`
-	RootComponentVersionID string       `json:"rootComponentVersionId,omitempty"`
-	Versions               []VersionDTO `json:"versions"`
+	ID                     string            `json:"id"`
+	Name                   string            `json:"name"`
+	Typename               string            `json:"typename"`
+	Size                   string            `json:"size,omitempty"`
+	MimeType               string            `json:"mimeType,omitempty"`
+	ExtensionType          string            `json:"extensionType,omitempty"`
+	FusionWebURL           string            `json:"fusionWebUrl,omitempty"`
+	CreatedOn              string            `json:"createdOn,omitempty"`
+	CreatedBy              string            `json:"createdBy,omitempty"`
+	ModifiedOn             string            `json:"modifiedOn,omitempty"`
+	ModifiedBy             string            `json:"modifiedBy,omitempty"`
+	PartNumber             string            `json:"partNumber,omitempty"`
+	PartDesc               string            `json:"partDesc,omitempty"`
+	Material               string            `json:"material,omitempty"`
+	RootComponentVersionID string            `json:"rootComponentVersionId,omitempty"`
+	TipTimestamp           string            `json:"tipTimestamp,omitempty"`
+	History                []HistoryEntryDTO `json:"history"`
 }
 
 // ComponentRefDTO mirrors api.ComponentRef — a row in the Uses / Where Used tab.
@@ -252,20 +254,20 @@ func detailsDTO(d *api.ItemDetails) DetailsDTO {
 		CreatedBy:              d.CreatedBy,
 		ModifiedOn:             fmtTime(d.ModifiedOn),
 		ModifiedBy:             d.ModifiedBy,
-		VersionNumber:          d.VersionNumber,
 		PartNumber:             d.PartNumber,
 		PartDesc:               d.PartDesc,
 		Material:               d.Material,
-		IsMilestone:            d.IsMilestone,
 		RootComponentVersionID: d.RootComponentVersionID,
-		Versions:               make([]VersionDTO, 0, len(d.Versions)),
+		TipTimestamp:           fmtTime(d.TipTimestamp),
+		History:                make([]HistoryEntryDTO, 0, len(d.History)),
 	}
-	for _, v := range d.Versions {
-		dto.Versions = append(dto.Versions, VersionDTO{
-			Number:    v.Number,
-			CreatedOn: fmtTime(v.CreatedOn),
-			CreatedBy: v.CreatedBy,
-			Comment:   v.Comment,
+	for _, h := range d.History {
+		dto.History = append(dto.History, HistoryEntryDTO{
+			ID:          h.ID,
+			Timestamp:   fmtTime(h.Timestamp),
+			ChangeType:  h.ChangeType,
+			Description: h.Description,
+			Author:      h.Author,
 		})
 	}
 	return dto

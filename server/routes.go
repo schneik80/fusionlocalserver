@@ -49,6 +49,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 	mux.HandleFunc("GET /api/items/custom-properties", prot(s.handleCustomProperties))
 
+	// TEMPORARY: live v3 schema introspection diagnostic (remove after use).
+	mux.HandleFunc("GET /api/_introspect-v3", prot(s.handleIntrospectV3))
+
 	// Settings.
 	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))
 

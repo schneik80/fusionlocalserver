@@ -14,7 +14,11 @@ import (
 
 // graphqlEndpoint is a var (not const) so tests can point it at an
 // httptest.Server. Production code never reassigns it.
-var graphqlEndpoint = "https://developer.api.autodesk.com/mfg/graphql"
+//
+// v3 ("Collaborative Editing") endpoint. The app is v3-only and supports CE
+// hubs only (Hub.hubDataVersion == "2.0.0"); the v2 endpoint
+// (.../mfg/graphql) is no longer used.
+var graphqlEndpoint = "https://developer.api.autodesk.com/mfg/v3/graphql/public"
 
 // region is the X-Ads-Region header value sent with every request.
 // Empty means no header is sent (defaults to US on the server side).

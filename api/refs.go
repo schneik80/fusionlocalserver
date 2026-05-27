@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// ComponentRef describes a ComponentVersion shown in the Uses or
-// Where Used tab. For Uses (occurrences), this is a sub-component used
-// by the current design. For Where Used, this is a parent component
-// that consumes the current design.
+// ComponentRef describes a component shown in the Uses or Where Used tab. For
+// Uses, this is a direct child component used by the current design (or, for a
+// drawing, its source design). For Where Used, this is a parent component that
+// consumes the current design. IDs are v3 Component ids.
 type ComponentRef struct {
-	ID             string // ComponentVersion.id
+	ID             string // Component.id
 	Name           string
 	PartNumber     string
 	PartDesc       string
@@ -23,9 +23,9 @@ type ComponentRef struct {
 	FusionWebURL   string // owning DesignItem.fusionWebUrl, if exposed
 }
 
-// DrawingRef describes a DrawingVersion shown in the Drawings tab.
-// DrawingItemID is the parent DrawingItem.id — needed to drive
-// Show-In-Location navigation from this row to the Contents column.
+// DrawingRef describes a drawing shown in the Drawings tab. DrawingItemID is the
+// parent DrawingItem.id — needed to drive Show-In-Location navigation from this
+// row to the Contents column.
 type DrawingRef struct {
 	ID            string
 	Name          string
@@ -35,112 +35,124 @@ type DrawingRef struct {
 	FusionWebURL  string
 }
 
-// GetOccurrences returns the immediate sub-component versions referenced
-// by the given component version (the "Uses" relationship).
-func GetOccurrences(ctx context.Context, token, componentVersionID string) ([]ComponentRef, error) {
+// v3CompRef is the shared shape for a component-with-its-owning-design used by
+// the Uses / Where Used queries. name/partNumber/description/materialName are
+// v3 Property objects.
+type v3CompRef struct {
+	ID           string   `json:"id"`
+	Name         Property `json:"name"`
+	PartNumber   Property `json:"partNumber"`
+	Desc         Property `json:"description"`
+	Material     Property `json:"materialName"`
+	PrimaryModel struct {
+		DesignItem v3DesignItem `json:"designItem"`
+	} `json:"primaryModel"`
+}
+
+type v3DesignItem struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	FusionWebURL string `json:"fusionWebUrl"`
+}
+
+func (c v3CompRef) toRef(di v3DesignItem) ComponentRef {
+	if di.ID == "" {
+		di = c.PrimaryModel.DesignItem
+	}
+	return ComponentRef{
+		ID:             c.ID,
+		Name:           c.Name.Str(),
+		PartNumber:     c.PartNumber.Str(),
+		PartDesc:       c.Desc.Str(),
+		Material:       c.Material.Str(),
+		DesignItemID:   di.ID,
+		DesignItemName: di.Name,
+		FusionWebURL:   di.FusionWebURL,
+	}
+}
+
+const v3CompRefFields = `
+	id
+	name { value displayValue }
+	partNumber { value displayValue }
+	description { value displayValue }
+	materialName { value displayValue }
+	primaryModel { designItem { id name fusionWebUrl } }`
+
+// GetOccurrences returns the immediate sub-components of the given component
+// (the "Uses" relationship), via Component.bomRelations. componentID is the v3
+// Component id.
+func GetOccurrences(ctx context.Context, token, componentID string) ([]ComponentRef, error) {
 	const qFirst = `
-		query GetOccurrences($cvId: ID!) {
-			componentVersion(componentVersionId: $cvId) {
-				occurrences(pagination: { limit: 50 }) {
+		query GetOccurrences($cv: ID!) {
+			component(componentId: $cv) {
+				bomRelations(depth: 1, pagination: { limit: 50 }) {
 					pagination { cursor }
-					results {
-						id
-						componentVersion {
-							id name partNumber partDescription materialName
-							designItemVersion { item { id name fusionWebUrl } }
-						}
-					}
+					results { toComponent { ` + v3CompRefFields + ` } }
 				}
 			}
 		}`
 	const qNext = `
-		query GetOccurrencesNext($cvId: ID!, $cursor: String!) {
-			componentVersion(componentVersionId: $cvId) {
-				occurrences(pagination: { cursor: $cursor, limit: 50 }) {
+		query GetOccurrencesNext($cv: ID!, $cursor: String!) {
+			component(componentId: $cv) {
+				bomRelations(depth: 1, pagination: { cursor: $cursor, limit: 50 }) {
 					pagination { cursor }
-					results {
-						id
-						componentVersion {
-							id name partNumber partDescription materialName
-							designItemVersion { item { id name fusionWebUrl } }
-						}
-					}
+					results { toComponent { ` + v3CompRefFields + ` } }
 				}
 			}
 		}`
 
 	type occResult struct {
-		ID               string `json:"id"`
-		ComponentVersion struct {
-			ID                string `json:"id"`
-			Name              string `json:"name"`
-			PartNumber        string `json:"partNumber"`
-			PartDesc          string `json:"partDescription"`
-			Material          string `json:"materialName"`
-			DesignItemVersion struct {
-				Item struct {
-					ID           string `json:"id"`
-					Name         string `json:"name"`
-					FusionWebURL string `json:"fusionWebUrl"`
-				} `json:"item"`
-			} `json:"designItemVersion"`
-		} `json:"componentVersion"`
+		ToComponent v3CompRef `json:"toComponent"`
 	}
 
-	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cvId": componentVersionID}, func(data json.RawMessage) (string, []occResult, error) {
+	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cv": componentID}, func(data json.RawMessage) (string, []occResult, error) {
 		var r struct {
-			ComponentVersion struct {
-				Occurrences struct {
+			Component struct {
+				BomRelations struct {
 					Pagination struct {
 						Cursor string `json:"cursor"`
 					} `json:"pagination"`
 					Results []occResult `json:"results"`
-				} `json:"occurrences"`
-			} `json:"componentVersion"`
+				} `json:"bomRelations"`
+			} `json:"component"`
 		}
 		if err := json.Unmarshal(data, &r); err != nil {
 			return "", nil, fmt.Errorf("occurrences: %w", err)
 		}
-		return r.ComponentVersion.Occurrences.Pagination.Cursor, r.ComponentVersion.Occurrences.Results, nil
+		return r.Component.BomRelations.Pagination.Cursor, r.Component.BomRelations.Results, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	refs := make([]ComponentRef, len(all))
-	for i, o := range all {
-		refs[i] = ComponentRef{
-			ID:             o.ComponentVersion.ID,
-			Name:           o.ComponentVersion.Name,
-			PartNumber:     o.ComponentVersion.PartNumber,
-			PartDesc:       o.ComponentVersion.PartDesc,
-			Material:       o.ComponentVersion.Material,
-			DesignItemID:   o.ComponentVersion.DesignItemVersion.Item.ID,
-			DesignItemName: o.ComponentVersion.DesignItemVersion.Item.Name,
-			FusionWebURL:   o.ComponentVersion.DesignItemVersion.Item.FusionWebURL,
-		}
+	refs := make([]ComponentRef, 0, len(all))
+	for _, o := range all {
+		refs = append(refs, o.ToComponent.toRef(v3DesignItem{}))
 	}
 	return refs, nil
 }
 
-// GetDrawingSource returns the source design(s) referenced by the given
-// drawing item. For drawings, "Uses" means the design the drawing was
-// made from — the tip drawing version's componentVersion's owning
-// DesignItem. Most drawings reference exactly one design, so the
-// result list typically has a single entry; it is returned as a slice
-// so the Uses tab renderer can stay polymorphic across DesignItems
-// (occurrences) and DrawingItems (sources).
+// GetDrawingSource returns the source design referenced by the given drawing
+// item. For a drawing, "Uses" means the design it was made from — the tip
+// drawing's model's owning DesignItem (Drawing.model -> {component, designItem}).
+// Returned as a slice so the Uses renderer stays polymorphic across designs
+// (occurrences) and drawings (sources).
 func GetDrawingSource(ctx context.Context, token, hubID, drawingItemID string) ([]ComponentRef, error) {
 	const q = `
 		query GetDrawingSource($hubId: ID!, $itemId: ID!) {
 			item(hubId: $hubId, itemId: $itemId) {
 				... on DrawingItem {
-					tipDrawingVersion {
-						componentVersion {
-							id name partNumber partDescription materialName
-							designItemVersion {
-								item { id name fusionWebUrl }
+					tipDrawing {
+						model {
+							component {
+								id
+								name { value displayValue }
+								partNumber { value displayValue }
+								description { value displayValue }
+								materialName { value displayValue }
 							}
+							designItem { id name fusionWebUrl }
 						}
 					}
 				}
@@ -154,295 +166,256 @@ func GetDrawingSource(ctx context.Context, token, hubID, drawingItemID string) (
 
 	var raw struct {
 		Item struct {
-			TipDrawingVersion struct {
-				ComponentVersion struct {
-					ID                string `json:"id"`
-					Name              string `json:"name"`
-					PartNumber        string `json:"partNumber"`
-					PartDesc          string `json:"partDescription"`
-					Material          string `json:"materialName"`
-					DesignItemVersion struct {
-						Item struct {
-							ID           string `json:"id"`
-							Name         string `json:"name"`
-							FusionWebURL string `json:"fusionWebUrl"`
-						} `json:"item"`
-					} `json:"designItemVersion"`
-				} `json:"componentVersion"`
-			} `json:"tipDrawingVersion"`
+			TipDrawing struct {
+				Model struct {
+					Component struct {
+						ID         string   `json:"id"`
+						Name       Property `json:"name"`
+						PartNumber Property `json:"partNumber"`
+						Desc       Property `json:"description"`
+						Material   Property `json:"materialName"`
+					} `json:"component"`
+					DesignItem v3DesignItem `json:"designItem"`
+				} `json:"model"`
+			} `json:"tipDrawing"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("drawing source decode: %w", err)
 	}
 
-	cv := raw.Item.TipDrawingVersion.ComponentVersion
-	// If the drawing has no tipDrawingVersion (rare; uninitialized
-	// drawing), or the source DesignItem is missing, return an empty
-	// list so the UI shows the tab's empty state.
-	if cv.DesignItemVersion.Item.ID == "" && cv.ID == "" {
+	m := raw.Item.TipDrawing.Model
+	if m.Component.ID == "" && m.DesignItem.ID == "" {
 		return nil, nil
 	}
 	return []ComponentRef{{
-		ID:             cv.ID,
-		Name:           cv.Name,
-		PartNumber:     cv.PartNumber,
-		PartDesc:       cv.PartDesc,
-		Material:       cv.Material,
-		DesignItemID:   cv.DesignItemVersion.Item.ID,
-		DesignItemName: cv.DesignItemVersion.Item.Name,
-		FusionWebURL:   cv.DesignItemVersion.Item.FusionWebURL,
+		ID:             m.Component.ID,
+		Name:           m.Component.Name.Str(),
+		PartNumber:     m.Component.PartNumber.Str(),
+		PartDesc:       m.Component.Desc.Str(),
+		Material:       m.Component.Material.Str(),
+		DesignItemID:   m.DesignItem.ID,
+		DesignItemName: m.DesignItem.Name,
+		FusionWebURL:   m.DesignItem.FusionWebURL,
 	}}, nil
 }
 
-// GetWhereUsed returns the component versions that reference the given
-// component version (the reverse-lookup "Where Used" relationship).
-func GetWhereUsed(ctx context.Context, token, componentVersionID string) ([]ComponentRef, error) {
+// GetWhereUsed returns the parent components that reference the given component
+// (the reverse "Where Used" relationship).
+//
+// v3 has no first-class reverse query. The only candidate is reading the
+// component's primaryModel.assemblyRelations and keeping relations where this
+// model is the `toModel` (the child) so each `fromModel` is a parent. NOTE:
+// assemblyRelations is documented as "assembly relations of this model"
+// (its downward sub-tree), so this may return nothing — confirmed by live test.
+// Implemented this way so the behaviour is empirically verifiable; if it yields
+// nothing, where-used is not supported on v3 and the tab should be hidden.
+func GetWhereUsed(ctx context.Context, token, componentID string) ([]ComponentRef, error) {
 	const qFirst = `
-		query GetWhereUsed($cvId: ID!) {
-			componentVersion(componentVersionId: $cvId) {
-				whereUsed(pagination: { limit: 50 }) {
-					pagination { cursor }
-					results {
-						id name partNumber partDescription materialName
-						designItemVersion { item { id name fusionWebUrl } }
+		query GetWhereUsed($cv: ID!) {
+			component(componentId: $cv) {
+				primaryModel {
+					id
+					assemblyRelations(depth: 1, pagination: { limit: 50 }) {
+						pagination { cursor }
+						results {
+							toModel { id }
+							fromModel { ` + v3FromModelFields + ` }
+						}
 					}
 				}
 			}
 		}`
 	const qNext = `
-		query GetWhereUsedNext($cvId: ID!, $cursor: String!) {
-			componentVersion(componentVersionId: $cvId) {
-				whereUsed(pagination: { cursor: $cursor, limit: 50 }) {
-					pagination { cursor }
-					results {
-						id name partNumber partDescription materialName
-						designItemVersion { item { id name fusionWebUrl } }
+		query GetWhereUsedNext($cv: ID!, $cursor: String!) {
+			component(componentId: $cv) {
+				primaryModel {
+					id
+					assemblyRelations(depth: 1, pagination: { cursor: $cursor, limit: 50 }) {
+						pagination { cursor }
+						results {
+							toModel { id }
+							fromModel { ` + v3FromModelFields + ` }
+						}
 					}
 				}
 			}
 		}`
 
-	type cvResult struct {
-		ID                string `json:"id"`
-		Name              string `json:"name"`
-		PartNumber        string `json:"partNumber"`
-		PartDesc          string `json:"partDescription"`
-		Material          string `json:"materialName"`
-		DesignItemVersion struct {
-			Item struct {
-				ID           string `json:"id"`
-				Name         string `json:"name"`
-				FusionWebURL string `json:"fusionWebUrl"`
-			} `json:"item"`
-		} `json:"designItemVersion"`
+	type relResult struct {
+		ToModel struct {
+			ID string `json:"id"`
+		} `json:"toModel"`
+		FromModel struct {
+			ID         string       `json:"id"`
+			DesignItem v3DesignItem `json:"designItem"`
+			Component  v3CompRef    `json:"component"`
+		} `json:"fromModel"`
 	}
 
-	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cvId": componentVersionID}, func(data json.RawMessage) (string, []cvResult, error) {
+	var selfModelID string
+	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cv": componentID}, func(data json.RawMessage) (string, []relResult, error) {
 		var r struct {
-			ComponentVersion struct {
-				WhereUsed struct {
-					Pagination struct {
-						Cursor string `json:"cursor"`
-					} `json:"pagination"`
-					Results []cvResult `json:"results"`
-				} `json:"whereUsed"`
-			} `json:"componentVersion"`
+			Component struct {
+				PrimaryModel struct {
+					ID                string `json:"id"`
+					AssemblyRelations struct {
+						Pagination struct {
+							Cursor string `json:"cursor"`
+						} `json:"pagination"`
+						Results []relResult `json:"results"`
+					} `json:"assemblyRelations"`
+				} `json:"primaryModel"`
+			} `json:"component"`
 		}
 		if err := json.Unmarshal(data, &r); err != nil {
 			return "", nil, fmt.Errorf("whereUsed: %w", err)
 		}
-		return r.ComponentVersion.WhereUsed.Pagination.Cursor, r.ComponentVersion.WhereUsed.Results, nil
+		selfModelID = r.Component.PrimaryModel.ID
+		return r.Component.PrimaryModel.AssemblyRelations.Pagination.Cursor, r.Component.PrimaryModel.AssemblyRelations.Results, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// APS returns one ComponentVersion per *version* of each parent design
-	// that references this component, so a parent design with N saved
-	// versions shows up N times. The user just wants to know which
-	// designs reference theirs, not the per-version history — collapse
-	// to one entry per DesignItem, keeping the first seen. Refs with no
-	// DesignItemID (orphan component versions) are passed through so we
-	// don't accidentally collapse all of them into a single row.
+	// Keep relations where THIS model is the child (toModel == self); the
+	// fromModel is then the parent that uses it. Dedupe by owning DesignItem.
 	seen := make(map[string]bool, len(all))
 	refs := make([]ComponentRef, 0, len(all))
-	for _, c := range all {
-		diid := c.DesignItemVersion.Item.ID
+	for _, rel := range all {
+		if selfModelID != "" && rel.ToModel.ID != selfModelID {
+			continue
+		}
+		diid := rel.FromModel.DesignItem.ID
 		if diid != "" {
 			if seen[diid] {
 				continue
 			}
 			seen[diid] = true
 		}
-		refs = append(refs, ComponentRef{
-			ID:             c.ID,
-			Name:           c.Name,
-			PartNumber:     c.PartNumber,
-			PartDesc:       c.PartDesc,
-			Material:       c.Material,
-			DesignItemID:   diid,
-			DesignItemName: c.DesignItemVersion.Item.Name,
-			FusionWebURL:   c.DesignItemVersion.Item.FusionWebURL,
-		})
+		refs = append(refs, rel.FromModel.Component.toRef(rel.FromModel.DesignItem))
 	}
 	return refs, nil
 }
 
-// GetDrawingsForDesign returns the unique drawing items that reference
-// any version of the given design item.
-//
-// Rationale: in Fusion, a drawing references a specific *version* of a
-// component. When the design is saved, the tip-root component version
-// changes but the drawing keeps pointing at the older one — so the
-// naive `componentVersion(tipRoot).drawingVersions` query returns
-// empty for designs that have been edited since their drawing was
-// created. The correct path is rooted at the DesignItem: walk every
-// design version, collect each version's drawingItemVersions, then
-// dedupe by the drawing's lineage URN so the user sees one row per
-// unique drawing rather than one row per drawing-version-per-design-
-// version.
-//
-// Pagination on versions is required because APS caps query
-// complexity at 1000 points; the original limit-50×limit-50 form
-// scored ~23000 and was rejected, and even 10×10 came in at 1026.
-// The current 10 × 5 layout (10 design versions per round trip, up
-// to 5 drawing-item-versions per design version) lands around 510
-// points, well under the cap. Five drawings per design version
-// covers the realistic case (most designs have 1–2 drawings); a
-// design with >5 distinct drawings on the *same* version would lose
-// the overflow on that version, but other versions of the design
-// will still surface the same drawings via dedup.
-//
-// hubID is required because the underlying `item` query takes a hubId
-// argument. Returns drawings sorted by latest modification timestamp
-// (most recent first).
+// v3FromModelFields is v3CompRefFields plus the model-level designItem
+// (used inside fromModel, which carries both a component and a designItem).
+const v3FromModelFields = `
+	id
+	designItem { id name fusionWebUrl }
+	component {
+		id
+		name { value displayValue }
+		partNumber { value displayValue }
+		description { value displayValue }
+		materialName { value displayValue }
+	}`
+
+// GetDrawingsForDesign returns the drawings whose source design is the given
+// design item. v3 has no design->drawings field, so this scans the design's
+// project for DrawingItems whose tipDrawing.model.designItem matches. This is a
+// project-wide walk (one paginated query), so it can be costly for large
+// projects. Returns drawings sorted by latest modification (most recent first).
 func GetDrawingsForDesign(ctx context.Context, token, hubID, designItemID string) ([]DrawingRef, error) {
+	// Resolve the design's project first.
+	projData, err := gqlQuery(ctx, token, `
+		query DesignProject($hubId: ID!, $itemId: ID!) {
+			item(hubId: $hubId, itemId: $itemId) { project { id } }
+		}`, map[string]any{"hubId": hubID, "itemId": designItemID})
+	if err != nil {
+		return nil, fmt.Errorf("drawings: locate project: %w", err)
+	}
+	var pj struct {
+		Item struct {
+			Project struct {
+				ID string `json:"id"`
+			} `json:"project"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(projData, &pj); err != nil {
+		return nil, fmt.Errorf("drawings: project decode: %w", err)
+	}
+	projectID := pj.Item.Project.ID
+	if projectID == "" {
+		return nil, nil
+	}
+
 	const qFirst = `
-		query GetDrawingsForDesign($hubId: ID!, $itemId: ID!) {
-			item(hubId: $hubId, itemId: $itemId) {
-				... on DesignItem {
-					versions(pagination: { limit: 10 }) {
-						pagination { cursor }
-						results {
-							drawingItemVersions(pagination: { limit: 5 }) {
-								results {
-									lastModifiedOn
-									lastModifiedBy { firstName lastName }
-									item { id name fusionWebUrl }
-								}
-							}
-						}
+		query ProjectDrawings($projectId: ID!) {
+			itemsByProject(projectId: $projectId, pagination: { limit: 50 }) {
+				pagination { cursor }
+				results {
+					__typename
+					id name lastModifiedOn lastModifiedBy { firstName lastName }
+					... on DrawingItem {
+						fusionWebUrl
+						tipDrawing { model { designItem { id } } }
 					}
 				}
 			}
 		}`
 	const qNext = `
-		query GetDrawingsForDesignNext($hubId: ID!, $itemId: ID!, $cursor: String!) {
-			item(hubId: $hubId, itemId: $itemId) {
-				... on DesignItem {
-					versions(pagination: { cursor: $cursor, limit: 10 }) {
-						pagination { cursor }
-						results {
-							drawingItemVersions(pagination: { limit: 5 }) {
-								results {
-									lastModifiedOn
-									lastModifiedBy { firstName lastName }
-									item { id name fusionWebUrl }
-								}
-							}
-						}
+		query ProjectDrawingsNext($projectId: ID!, $cursor: String!) {
+			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
+				pagination { cursor }
+				results {
+					__typename
+					id name lastModifiedOn lastModifiedBy { firstName lastName }
+					... on DrawingItem {
+						fusionWebUrl
+						tipDrawing { model { designItem { id } } }
 					}
 				}
 			}
 		}`
 
-	type divResult struct {
-		ModifiedOn string  `json:"lastModifiedOn"`
-		ModifiedBy apiUser `json:"lastModifiedBy"`
-		Item       struct {
-			ID           string `json:"id"`
-			Name         string `json:"name"`
-			FusionWebURL string `json:"fusionWebUrl"`
-		} `json:"item"`
+	type drawItem struct {
+		Typename     string  `json:"__typename"`
+		ID           string  `json:"id"`
+		Name         string  `json:"name"`
+		ModifiedOn   string  `json:"lastModifiedOn"`
+		ModifiedBy   apiUser `json:"lastModifiedBy"`
+		FusionWebURL string  `json:"fusionWebUrl"`
+		TipDrawing   struct {
+			Model struct {
+				DesignItem struct {
+					ID string `json:"id"`
+				} `json:"designItem"`
+			} `json:"model"`
+		} `json:"tipDrawing"`
 	}
 
-	type accum struct {
-		ref     DrawingRef
-		modTime time.Time
-	}
-	byLineage := make(map[string]*accum)
-
-	var cursor string
-	first := true
-	for {
-		vars := map[string]any{"hubId": hubID, "itemId": designItemID}
-		q := qFirst
-		if !first {
-			q = qNext
-			vars["cursor"] = cursor
+	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"projectId": projectID}, func(data json.RawMessage) (string, []drawItem, error) {
+		var r struct {
+			ItemsByProject struct {
+				Pagination struct {
+					Cursor string `json:"cursor"`
+				} `json:"pagination"`
+				Results []drawItem `json:"results"`
+			} `json:"itemsByProject"`
 		}
-		first = false
-
-		data, err := gqlQuery(ctx, token, q, vars)
-		if err != nil {
-			return nil, fmt.Errorf("drawings for design: %w", err)
+		if err := json.Unmarshal(data, &r); err != nil {
+			return "", nil, fmt.Errorf("project drawings: %w", err)
 		}
-
-		var raw struct {
-			Item struct {
-				Versions struct {
-					Pagination struct {
-						Cursor string `json:"cursor"`
-					} `json:"pagination"`
-					Results []struct {
-						DrawingItemVersions struct {
-							Results []divResult `json:"results"`
-						} `json:"drawingItemVersions"`
-					} `json:"results"`
-				} `json:"versions"`
-			} `json:"item"`
-		}
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return nil, fmt.Errorf("drawings for design decode: %w", err)
-		}
-
-		// Walk every design-version's drawing list on this page.
-		// Dedupe by drawing lineage URN, keeping the most-recently-
-		// modified version so the row's metadata reflects the latest
-		// activity on that drawing.
-		for _, v := range raw.Item.Versions.Results {
-			for _, d := range v.DrawingItemVersions.Results {
-				lineage := d.Item.ID
-				if lineage == "" {
-					continue
-				}
-				modTime := parseTime(d.ModifiedOn)
-				cur, exists := byLineage[lineage]
-				if !exists || modTime.After(cur.modTime) {
-					byLineage[lineage] = &accum{
-						modTime: modTime,
-						ref: DrawingRef{
-							Name:          d.Item.Name,
-							DrawingItemID: lineage,
-							ModifiedOn:    modTime,
-							ModifiedBy:    d.ModifiedBy.fullName(),
-							FusionWebURL:  d.Item.FusionWebURL,
-						},
-					}
-				}
-			}
-		}
-
-		cursor = raw.Item.Versions.Pagination.Cursor
-		if cursor == "" {
-			break
-		}
+		return r.ItemsByProject.Pagination.Cursor, r.ItemsByProject.Results, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	refs := make([]DrawingRef, 0, len(byLineage))
-	for _, a := range byLineage {
-		refs = append(refs, a.ref)
+	refs := make([]DrawingRef, 0)
+	for _, d := range all {
+		if d.Typename != "DrawingItem" || d.TipDrawing.Model.DesignItem.ID != designItemID {
+			continue
+		}
+		refs = append(refs, DrawingRef{
+			ID:            d.ID,
+			Name:          d.Name,
+			DrawingItemID: d.ID,
+			ModifiedOn:    parseTime(d.ModifiedOn),
+			ModifiedBy:    d.ModifiedBy.fullName(),
+			FusionWebURL:  d.FusionWebURL,
+		})
 	}
 	sort.Slice(refs, func(i, j int) bool {
 		return refs[i].ModifiedOn.After(refs[j].ModifiedOn)

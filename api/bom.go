@@ -6,10 +6,10 @@ import (
 	"fmt"
 )
 
-// BOMRow is one line of a design's bill of materials: a unique component and
-// how many times it occurs anywhere in the assembly. The v2 Manufacturing Data
-// Model has no explicit quantity field, so quantity is the count of occurrences
-// of that component across the whole structure (see docs/api.md).
+// BOMRow is one line of a design's bill of materials: a direct child component
+// and its quantity. v3 exposes a real quantity on each BOM relation (unlike v2,
+// which had to count occurrences). ComponentVersionID carries the child's v3
+// Component id.
 type BOMRow struct {
 	ComponentVersionID string
 	Name               string
@@ -19,85 +19,105 @@ type BOMRow struct {
 	Quantity           int
 }
 
-// GetBOM returns a flat bill of materials for the given component version: one
-// row per unique sub-component, with quantity = number of occurrences. It uses
-// allOccurrences (every descendant, not just immediate children) and groups by
-// component version id, preserving first-seen order.
-func GetBOM(ctx context.Context, token, componentVersionID string) ([]BOMRow, error) {
-	// The v2 API caps PaginationInput.limit at 50 (same as occurrences /
-	// whereUsed); pagination walks the rest of a large assembly.
+// GetBOM returns the immediate bill of materials for the given component: one
+// row per direct child with its quantity, from Component.bomRelations.
+// componentID is the v3 Component id. v3's bomRelations supports depth 1 only,
+// so this is the immediate-children BOM (with real quantities), not a fully
+// flattened multi-level tree.
+func GetBOM(ctx context.Context, token, componentID string) ([]BOMRow, error) {
 	const qFirst = `
-		query GetBOM($cvId: ID!) {
-			componentVersion(componentVersionId: $cvId) {
-				allOccurrences(pagination: { limit: 50 }) {
+		query GetBOM($cv: ID!) {
+			component(componentId: $cv) {
+				bomRelations(depth: 1, pagination: { limit: 50 }) {
 					pagination { cursor }
 					results {
-						componentVersion { id name partNumber partDescription materialName }
+						quantity
+						toComponent {
+							id
+							name { value displayValue }
+							partNumber { value displayValue }
+							description { value displayValue }
+							materialName { value displayValue }
+						}
 					}
 				}
 			}
 		}`
 	const qNext = `
-		query GetBOMNext($cvId: ID!, $cursor: String!) {
-			componentVersion(componentVersionId: $cvId) {
-				allOccurrences(pagination: { cursor: $cursor, limit: 50 }) {
+		query GetBOMNext($cv: ID!, $cursor: String!) {
+			component(componentId: $cv) {
+				bomRelations(depth: 1, pagination: { cursor: $cursor, limit: 50 }) {
 					pagination { cursor }
 					results {
-						componentVersion { id name partNumber partDescription materialName }
+						quantity
+						toComponent {
+							id
+							name { value displayValue }
+							partNumber { value displayValue }
+							description { value displayValue }
+							materialName { value displayValue }
+						}
 					}
 				}
 			}
 		}`
 
-	type occResult struct {
-		ComponentVersion struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			PartNumber string `json:"partNumber"`
-			PartDesc   string `json:"partDescription"`
-			Material   string `json:"materialName"`
-		} `json:"componentVersion"`
+	type bomResult struct {
+		Quantity    int `json:"quantity"`
+		ToComponent struct {
+			ID         string   `json:"id"`
+			Name       Property `json:"name"`
+			PartNumber Property `json:"partNumber"`
+			Desc       Property `json:"description"`
+			Material   Property `json:"materialName"`
+		} `json:"toComponent"`
 	}
 
-	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cvId": componentVersionID}, func(data json.RawMessage) (string, []occResult, error) {
+	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"cv": componentID}, func(data json.RawMessage) (string, []bomResult, error) {
 		var r struct {
-			ComponentVersion struct {
-				AllOccurrences struct {
+			Component struct {
+				BomRelations struct {
 					Pagination struct {
 						Cursor string `json:"cursor"`
 					} `json:"pagination"`
-					Results []occResult `json:"results"`
-				} `json:"allOccurrences"`
-			} `json:"componentVersion"`
+					Results []bomResult `json:"results"`
+				} `json:"bomRelations"`
+			} `json:"component"`
 		}
 		if err := json.Unmarshal(data, &r); err != nil {
 			return "", nil, fmt.Errorf("bom: %w", err)
 		}
-		return r.ComponentVersion.AllOccurrences.Pagination.Cursor, r.ComponentVersion.AllOccurrences.Results, nil
+		return r.Component.BomRelations.Pagination.Cursor, r.Component.BomRelations.Results, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	// Collapse duplicate child components (same component in multiple
+	// relations), summing quantity and preserving first-seen order.
 	idx := make(map[string]int, len(all))
 	rows := make([]BOMRow, 0, len(all))
 	for _, o := range all {
-		cv := o.ComponentVersion
-		if cv.ID == "" {
+		c := o.ToComponent
+		if c.ID == "" {
 			continue
 		}
-		if i, ok := idx[cv.ID]; ok {
-			rows[i].Quantity++
+		qty := o.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+		if i, ok := idx[c.ID]; ok {
+			rows[i].Quantity += qty
 			continue
 		}
-		idx[cv.ID] = len(rows)
+		idx[c.ID] = len(rows)
 		rows = append(rows, BOMRow{
-			ComponentVersionID: cv.ID,
-			Name:               cv.Name,
-			PartNumber:         cv.PartNumber,
-			PartDesc:           cv.PartDesc,
-			Material:           cv.Material,
-			Quantity:           1,
+			ComponentVersionID: c.ID,
+			Name:               c.Name.Str(),
+			PartNumber:         c.PartNumber.Str(),
+			PartDesc:           c.Desc.Str(),
+			Material:           c.Material.Str(),
+			Quantity:           qty,
 		})
 	}
 	return rows, nil

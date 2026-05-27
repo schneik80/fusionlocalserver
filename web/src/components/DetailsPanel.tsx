@@ -313,12 +313,10 @@ function DetailsSummary({
     ['Part number', query.partNumber],
     ['Description', query.partDesc],
     ['Material', query.material],
-    ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
     ['Size', query.size],
     ['Extension', FUSION_NATIVE_KINDS.has(kind) ? undefined : query.extensionType],
     ['Created', query.createdOn ? `${fmtDate(query.createdOn)} · ${query.createdBy ?? ''}` : undefined],
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
-    ['Milestone', query.isMilestone ? 'Yes' : undefined],
   ]
   return <LabelGrid rows={rows} />
 }
@@ -441,7 +439,9 @@ function BOMTab({ cvId, active }: { cvId?: string; active: boolean }) {
   )
 }
 
-// HistoryTab lists the item's version history (most recent first).
+// HistoryTab lists the item's time-based change log (most recent first). v3
+// has no integer version numbers — each entry is a change with a timestamp,
+// type, and author.
 function HistoryTab({
   query,
   loading,
@@ -453,16 +453,16 @@ function HistoryTab({
 }) {
   if (loading) return <TabSpinner />
   if (error) return <TabError error={error} />
-  const versions = query?.versions ?? []
-  if (versions.length === 0) return <TabEmpty text="No version history" />
+  const history = query?.history ?? []
+  if (history.length === 0) return <TabEmpty text="No history" />
 
   return (
     <List dense disablePadding>
-      {versions.map((v) => (
-        <ListItem key={v.number} disablePadding sx={{ py: 0.25 }}>
+      {history.map((h) => (
+        <ListItem key={h.id} disablePadding sx={{ py: 0.25 }}>
           <ListItemText
-            primary={`v${v.number}${v.comment ? ` — ${v.comment}` : ''}`}
-            secondary={`${fmtDate(v.createdOn)}${v.createdBy ? ` · ${v.createdBy}` : ''}`}
+            primary={`${h.changeType ?? 'Change'}${h.description ? ` — ${h.description}` : ''}`}
+            secondary={`${fmtDate(h.timestamp)}${h.author ? ` · ${h.author}` : ''}`}
             primaryTypographyProps={{ variant: 'body2' }}
             secondaryTypographyProps={{ variant: 'caption' }}
           />

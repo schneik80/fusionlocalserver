@@ -52,11 +52,15 @@ export interface Contents {
   items: Item[]
 }
 
-export interface VersionSummary {
-  number: number
-  createdOn?: string
-  createdBy?: string
-  comment?: string
+// HistoryEntry mirrors server.HistoryEntryDTO — one entry in an item's
+// time-based change log. v3 has no integer version numbers; entries are keyed
+// by timestamp + id and labelled by change type.
+export interface HistoryEntry {
+  id: string
+  timestamp?: string
+  changeType?: string
+  description?: string
+  author?: string
 }
 
 export interface Details {
@@ -71,13 +75,12 @@ export interface Details {
   createdBy?: string
   modifiedOn?: string
   modifiedBy?: string
-  versionNumber: number
   partNumber?: string
   partDesc?: string
   material?: string
-  isMilestone: boolean
   rootComponentVersionId?: string
-  versions: VersionSummary[]
+  tipTimestamp?: string
+  history: HistoryEntry[]
 }
 
 // Thumbnail mirrors server.ThumbnailDTO. status is the async generation state

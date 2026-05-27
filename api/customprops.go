@@ -6,52 +6,58 @@ import (
 	"fmt"
 )
 
-// NamedProperty is one named property of a component version (a custom or
-// standard property), with its display value. This is the v2 analog of the v3
-// API's baseProperties.
+// NamedProperty is one named property of a component (an extended/base property
+// or a user-defined custom property), with its display value, shown in the
+// Details "Properties" tab.
 type NamedProperty struct {
 	Name         string
 	DisplayValue string
 }
 
-// GetCustomProperties returns a component version's custom/standard named
-// properties. Best-effort enrichment for the Details panel — callers should
-// tolerate an empty list (or an error) rather than treat it as fatal.
-func GetCustomProperties(ctx context.Context, token, componentVersionID string) ([]NamedProperty, error) {
-	if componentVersionID == "" {
-		return nil, fmt.Errorf("custom properties: empty componentVersionID")
+// GetCustomProperties returns a component's populated named properties: the v3
+// extended baseProperties (the Autodesk-defined attributes — Stock Number,
+// Vendor, Manufacturer, …) plus any user-defined customProperties. componentID
+// is the v3 Component id. Best-effort enrichment for the Details panel — callers
+// should tolerate an empty list (or an error) rather than treat it as fatal.
+func GetCustomProperties(ctx context.Context, token, componentID string) ([]NamedProperty, error) {
+	if componentID == "" {
+		return nil, fmt.Errorf("properties: empty componentID")
 	}
 	const q = `
-		query GetCustomProperties($cv: ID!) {
-			componentVersion(componentVersionId: $cv) {
+		query GetComponentProperties($cv: ID!) {
+			component(componentId: $cv) {
+				baseProperties {
+					results { name displayValue value }
+				}
 				customProperties {
-					results { name displayValue }
+					results { name displayValue value }
 				}
 			}
 		}`
-	data, err := gqlQuery(ctx, token, q, map[string]any{"cv": componentVersionID})
+	data, err := gqlQuery(ctx, token, q, map[string]any{"cv": componentID})
 	if err != nil {
-		return nil, fmt.Errorf("custom properties: %w", err)
+		return nil, fmt.Errorf("properties: %w", err)
+	}
+	type propList struct {
+		Results []Property `json:"results"`
 	}
 	var raw struct {
-		ComponentVersion struct {
-			CustomProperties struct {
-				Results []struct {
-					Name         string `json:"name"`
-					DisplayValue string `json:"displayValue"`
-				} `json:"results"`
-			} `json:"customProperties"`
-		} `json:"componentVersion"`
+		Component struct {
+			BaseProperties   propList `json:"baseProperties"`
+			CustomProperties propList `json:"customProperties"`
+		} `json:"component"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("custom properties decode: %w", err)
+		return nil, fmt.Errorf("properties decode: %w", err)
 	}
-	out := make([]NamedProperty, 0, len(raw.ComponentVersion.CustomProperties.Results))
-	for _, p := range raw.ComponentVersion.CustomProperties.Results {
-		if p.Name == "" {
-			continue
+	results := append(raw.Component.BaseProperties.Results, raw.Component.CustomProperties.Results...)
+	out := make([]NamedProperty, 0, len(results))
+	for _, p := range results {
+		v := p.Str()
+		if p.Name == "" || v == "" {
+			continue // skip unpopulated properties
 		}
-		out = append(out, NamedProperty{Name: p.Name, DisplayValue: p.DisplayValue})
+		out = append(out, NamedProperty{Name: p.Name, DisplayValue: v})
 	}
 	return out, nil
 }

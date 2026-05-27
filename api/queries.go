@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -79,7 +80,7 @@ func GetHubs(ctx context.Context, token string) ([]NavItem, error) {
 			hubs(pagination: { limit: 50 }) {
 				pagination { cursor }
 				results {
-					id name fusionWebUrl
+					id name fusionWebUrl hubDataVersion
 					alternativeIdentifiers { dataManagementAPIHubId }
 				}
 			}
@@ -89,7 +90,7 @@ func GetHubs(ctx context.Context, token string) ([]NavItem, error) {
 			hubs(pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
 				results {
-					id name fusionWebUrl
+					id name fusionWebUrl hubDataVersion
 					alternativeIdentifiers { dataManagementAPIHubId }
 				}
 			}
@@ -99,6 +100,7 @@ func GetHubs(ctx context.Context, token string) ([]NavItem, error) {
 		ID                     string `json:"id"`
 		Name                   string `json:"name"`
 		FusionWebURL           string `json:"fusionWebUrl"`
+		HubDataVersion         string `json:"hubDataVersion"`
 		AlternativeIdentifiers struct {
 			DataManagementAPIHubID string `json:"dataManagementAPIHubId"`
 		} `json:"alternativeIdentifiers"`
@@ -122,18 +124,41 @@ func GetHubs(ctx context.Context, token string) ([]NavItem, error) {
 		return nil, err
 	}
 
-	items := make([]NavItem, len(all))
-	for i, h := range all {
-		items[i] = NavItem{
+	// CE-only: this app supports Collaborative-Editing hubs exclusively
+	// (v3 is documented CE-exclusive), so drop any hub that doesn't report
+	// hubDataVersion 2.0.0. A non-CE hub's data would not resolve through the
+	// v3 graph, so surfacing it would only produce errors.
+	items := make([]NavItem, 0, len(all))
+	for _, h := range all {
+		if !isCEHub(h.HubDataVersion) {
+			continue
+		}
+		items = append(items, NavItem{
 			ID:          h.ID,
 			Name:        h.Name,
 			Kind:        "hub",
 			AltID:       h.AlternativeIdentifiers.DataManagementAPIHubID,
 			WebURL:      h.FusionWebURL,
 			IsContainer: true,
-		}
+		})
 	}
 	return items, nil
+}
+
+// isCEHub reports whether a hub is a Collaborative-Editing hub, the only kind
+// this app supports. Per the v3 docs, hubDataVersion == "2.0.0" marks a CE
+// hub; we accept any major version >= 2 to be forward-compatible, and treat a
+// missing/empty version as non-CE.
+func isCEHub(hubDataVersion string) bool {
+	if hubDataVersion == "" {
+		return false
+	}
+	majorStr := hubDataVersion
+	if i := strings.IndexByte(majorStr, '.'); i >= 0 {
+		majorStr = majorStr[:i]
+	}
+	major, err := strconv.Atoi(majorStr)
+	return err == nil && major >= 2
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +300,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 				pagination { cursor }
 				results {
 					__typename id name
-					... on DesignItem { tipRootComponentVersion { id } }
+					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
 		}`
@@ -285,7 +310,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 				pagination { cursor }
 				results {
 					__typename id name
-					... on DesignItem { tipRootComponentVersion { id } }
+					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
 		}`
@@ -326,7 +351,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 				pagination { cursor }
 				results {
 					__typename id name
-					... on DesignItem { tipRootComponentVersion { id } }
+					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
 		}`
@@ -336,7 +361,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 				pagination { cursor }
 				results {
 					__typename id name
-					... on DesignItem { tipRootComponentVersion { id } }
+					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
 		}`
@@ -367,15 +392,18 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 }
 
 // itemResult is the shared row shape returned by itemsByFolder and
-// itemsByProject. The DesignItem inline fragment fills in TipRoot;
+// itemsByProject. The DesignItem inline fragment fills in TipRootModel (the
+// v3 graph: DesignItem.tipRootModel -> Model.component -> Component.id);
 // drawings, configured designs, and folders leave it nil.
 type itemResult struct {
-	Typename string `json:"__typename"`
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	TipRoot  *struct {
-		ID string `json:"id"`
-	} `json:"tipRootComponentVersion,omitempty"`
+	Typename     string `json:"__typename"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	TipRootModel *struct {
+		Component *struct {
+			ID string `json:"id"`
+		} `json:"component"`
+	} `json:"tipRootModel,omitempty"`
 }
 
 // navItemFromResult maps a raw items-list row to a NavItem. Three
@@ -412,8 +440,11 @@ func navItemFromResult(it itemResult) NavItem {
 		n.Subtype = drawingSubtypeFromExtension(it.Name)
 	}
 
-	if n.Kind == "design" && it.TipRoot != nil {
-		n.ComponentVersionID = it.TipRoot.ID
+	// ComponentVersionID now carries the v3 root Component id (from
+	// tipRootModel.component.id). It is the handle the async classifier and
+	// the thumbnail/properties probes pass to component(componentId:).
+	if n.Kind == "design" && it.TipRootModel != nil && it.TipRootModel.Component != nil {
+		n.ComponentVersionID = it.TipRootModel.Component.ID
 	}
 	return n
 }
