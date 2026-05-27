@@ -344,7 +344,14 @@ function PropertiesTab({
   active: boolean
 }) {
   const cpQ = useCustomProperties(hubId, cvId, active)
-  const customRows: Array<[string, ReactNode]> = (cpQ.data ?? []).map((p) => [p.name, p.value])
+  // Show every returned property — including the hub's extended base-property
+  // fields (Estimated Cost, Manufacturer, …) that are defined but unset on this
+  // component — using an em dash for blanks so LabelGrid (which hides empty
+  // values) still renders the field.
+  const customRows: Array<[string, ReactNode]> = (cpQ.data ?? []).map((p) => [
+    p.name,
+    p.value || '—',
+  ])
 
   return (
     <Stack spacing={2}>
