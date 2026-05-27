@@ -4,6 +4,7 @@ import {
   List,
   ListItem,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
   Paper,
   Stack,
@@ -36,6 +37,7 @@ import {
 } from '../api/queries'
 import type { ComponentRef, Details, DrawingRef, Item, Measure, ProjectGroup } from '../api/types'
 import { useNav } from '../state/nav'
+import { iconForItem } from './icons'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
@@ -656,6 +658,30 @@ function RefList({
   )
 }
 
+// NavRowIcon shows a design's thumbnail (the server-cached image proxy) when a
+// componentVersionId is available, falling back to the kind icon on a miss.
+function NavRowIcon({ cvId, kind }: { cvId?: string; kind: string }) {
+  const [failed, setFailed] = useState(false)
+  if (cvId && !failed) {
+    return (
+      <ListItemIcon sx={{ minWidth: 36 }}>
+        <Box
+          component="img"
+          src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId)}`}
+          alt=""
+          onError={() => setFailed(true)}
+          sx={{ width: 26, height: 26, objectFit: 'contain', borderRadius: 0.5, display: 'block' }}
+        />
+      </ListItemIcon>
+    )
+  }
+  return (
+    <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>
+      <FontAwesomeIcon icon={iconForItem({ id: '', name: '', kind, isContainer: false } as Item)} style={{ fontSize: 16 }} />
+    </ListItemIcon>
+  )
+}
+
 // NavRow is a clickable row for the Uses / Where Used / Drawings tabs. It mirrors
 // the Projects/Contents rows — a ListItemButton picks up the themed hover and
 // selected highlight — and on click navigates the browser to that document by
@@ -721,6 +747,7 @@ function NavRow({
       secondaryAction={busy ? <CircularProgress size={14} sx={{ mr: 1 }} /> : undefined}
     >
       <ListItemButton selected={selected} onClick={goTo} disabled={!canNav} sx={{ py: 0.5 }}>
+        <NavRowIcon cvId={componentVersionId} kind={kind} />
         <ListItemText
           primary={name}
           secondary={secondary}
