@@ -123,6 +123,13 @@ type GroupMemberDTO struct {
 	Status string `json:"status,omitempty"`
 }
 
+// NamedPropertyDTO mirrors api.NamedProperty — one custom/standard property
+// (name + display value) shown in the Details Properties tab.
+type NamedPropertyDTO struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // DrawingRefDTO mirrors api.DrawingRef — a row in the Drawings tab.
 type DrawingRefDTO struct {
 	ID            string `json:"id"`

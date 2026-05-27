@@ -17,6 +17,7 @@ import type {
   Item,
   Location,
   Meta,
+  NamedProperty,
   PhysicalProperties,
   Pin,
   ProjectGroup,
@@ -170,6 +171,17 @@ export const useDrawings = (
     queryKey: ['drawings', hubId, designItemId],
     queryFn: () => api.drawings(hubId!, designItemId!),
     enabled: enabled && !!hubId && !!designItemId,
+    staleTime: STALE,
+  })
+
+export const useCustomProperties = (
+  cvId: string | undefined,
+  enabled: boolean,
+): UseQueryResult<NamedProperty[]> =>
+  useQuery({
+    queryKey: ['customProperties', cvId],
+    queryFn: () => api.customProperties(cvId!),
+    enabled: enabled && !!cvId,
     staleTime: STALE,
   })
 

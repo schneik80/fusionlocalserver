@@ -27,3 +27,28 @@ func (s *Server) handleProperties(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, physicalPropertiesDTO(pp))
 }
+
+// handleCustomProperties -> api.GetCustomProperties (query: cvId). The
+// component version's custom/standard named properties for the Details panel.
+func (s *Server) handleCustomProperties(w http.ResponseWriter, r *http.Request) {
+	cvID, ok := reqParam(w, r, "cvId")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	token, ok := s.token(ctx, w, r)
+	if !ok {
+		return
+	}
+	props, err := api.GetCustomProperties(ctx, token, cvID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]NamedPropertyDTO, 0, len(props))
+	for _, p := range props {
+		out = append(out, NamedPropertyDTO{Name: p.Name, Value: p.DisplayValue})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -105,6 +105,13 @@ export interface PhysicalProperties {
   bboxHeight: Measure
 }
 
+// NamedProperty mirrors server.NamedPropertyDTO — a custom/standard property
+// (name + display value) shown in the Details Properties tab.
+export interface NamedProperty {
+  name: string
+  value: string
+}
+
 export interface ComponentRef {
   id: string
   name: string

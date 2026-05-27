@@ -24,6 +24,7 @@ import { api, ApiError } from '../api/client'
 import {
   useBOM,
   useClassify,
+  useCustomProperties,
   useDrawings,
   useGroupMembers,
   useItemDetails,
@@ -322,7 +323,38 @@ function DetailsSummary({
 
 // PropertiesTab shows the component version's physical (mass) properties from
 // the v2 API. Generation is async, so it polls while computing.
+// SectionLabel is a small uppercase heading for the Properties tab sections.
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <Typography variant="overline" sx={{ display: 'block', color: 'text.secondary', lineHeight: 1.6 }}>
+      {children}
+    </Typography>
+  )
+}
+
+// PropertiesTab shows the component's custom/standard named properties (when
+// any are available) above its physical/mass properties.
 function PropertiesTab({ cvId, active }: { cvId?: string; active: boolean }) {
+  const cpQ = useCustomProperties(cvId, active)
+  const customRows: Array<[string, ReactNode]> = (cpQ.data ?? []).map((p) => [p.name, p.value])
+
+  return (
+    <Stack spacing={2}>
+      {customRows.length > 0 && (
+        <Box>
+          <SectionLabel>Properties</SectionLabel>
+          <LabelGrid rows={customRows} />
+        </Box>
+      )}
+      <Box>
+        <SectionLabel>Physical</SectionLabel>
+        <PhysicalProperties cvId={cvId} active={active} />
+      </Box>
+    </Stack>
+  )
+}
+
+function PhysicalProperties({ cvId, active }: { cvId?: string; active: boolean }) {
   const q = useProperties(cvId, active)
   if (q.isLoading) return <TabSpinner />
   if (q.error) return <TabError error={q.error as Error} />

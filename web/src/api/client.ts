@@ -15,6 +15,7 @@ import type {
   Item,
   Location,
   Meta,
+  NamedProperty,
   PhysicalProperties,
   Pin,
   ProjectGroup,
@@ -130,6 +131,9 @@ export const api = {
 
   properties: (cvId: string) =>
     request<PhysicalProperties>(`/api/items/properties${qs({ cvId })}`),
+
+  customProperties: (cvId: string) =>
+    request<NamedProperty[]>(`/api/items/custom-properties${qs({ cvId })}`),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 
