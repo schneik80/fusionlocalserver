@@ -203,13 +203,13 @@ func GetDrawingSource(ctx context.Context, token, hubID, drawingItemID string) (
 // GetWhereUsed returns the parent components that reference the given component
 // (the reverse "Where Used" relationship).
 //
-// v3 has no first-class reverse query. The only candidate is reading the
-// component's primaryModel.assemblyRelations and keeping relations where this
-// model is the `toModel` (the child) so each `fromModel` is a parent. NOTE:
-// assemblyRelations is documented as "assembly relations of this model"
-// (its downward sub-tree), so this may return nothing — confirmed by live test.
-// Implemented this way so the behaviour is empirically verifiable; if it yields
-// nothing, where-used is not supported on v3 and the tab should be hidden.
+// v3 has no first-class reverse query. This reads the component's
+// primaryModel.assemblyRelations and keeps relations where this model is the
+// `toModel` (the child) so each `fromModel` is a parent. In practice that
+// returns nothing: assemblyRelations is a DOWNWARD traversal, so live it yields
+// `results: []` for every component. Left in place (returning empty) rather than
+// removed, pending offline research into a viable v3 reverse query.
+// See docs/v3-where-used.md for the full investigation and options.
 func GetWhereUsed(ctx context.Context, token, componentID string) ([]ComponentRef, error) {
 	const qFirst = `
 		query GetWhereUsed($cv: ID!) {
