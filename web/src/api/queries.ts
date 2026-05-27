@@ -177,13 +177,14 @@ export const useDrawings = (
   })
 
 export const useCustomProperties = (
+  hubId: string | null,
   cvId: string | undefined,
   enabled: boolean,
 ): UseQueryResult<NamedProperty[]> =>
   useQuery({
-    queryKey: ['customProperties', cvId],
-    queryFn: () => api.customProperties(cvId!),
-    enabled: enabled && !!cvId,
+    queryKey: ['customProperties', hubId, cvId],
+    queryFn: () => api.customProperties(hubId!, cvId!),
+    enabled: enabled && !!hubId && !!cvId,
     staleTime: STALE,
   })
 

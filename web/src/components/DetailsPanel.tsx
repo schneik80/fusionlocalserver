@@ -159,7 +159,7 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
         {tab === 'history' && (
           <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
-        {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
+        {tab === 'properties' && <PropertiesTab hubId={hubId} cvId={cvId} active />}
         {tab === 'bom' && <BOMTab cvId={cvId} active />}
         {tab === 'uses' && (
           <UsesTab kind={item.kind} hubId={hubId} itemId={item.id} cvId={cvId} active />
@@ -334,8 +334,16 @@ function SectionLabel({ children }: { children: ReactNode }) {
 
 // PropertiesTab shows the component's custom/standard named properties (when
 // any are available) above its physical/mass properties.
-function PropertiesTab({ cvId, active }: { cvId?: string; active: boolean }) {
-  const cpQ = useCustomProperties(cvId, active)
+function PropertiesTab({
+  hubId,
+  cvId,
+  active,
+}: {
+  hubId: string | null
+  cvId?: string
+  active: boolean
+}) {
+  const cpQ = useCustomProperties(hubId, cvId, active)
   const customRows: Array<[string, ReactNode]> = (cpQ.data ?? []).map((p) => [p.name, p.value])
 
   return (

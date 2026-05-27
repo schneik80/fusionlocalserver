@@ -13,7 +13,7 @@ import {
   TextField,
   Tooltip,
 } from '@mui/material'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useProjectMutations, useProjects } from '../api/queries'
 import type { Item } from '../api/types'
 import { useNav } from '../state/nav'
@@ -184,9 +184,11 @@ function NameDialog({
   onClose: () => void
   onSubmit: (name: string) => void
 }) {
-  // The parent remounts this component when it opens (via `key` below), so
-  // seeding state from `initial` here runs fresh each open.
-  const [value, setValue] = useState(initial ?? '')
+  const [value, setValue] = useState('')
+  // Seed (or re-seed) the field whenever the dialog opens or its target changes.
+  useEffect(() => {
+    if (open) setValue(initial ?? '')
+  }, [open, initial])
   const submit = () => {
     const v = value.trim()
     if (v) onSubmit(v)
@@ -209,7 +211,7 @@ function NameDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={submit} disabled={pending}>
+        <Button onClick={submit} disabled={pending || !value.trim()}>
           {confirmLabel}
         </Button>
       </DialogActions>

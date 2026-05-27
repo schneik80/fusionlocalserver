@@ -35,13 +35,17 @@ func (s *Server) handleCustomProperties(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	hubID, ok := reqParam(w, r, "hubId")
+	if !ok {
+		return
+	}
 	ctx, cancel := s.reqCtx(r)
 	defer cancel()
 	token, ok := s.token(ctx, w, r)
 	if !ok {
 		return
 	}
-	props, err := api.GetCustomProperties(ctx, token, cvID)
+	props, err := api.GetCustomProperties(ctx, token, hubID, cvID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
