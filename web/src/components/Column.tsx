@@ -15,6 +15,8 @@ interface ColumnProps {
   error?: Error | null
   empty?: boolean
   emptyText?: string
+  /** optional control rendered at the right edge of the title bar (e.g. a "+") */
+  headerAction?: ReactNode
   children?: ReactNode
 }
 
@@ -29,6 +31,7 @@ export function Column({
   error,
   empty,
   emptyText = 'Nothing here',
+  headerAction,
   children,
 }: ColumnProps) {
   return (
@@ -47,22 +50,32 @@ export function Column({
         overflow: 'hidden',
       }}
     >
-      <Typography
-        variant="subtitle2"
+      <Box
         sx={{
           px: 1.5,
-          py: 1,
-          color: 'text.secondary',
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          fontSize: 11,
+          py: 0.5,
+          minHeight: 34,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
         }}
       >
-        {title}
-      </Typography>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            color: 'text.secondary',
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            fontSize: 11,
+          }}
+        >
+          {title}
+        </Typography>
+        {headerAction}
+      </Box>
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {loading ? (
           <Centered>

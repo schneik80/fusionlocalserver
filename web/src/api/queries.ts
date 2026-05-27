@@ -279,6 +279,30 @@ export const usePins = (hubId: string | null): UseQueryResult<Pin[]> =>
     staleTime: STALE,
   })
 
+// useProjectMutations wires the v3 project lifecycle (create / rename /
+// archive); each invalidates the hub's project list on success so the column
+// refreshes. Requires data:write/data:create scope (a re-login after the scope
+// widened).
+export function useProjectMutations(hubId: string | null) {
+  const qc = useQueryClient()
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['projects', hubId] })
+
+  const create = useMutation({
+    mutationFn: (name: string) => api.createProject(hubId!, name),
+    onSuccess: invalidate,
+  })
+  const rename = useMutation({
+    mutationFn: (v: { projectId: string; name: string }) =>
+      api.renameProject(v.projectId, v.name),
+    onSuccess: invalidate,
+  })
+  const archive = useMutation({
+    mutationFn: (projectId: string) => api.archiveProject(projectId),
+    onSuccess: invalidate,
+  })
+  return { create, rename, archive }
+}
+
 export function usePinMutations(hubId: string | null) {
   const qc = useQueryClient()
   const invalidate = () => qc.invalidateQueries({ queryKey: ['pins', hubId] })

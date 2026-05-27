@@ -23,6 +23,8 @@ interface ItemRowProps {
   onTogglePin?: (item: Item) => void
   /** when true, designs without a subtype fetch a classify refinement */
   classifyEnabled?: boolean
+  /** right-click handler, e.g. to open a row context menu (Projects) */
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 export function ItemRow({
@@ -32,6 +34,7 @@ export function ItemRow({
   pinned,
   onTogglePin,
   classifyEnabled,
+  onContextMenu,
 }: ItemRowProps) {
   // Refine an unclassified design's icon to assembly/part. The query is
   // disabled (cvId undefined) for every other row.
@@ -75,7 +78,12 @@ export function ItemRow({
         ) : undefined
       }
     >
-      <ListItemButton selected={selected} onClick={onClick} sx={{ pr: showStar ? 5 : 1.5 }}>
+      <ListItemButton
+        selected={selected}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        sx={{ pr: showStar ? 5 : 1.5 }}
+      >
         <ListItemIcon sx={{ minWidth: 30, color: selected ? 'primary.main' : 'text.secondary' }}>
           {thumbCvId && !thumbFailed ? (
             <Box

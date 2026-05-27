@@ -30,6 +30,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/hubs", prot(s.handleHubs))
 	mux.HandleFunc("GET /api/projects", prot(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/contents", prot(s.handleProjectContents))
+	// Project lifecycle mutations (v3; require data:write/data:create scope).
+	mux.HandleFunc("POST /api/projects", prot(s.handleCreateProject))
+	mux.HandleFunc("POST /api/projects/rename", prot(s.handleRenameProject))
+	mux.HandleFunc("POST /api/projects/archive", prot(s.handleArchiveProject))
 	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
 	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
 	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))

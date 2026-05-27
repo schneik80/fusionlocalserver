@@ -96,6 +96,24 @@ export const api = {
 
   projects: (hubId: string) => request<Item[]>(`/api/projects${qs({ hubId })}`),
 
+  createProject: (hubId: string, name: string) =>
+    request<Item>('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({ hubId, name }),
+    }),
+
+  renameProject: (projectId: string, name: string) =>
+    request<Item>('/api/projects/rename', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, name }),
+    }),
+
+  archiveProject: (projectId: string) =>
+    request<void>('/api/projects/archive', {
+      method: 'POST',
+      body: JSON.stringify({ projectId }),
+    }),
+
   projectContents: (projectId: string) =>
     request<Contents>(`/api/projects/contents${qs({ projectId })}`),
 
