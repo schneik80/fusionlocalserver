@@ -9,6 +9,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import { useState } from 'react'
 import { useClassify } from '../api/queries'
 import type { Item } from '../api/types'
 import { isPinnable } from '../state/pins'
@@ -47,6 +48,12 @@ export function ItemRow({
   const tag = typeTag(display)
   const showStar = !!onTogglePin && isPinnable(item.kind)
 
+  // Designs carry a componentVersionId, so show their thumbnail in place of the
+  // icon (same-origin proxy, server-cached + classify-warmed). On a miss/404
+  // (not yet generated, or no thumbnail) fall back to the kind icon.
+  const thumbCvId = display.componentVersionId
+  const [thumbFailed, setThumbFailed] = useState(false)
+
   return (
     <ListItem
       disablePadding
@@ -70,7 +77,17 @@ export function ItemRow({
     >
       <ListItemButton selected={selected} onClick={onClick} sx={{ pr: showStar ? 5 : 1.5 }}>
         <ListItemIcon sx={{ minWidth: 30, color: selected ? 'primary.main' : 'text.secondary' }}>
-          <FontAwesomeIcon icon={iconForItem(display)} style={{ fontSize: 15 }} />
+          {thumbCvId && !thumbFailed ? (
+            <Box
+              component="img"
+              src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(thumbCvId)}`}
+              alt=""
+              onError={() => setThumbFailed(true)}
+              sx={{ width: 22, height: 22, objectFit: 'contain', borderRadius: 0.5, display: 'block' }}
+            />
+          ) : (
+            <FontAwesomeIcon icon={iconForItem(display)} style={{ fontSize: 15 }} />
+          )}
         </ListItemIcon>
         <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
           <Typography
