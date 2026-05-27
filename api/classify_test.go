@@ -11,22 +11,15 @@ import (
 
 func TestClassifyAssembly_Assembly(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-		if !strings.Contains(req.Query, "occurrences(pagination") {
-			t.Errorf("query missing occurrences field: %q", req.Query)
-		}
-		if !strings.Contains(req.Query, "limit: 1") {
-			t.Errorf("query should request limit:1, got: %q", req.Query)
+		if !strings.Contains(req.Query, "hasChildren") {
+			t.Errorf("query missing hasChildren field: %q", req.Query)
 		}
 		if got, _ := req.Variables["cv"].(string); got != "urn:cv:asm" {
 			t.Errorf("cv variable = %v, want urn:cv:asm", req.Variables["cv"])
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"occurrences": map[string]any{
-					"results": []map[string]any{
-						{"id": "occ-1"},
-					},
-				},
+			"component": map[string]any{
+				"hasChildren": true,
 			},
 		}}
 	})
@@ -37,17 +30,15 @@ func TestClassifyAssembly_Assembly(t *testing.T) {
 		t.Fatalf("ClassifyAssembly: %v", err)
 	}
 	if !got {
-		t.Errorf("expected isAssembly=true for non-empty occurrences, got false")
+		t.Errorf("expected isAssembly=true for hasChildren=true, got false")
 	}
 }
 
 func TestClassifyAssembly_Part(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"occurrences": map[string]any{
-					"results": []map[string]any{}, // empty = part
-				},
+			"component": map[string]any{
+				"hasChildren": false, // no children = part
 			},
 		}}
 	})
@@ -58,19 +49,19 @@ func TestClassifyAssembly_Part(t *testing.T) {
 		t.Fatalf("ClassifyAssembly: %v", err)
 	}
 	if got {
-		t.Errorf("expected isAssembly=false for empty occurrences, got true")
+		t.Errorf("expected isAssembly=false for hasChildren=false, got true")
 	}
 }
 
-func TestClassifyAssembly_EmptyComponentVersionID(t *testing.T) {
+func TestClassifyAssembly_EmptyComponentID(t *testing.T) {
 	// No GraphQL server registered — if we issued a request, it'd hit
 	// the live endpoint (or fail DNS). The empty-id check must short-circuit.
 	_, err := ClassifyAssembly(context.Background(), "tok", "")
 	if err == nil {
-		t.Errorf("expected error for empty componentVersionID, got nil")
+		t.Errorf("expected error for empty componentID, got nil")
 	}
-	if !strings.Contains(err.Error(), "empty componentVersionID") {
-		t.Errorf("error = %q, want it to mention empty componentVersionID", err.Error())
+	if !strings.Contains(err.Error(), "empty componentID") {
+		t.Errorf("error = %q, want it to mention empty componentID", err.Error())
 	}
 }
 
@@ -122,9 +113,7 @@ func TestClassifyAssembly_SemaphoreReleasesAfterCall(t *testing.T) {
 	// subsequent classifications aren't blocked indefinitely.
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"occurrences": map[string]any{"results": []map[string]any{}},
-			},
+			"component": map[string]any{"hasChildren": false},
 		}}
 	})
 	swapEndpoint(t, srv.URL)

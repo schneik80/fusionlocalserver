@@ -1,13 +1,17 @@
 # APS Manufacturing Data Model API
 
-fusionlocalserver queries the **APS Manufacturing Data Model GraphQL API v2** to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow. This `api` package is the GraphQL client used by the server; the diagrams below describe the client itself, independent of the handlers that call it.
+fusionlocalserver queries the **APS Manufacturing Data Model GraphQL API v3** ("Collaborative Editing") to retrieve hub, project, folder, and item data. All requests are authenticated with a Bearer token obtained through the OAuth PKCE flow. This `api` package is the GraphQL client used by the server; the diagrams below describe the client itself, independent of the handlers that call it.
+
+The app is **v3-only** and supports **Collaborative-Editing (CE) hubs only** — Autodesk documents v3 as CE-exclusive. `GetHubs` filters out any hub whose `hubDataVersion` major version is below 2 (a non-CE hub's data does not resolve through the v3 graph). The v2 endpoint (`.../mfg/graphql`) is no longer used.
+
+The biggest v3 shape change: the `ComponentVersion` / `DrawingVersion` types are gone. The graph a design now resolves through is `DesignItem.tipRootModel → Model → component(composition: WORKING) → Component`, and a component/model's `name`, `partNumber`, `materialName`, and `description` (renamed from v2's `partDescription`) are **`Property` objects** (`{ value, displayValue }`), not plain strings. There are also no integer version numbers in v3 — change history is a time-based change log.
 
 ---
 
 ## GraphQL Endpoint
 
 ```
-POST https://developer.api.autodesk.com/mfg/graphql
+POST https://developer.api.autodesk.com/mfg/v3/graphql/public
 Content-Type: application/json
 Authorization: Bearer <access_token>
 X-Ads-Region: <region>          (optional — US default, EMEA, or AUS)
@@ -17,26 +21,53 @@ The `X-Ads-Region` header is only sent when a non-default region is configured. 
 
 ---
 
+## The v3 `Property` object
+
+A major v3 change: a component/model's `name`, `partNumber`, `materialName`, and `description` are no longer plain strings — they are **`Property` objects** carrying a typed `value` plus a localized `displayValue`. Wherever a `Property` is returned, the queries select `{ value displayValue }` and decode into this struct:
+
+```go
+type Property struct {
+    Name         string          `json:"name"`
+    DisplayValue string          `json:"displayValue"`
+    Value        json.RawMessage `json:"value"`        // opaque PropertyValue scalar
+    Definition   struct{ ID string } `json:"definition"`
+}
+
+// Str() returns the best human-readable string: displayValue when present,
+// otherwise the raw scalar value rendered as a string, "" when absent/null.
+func (p Property) Str() string
+```
+
+All the design/component metadata fields (`PartNumber`, `PartDesc`, `Material`, BOM/Uses names, …) are produced by calling `Property.Str()`. Note `description` is the v3 rename of v2's `partDescription`.
+
+---
+
 ## API Client Design
 
 ```mermaid
 flowchart TD
-    caller["Caller\n(server package handlers)"] --> hierarchy["Hierarchy queries\nGetHubs / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
-    caller --> details["Per-item queries\nGetItemDetails"]
-    caller --> tabs["Cross-reference queries\nGetOccurrences (Uses)\nGetWhereUsed\nGetDrawingsForDesign\nGetDrawingSource (drawing → design)"]
+    caller["Caller\n(server package handlers)"] --> hierarchy["Hierarchy queries\nGetHubs (CE filter) / GetProjects /\nGetFolders / GetItems /\nGetProjectItems"]
+    caller --> details["Per-item queries\nGetItemDetails (tipRootModel\n+ time-based history)"]
+    caller --> tabs["Cross-reference queries\nGetOccurrences (Uses) / GetBOM\nGetWhereUsed (empty on v3)\nGetDrawingsForDesign\nGetDrawingSource (drawing → design)"]
+    caller --> props["Property queries\nGetPhysicalProperties\nGetCustomProperties"]
+    caller --> search["Search\nSearchByHub\nGetSearchableProperties"]
+    caller --> mutate["Project mutations\nCreateProject / RenameProject /\nArchiveProject"]
     caller --> locate["Locate query\nGetItemLocation\n(walks parentFolder chain)"]
-    caller --> classify["ClassifyAssembly\n(occurrences limit:1 probe)\nbounded-parallelism via classifySem"]
+    caller --> classify["ClassifyAssembly\n(Component.hasChildren)\nbounded-parallelism via classifySem"]
 
     hierarchy --> ap["allPages()\npagination loop"]
     tabs --> ap
     details --> gql
+    props --> gql
+    search --> gql
+    mutate --> gql
     locate --> gql
     classify --> sem["classifySem\n(buffered chan, cap 8)"]
     sem --> gql
 
     ap --> gql["gqlQuery()\nretry loop\n(0 → 500ms → 1.5s)"]
     gql --> once["gqlQueryOnce()\nsingle HTTP round-trip\n+ JSON decode"]
-    once --> http["net/http\nPOST /mfg/graphql"]
+    once --> http["net/http\nPOST /mfg/v3/graphql/public"]
     once --> debug["dbgLog()\nrequest/response trace\n(no-op unless -v;\nsignedUrl redacted)"]
     ap --> extract["extract() callback\npage-specific JSON unmarshal"]
 ```
@@ -74,7 +105,7 @@ Pagination limit is set to `50` per page. The APS validator rejects values ≥ 1
 
 ### GetHubs
 
-Fetches all hubs the authenticated user has access to.
+Fetches all hubs the authenticated user has access to, then **filters to CE hubs only**.
 
 ```graphql
 # First page
@@ -85,6 +116,7 @@ query GetHubs {
             id
             name
             fusionWebUrl
+            hubDataVersion
             alternativeIdentifiers {
                 dataManagementAPIHubId
             }
@@ -100,6 +132,7 @@ query GetHubsNext($cursor: String!) {
             id
             name
             fusionWebUrl
+            hubDataVersion
             alternativeIdentifiers {
                 dataManagementAPIHubId
             }
@@ -108,6 +141,13 @@ query GetHubsNext($cursor: String!) {
 }
 ```
 
+**CE-only filter.** After collecting every page, `GetHubs` drops any hub whose
+`hubDataVersion` isn't a Collaborative-Editing version. The `isCEHub` helper parses
+the major version and keeps hubs with major ≥ 2 (`"2.0.0"` marks a CE hub); a
+missing/empty version is treated as non-CE. v3 is documented CE-exclusive, so a
+non-CE hub's data would not resolve through the v3 graph — surfacing it would only
+produce errors.
+
 **Output fields used:**
 
 | Field | Maps to |
@@ -115,6 +155,7 @@ query GetHubsNext($cursor: String!) {
 | `id` | `NavItem.ID` |
 | `name` | `NavItem.Name` |
 | `fusionWebUrl` | `NavItem.WebURL` |
+| `hubDataVersion` | CE-only filter (`isCEHub`); not stored on `NavItem` |
 | `alternativeIdentifiers.dataManagementAPIHubId` | `NavItem.AltID` (used to build browser URLs) |
 
 ---
@@ -192,6 +233,9 @@ query GetProjectItems($projectId: ID!) {
             __typename
             id
             name
+            ... on DesignItem {
+                tipRootModel { component { id } }
+            }
         }
     }
 }
@@ -213,39 +257,37 @@ query GetItems($hubId: ID!, $folderId: ID!) {
             id
             name
             ... on DesignItem {
-                tipRootComponentVersion { id }
+                tipRootModel { component { id } }
             }
         }
     }
 }
 ```
 
-The `... on DesignItem` inline fragment captures `tipRootComponentVersion.id` per design row in the same query, so the async assembly classifier (see [ClassifyAssembly](#classifyassembly--asyncpartassembly-subtype) below) doesn't have to round-trip back to APS just to discover which component-version id to probe for occurrences. Drawings, configured designs, and folders ignore the fragment and the field simply isn't present in their results. `GetProjectItems` uses the same inline fragment for the project-root items.
+The `... on DesignItem` inline fragment captures the v3 root **Component id** — `tipRootModel.component.id` (the graph is `DesignItem.tipRootModel → Model → Component`) — per design row in the same query, so the async assembly classifier (see [ClassifyAssembly](#classifyassembly--asyncpartassembly-subtype) below) doesn't have to round-trip back to APS just to discover which component id to probe. Drawings, configured designs, and folders ignore the fragment and the field simply isn't present in their results. `GetProjectItems` uses the same inline fragment for the project-root items. The captured id is stored in `NavItem.ComponentVersionID` (the field name predates v3; under v3 it holds a `Component` id).
 
 ---
 
 ### ClassifyAssembly — async part/assembly subtype
 
-Lightweight probe used to refine each design row's icon from a generic "design" to either `assembly` or `part` after the items list has rendered. Lives in `api/classify.go`.
+Lightweight probe used to refine each design row's icon from a generic "design" to either `assembly` or `part` after the items list has rendered. Lives in `api/classify.go`. `$cv` is the v3 root **Component id** captured at items-list time (`tipRootModel.component.id`).
 
 ```graphql
 query ClassifyAssembly($cv: ID!) {
-    componentVersion(componentVersionId: $cv) {
-        occurrences(pagination: { limit: 1 }) {
-            results { id }
-        }
+    component(componentId: $cv) {
+        hasChildren
     }
 }
 ```
 
-The query is intentionally cheap — `limit: 1` is the minimum allowed and APS only has to look up a single sub-component (or report empty) to answer. Returning `len(results) > 0` is the entire classification decision: any sub-component means assembly, no sub-component means part. There is no `componentCount` or `hasOccurrences` aggregate on `ComponentVersion` in the current schema (verified via introspection at `cmd/probe-assembly/`), so the limit-1 probe is the cheapest available signal.
+In v3 the classification is a single boolean: `Component.hasChildren` is the entire decision — `true` means assembly (it has at least one direct sub-component), `false` means part. This replaces v2's `componentVersion(...).occurrences(limit: 1)` probe (the `ComponentVersion` type no longer exists). The server fires this as part of a combined `ClassifyAndThumbnail` query per design row (`{ hasChildren thumbnail { status signedUrl } }` in `api/thumbnail.go`), which halves the per-row round-trips and warms the thumbnail cache off the same call.
 
-**Concurrency cap.** A package-level buffered channel acts as a semaphore so a fan-out of N classification cmds from a single `contentsLoadedMsg` translates into at most 8 simultaneous HTTPS round-trips against the gateway:
+**Concurrency cap.** A package-level buffered channel acts as a semaphore so a fan-out of N classification calls from a single contents-load translates into at most 8 simultaneous HTTPS round-trips against the gateway:
 
 ```go
 var classifySem = make(chan struct{}, 8)
 
-func ClassifyAssembly(ctx context.Context, token, componentVersionID string) (bool, error) {
+func ClassifyAssembly(ctx context.Context, token, componentID string) (bool, error) {
     select {
     case classifySem <- struct{}{}:
     case <-ctx.Done():
@@ -266,7 +308,7 @@ The classifier is fire-and-forget; per-row errors keep the row's generic design 
 
 ### GetItemDetails
 
-Fetches rich metadata for a single item plus its complete version history. This query is not paginated.
+Fetches rich metadata for a single item plus its history. This query is not paginated.
 
 ```graphql
 query GetItemDetails($hubId: ID!, $itemId: ID!) {
@@ -284,42 +326,66 @@ query GetItemDetails($hubId: ID!, $itemId: ID!) {
 
         ... on DesignItem {
             fusionWebUrl
-            tipVersion { versionNumber }
-            tipRootComponentVersion {
-                partNumber
-                partDescription
-                materialName
-                isMilestone
+            tipRootModel {
+                timestamp
+                component {
+                    id
+                    partNumber   { value displayValue }
+                    description  { value displayValue }
+                    materialName { value displayValue }
+                }
+            }
+            history(pagination: { limit: 50 }) {
+                results { __typename id description timestamp author { firstName lastName } }
+            }
+        }
+        ... on ConfiguredDesignItem {
+            fusionWebUrl
+            history(pagination: { limit: 50 }) {
+                results { __typename id description timestamp author { firstName lastName } }
             }
         }
         ... on DrawingItem {
             fusionWebUrl
-            tipVersion { versionNumber }
-        }
-        ... on ConfiguredDesignItem {
-            fusionWebUrl
-            tipVersion { versionNumber }
-        }
-    }
-
-    itemVersions(hubId: $hubId, itemId: $itemId) {
-        results {
-            versionNumber
-            name
-            createdOn
-            createdBy { firstName lastName }
+            history(pagination: { limit: 50 }) {
+                results { __typename id description timestamp author { firstName lastName } }
+            }
         }
     }
 }
 ```
 
-`itemVersions.results` are returned oldest-first by the API; `GetItemDetails` reverses the slice so versions come back newest-first.
+**No version numbers in v3.** The v2 `tipVersion.versionNumber` / `itemVersions` (integer-numbered versions) are gone. Instead a design carries `history`, a **time-based change log**: each `HistoryChange` has a `timestamp`, a `__typename` (humanized into a `ChangeType` label like `"Version Created"` via `humanizeChangeType`), a `description`, and an `author`. `GetItemDetails` sorts the entries most-recent-first.
+
+The design's metadata now comes from `tipRootModel` (the v3 graph `DesignItem.tipRootModel → Model → component → Component`): `tipRootModel.timestamp` is the tip-state time, and `component.{partNumber,description,materialName}` are **`Property` objects** (`{ value displayValue }`), read into Go via `Property.Str()`. Note `partDescription` (v2) is renamed to `description` (v3). The root `Component.id` is captured into `ItemDetails.RootComponentVersionID` — the handle the thumbnail / properties / Uses probes pass to `component(componentId:)`.
 
 ---
 
 ### GetBOM
 
-Builds a flat bill of materials from `componentVersion.allOccurrences` (every descendant instance, paginated at limit 50). Results are grouped by `componentVersion.id`, and **quantity is the occurrence count** — the v2 Manufacturing Data Model has no explicit quantity field. Each row carries name, part number, description, and material.
+Returns the immediate bill of materials from `Component.bomRelations(depth: 1)`. v3 exposes a **real `quantity` field** on each BOM relation — unlike v2, which had to count occurrences. v3 `bomRelations` supports depth 1 only, so this is the **direct-children** BOM (with true quantities), not a fully flattened multi-level tree. Duplicate child components across relations are collapsed, summing their quantities.
+
+```graphql
+query GetBOM($cv: ID!) {
+    component(componentId: $cv) {
+        bomRelations(depth: 1, pagination: { limit: 50 }) {
+            pagination { cursor }
+            results {
+                quantity
+                toComponent {
+                    id
+                    name         { value displayValue }
+                    partNumber   { value displayValue }
+                    description  { value displayValue }
+                    materialName { value displayValue }
+                }
+            }
+        }
+    }
+}
+```
+
+`$cv` is the v3 root `Component` id. Each row carries the child's id, name, part number, description, material, and quantity (Property fields resolved via `Property.Str()`).
 
 ### GetProjectGroups / GetGroupMembers
 
@@ -345,11 +411,13 @@ type NavItem struct {
     WebURL      string  // fusionWebUrl if available
     IsContainer bool    // true for hub, project, folder
 
-    // ComponentVersionID is the lineage id of tipRootComponentVersion,
-    // captured by GetItems / GetProjectItems via the
-    // ... on DesignItem inline fragment so the async classifier can
-    // probe occurrences directly without a per-row round-trip.
+    // ComponentVersionID carries the v3 root Component id
+    // (tipRootModel.component.id), captured by GetItems / GetProjectItems
+    // via the ... on DesignItem inline fragment so the async classifier can
+    // probe Component.hasChildren directly without a per-row round-trip.
     // Populated only for Kind == "design"; empty for everything else.
+    // (The field name predates v3; under v3 it holds a Component id, not a
+    // ComponentVersion id.)
     ComponentVersionID string
 
     // Subtype refines Kind into a displayed type tag in the Contents
@@ -376,7 +444,7 @@ The primary signal is `__typename`. When that comes back as anything outside the
 | (set explicitly) | hub | `"hub"` | `true` | |
 | (set explicitly) | project | `"project"` | `true` | |
 | `__typename` | `Folder` | `"folder"` | `true` | |
-| `__typename` | `DesignItem` | `"design"` | `false` | `ComponentVersionID` from inline `tipRootComponentVersion.id`; `Subtype` filled async by `ClassifyAssembly` |
+| `__typename` | `DesignItem` | `"design"` | `false` | `ComponentVersionID` from inline `tipRootModel.component.id` (the v3 root Component id); `Subtype` filled async by `ClassifyAssembly` |
 | `__typename` | `DrawingItem` | `"drawing"` | `false` | `Subtype` filled synchronously: `"template"` for `.f2t`, `"dwg"` otherwise |
 | `__typename` | `ConfiguredDesignItem` | `"configured"` | `false` | |
 | extension | `.f3d` | `"design"` | `false` | Fallback when typename is unknown |
@@ -405,42 +473,56 @@ type ItemDetails struct {
     CreatedBy     string        // "First Last"
     ModifiedOn    time.Time
     ModifiedBy    string
-    VersionNumber int           // tipVersion.versionNumber
-    // Design-specific
-    PartNumber  string
-    PartDesc    string
-    Material    string
-    IsMilestone bool
-    // Versions — most recent first
-    Versions []VersionSummary
+    // Design-specific — read from tipRootModel → component (v3 Property objects)
+    PartNumber string
+    PartDesc   string           // from component.description (v2: partDescription)
+    Material   string
+    // RootComponentVersionID is the v3 root Component id (tipRootModel.component.id) —
+    // the handle the thumbnail / properties / Uses probes pass to component(componentId:).
+    // (Name predates v3; under v3 it holds a Component id, not a ComponentVersion id.)
+    RootComponentVersionID string
+    // TipTimestamp is the tip-state time (tipRootModel.timestamp).
+    TipTimestamp time.Time
+    // History is the v3 time-based change log (most recent first). v3 has no
+    // integer version numbers, so this replaces the old version list.
+    History []HistoryEntry
 }
 
-type VersionSummary struct {
-    Number    int
-    CreatedOn time.Time
-    CreatedBy string
-    Comment   string           // version save comment (may be empty)
+// HistoryEntry is one entry in the v3 time-based history (a HistoryChange).
+// Entries are identified by timestamp + id and labelled by change type rather
+// than an integer version number.
+type HistoryEntry struct {
+    ID          string
+    Timestamp   time.Time
+    ChangeType  string           // humanized __typename, e.g. "Version Created"
+    Description string
+    Author      string
 }
 ```
+
+There is no `VersionNumber`, `IsMilestone`, or `Versions []VersionSummary` in v3 — those v2 concepts are gone (`humanizeChangeType` turns each `HistoryChange.__typename`, e.g. `"VersionCreatedHistoryChange"`, into a readable `ChangeType`).
 
 ---
 
 ## Cross-reference Queries (Details-pane tabs)
 
-The Uses, Where Used, and Drawings tabs each call a dedicated query in `api/refs.go`. Drawings have their own `GetDrawingSource` for the Uses tab because their relationship to a source design is rooted differently in the schema.
+The Uses, Where Used, and Drawings tabs each call a dedicated query in `api/refs.go`. Drawings have their own `GetDrawingSource` for the Uses tab because their relationship to a source design is rooted differently in the schema. All component-shaped refs share the v3 `Property`-object field set (`name { value displayValue }`, etc.); `$cv` is the v3 root `Component` id.
 
 ### GetOccurrences — Uses tab on a DesignItem
 
 ```graphql
-query GetOccurrences($cvId: ID!) {
-  componentVersion(componentVersionId: $cvId) {
-    occurrences(pagination: { limit: 50 }) {
+query GetOccurrences($cv: ID!) {
+  component(componentId: $cv) {
+    bomRelations(depth: 1, pagination: { limit: 50 }) {
       pagination { cursor }
       results {
-        id
-        componentVersion {
-          id name partNumber partDescription materialName
-          designItemVersion { item { id name fusionWebUrl } }
+        toComponent {
+          id
+          name         { value displayValue }
+          partNumber   { value displayValue }
+          description  { value displayValue }
+          materialName { value displayValue }
+          primaryModel { designItem { id name fusionWebUrl } }
         }
       }
     }
@@ -448,54 +530,35 @@ query GetOccurrences($cvId: ID!) {
 }
 ```
 
-Returns `[]ComponentRef` — one row per immediate sub-component instance. Note this is *occurrences* (one row per instance in the assembly), not *unique components* — a design with five identical bolts shows five rows.
+Returns `[]ComponentRef` — the immediate sub-components (the "Uses" relationship), via `Component.bomRelations`. v3 has no `ComponentVersion.occurrences`; `bomRelations` returns one entry per direct child component (use [GetBOM](#getbom) when the per-child `quantity` matters).
 
 ### GetWhereUsed — designs that reference this component
 
-```graphql
-query GetWhereUsed($cvId: ID!) {
-  componentVersion(componentVersionId: $cvId) {
-    whereUsed(pagination: { limit: 50 }) {
-      pagination { cursor }
-      results {
-        id name partNumber partDescription materialName
-        designItemVersion { item { id name fusionWebUrl } }
-      }
-    }
-  }
-}
-```
+**Returns empty on v3.** v3 has **no first-class reverse-reference query** (the v2 `componentVersion.whereUsed` field no longer exists). `GetWhereUsed` attempts the only schema-plausible path — reading the component's `primaryModel.assemblyRelations` and keeping relations where this model is the `toModel` (so each `fromModel` is a parent) — but `assemblyRelations` is a **downward** traversal, so it yields `results: []` for every component in practice, and the tab shows nothing. The code is left in place (returning empty) rather than removed, pending research into a viable v3 reverse query.
 
-APS returns one `ComponentVersion` per *version* of each parent design that references the queried component. The function dedupes by parent `DesignItem.id` so a parent design with N saved versions appears once. Refs whose `designItemVersion.item.id` is empty (orphan component versions) are passed through unchanged.
+See [`v3-where-used.md`](v3-where-used.md) for the full investigation, the introspection findings, and the options (hide the tab, find a specific reverse query, or do a cached hub-wide scan).
 
 ### GetDrawingsForDesign — Drawings tab on a DesignItem
 
+v3 has no `design → drawings` field, so this **scans the design's project** for `DrawingItem`s whose `tipDrawing.model.designItem` matches the target design. It first resolves the design's project (`item(...).project { id }`), then pages `itemsByProject`:
+
 ```graphql
-query GetDrawingsForDesign($hubId: ID!, $itemId: ID!) {
-  item(hubId: $hubId, itemId: $itemId) {
-    ... on DesignItem {
-      versions(pagination: { limit: 10 }) {
-        pagination { cursor }
-        results {
-          drawingItemVersions(pagination: { limit: 5 }) {
-            results {
-              lastModifiedOn
-              lastModifiedBy { firstName lastName }
-              item { id name fusionWebUrl }
-            }
-          }
-        }
+query ProjectDrawings($projectId: ID!) {
+  itemsByProject(projectId: $projectId, pagination: { limit: 20 }) {
+    pagination { cursor }
+    results {
+      __typename
+      id name lastModifiedOn lastModifiedBy { firstName lastName }
+      ... on DrawingItem {
+        fusionWebUrl
+        tipDrawing { model { designItem { id } } }
       }
     }
   }
 }
 ```
 
-The query is rooted at the **DesignItem**, not the tip-root component version, because Fusion drawings reference a *specific version* of the source component — when the design is saved, the tip-root cvid changes but the drawing keeps pointing at the older one. `componentVersion(tipRoot).drawingVersions` returns empty for any design that has been edited since its drawing was created.
-
-The `versions` field is paginated (10 per round trip) because APS caps query complexity at 1000 points and the original 50×50 layout scored 23000+. Within each design version, up to 5 drawing-item-versions are pulled — covers the realistic case (most designs have 1–2 drawings, very few have >5 against the same version).
-
-Results are deduped by drawing lineage URN (`item.id`), keeping the most-recently-modified entry's metadata. The list is returned newest-first.
+This is a project-wide walk (one paginated query), so it can be costly for large projects. The page size is capped low (**20**) because each row's `tipDrawing.model.designItem` chain is expensive and the v3 gateway enforces a 1000-point query-complexity cap (limit 50 scored 1061). Rows kept are `DrawingItem`s whose `tipDrawing.model.designItem.id` equals the target; results are returned sorted by latest modification (most recent first).
 
 ### GetDrawingSource — Uses tab on a DrawingItem
 
@@ -503,12 +566,16 @@ Results are deduped by drawing lineage URN (`item.id`), keeping the most-recentl
 query GetDrawingSource($hubId: ID!, $itemId: ID!) {
   item(hubId: $hubId, itemId: $itemId) {
     ... on DrawingItem {
-      tipDrawingVersion {
-        componentVersion {
-          id name partNumber partDescription materialName
-          designItemVersion {
-            item { id name fusionWebUrl }
+      tipDrawing {
+        model {
+          component {
+            id
+            name         { value displayValue }
+            partNumber   { value displayValue }
+            description  { value displayValue }
+            materialName { value displayValue }
           }
+          designItem { id name fusionWebUrl }
         }
       }
     }
@@ -516,7 +583,7 @@ query GetDrawingSource($hubId: ID!, $itemId: ID!) {
 }
 ```
 
-Returns `[]ComponentRef` of length 0 or 1 (typically 1 — most drawings have a single source design). Uses the tip drawing version; older drawing versions that pointed at different designs are not surfaced (rare edge case).
+For a drawing, "Uses" means the design it was made from — the tip drawing's model and its owning `DesignItem` (`DrawingItem.tipDrawing.model.{component, designItem}`). Returns `[]ComponentRef` of length 0 or 1 (typically 1 — most drawings have a single source design); empty when neither the component nor the design item resolves.
 
 ### GetItemLocation — Show in Location
 
@@ -559,6 +626,136 @@ type FolderRef struct {
 ```
 
 The server returns this from `GET /api/items/location` (handler `handleItemLocation`). The web UI uses it to navigate straight to a referenced item — selecting the project, walking the folder chain, and landing on the target — which is how a click in the Uses / Where Used / Drawings tabs jumps the browser to that document. See [`docs/web-ui.md`](web-ui.md) for the user-visible flow.
+
+---
+
+## Properties Queries
+
+The Details "Properties" tab is built from two queries, both keyed by the v3 root `Component` id (`$cv`).
+
+### GetPhysicalProperties — physical/mass properties
+
+Read from `Component.primaryModel.physicalProperties` (in v3, physical properties live on the model, not the component version). Generation is asynchronous (status `SCHEDULED | QUEUED | IN_PROGRESS | COMPLETED | FAILED | CANCELLED`), so callers poll until terminal. Lives in `api/properties.go`.
+
+```graphql
+query GetPhysicalProperties($cv: ID!) {
+  component(componentId: $cv) {
+    primaryModel {
+      physicalProperties {
+        status
+        area    { displayValue definition { units { name } } }
+        volume  { displayValue definition { units { name } } }
+        mass    { displayValue definition { units { name } } }
+        density { displayValue definition { units { name } } }
+        boundingBox {
+          length { displayValue definition { units { name } } }
+          width  { displayValue definition { units { name } } }
+          height { displayValue definition { units { name } } }
+        }
+      }
+    }
+  }
+}
+```
+
+Each measure decodes to `{ Display, Units }`. A null `physicalProperties` (e.g. no geometry) is reported as `FAILED` so the UI renders "unavailable" rather than spinning forever.
+
+### GetCustomProperties — extended base + custom properties
+
+Returns a component's "extended" property surface in one query: every (non-hidden, non-archived) **base-property definition on the hub** populated with the component's value where set, plus any user-defined **custom properties** that have a value. The hub supplies the definitions (the fields exist hub-wide even when a component leaves them blank); the component supplies the values. Lives in `api/customprops.go`.
+
+```graphql
+query GetItemProperties($hubId: ID!, $cv: ID!) {
+  hub(hubId: $hubId) {
+    basePropertyDefinitionCollections {
+      results {
+        definitions {
+          results { id name isHidden isArchived }
+        }
+      }
+    }
+  }
+  component(componentId: $cv) {
+    baseProperties   { results { displayValue value definition { id } } }
+    customProperties { results { name displayValue value } }
+  }
+}
+```
+
+The component's `baseProperties` values are mapped by definition id, then every visible hub base-property definition is emitted in hub order (populated with the component's value where present — so the user sees the full extended-property surface even when most fields are blank). Populated custom properties are appended. Each row is a `NamedProperty { Name, DisplayValue }`. Best-effort enrichment — callers tolerate an empty list or an error.
+
+---
+
+## Search Queries
+
+Hub-wide search (v3 `searchByHub` / `searchablePropertiesByHub`), in `api/search.go`. The server exposes these at `GET /api/search` and `GET /api/search/properties`; the web UI drives them from a search lightbox. Requires the `data:search` scope.
+
+### GetSearchableProperties — populate the property picker
+
+```graphql
+query SearchableProps($hubId: ID!) {
+  searchablePropertiesByHub(hubId: $hubId, pagination: { limit: 50 }) {
+    results {
+      displayName
+      propertyDefinition { id }
+    }
+  }
+}
+```
+
+Returns `[]SearchableProperty { DisplayName, ID }` — the properties a hub allows filtering on; `ID` is the `propertyDefinition` id passed back as a search field.
+
+### SearchByHub — free-text or property search
+
+Supply **either** `freeText` (full-text) **or** a `propDefID` + `propValue` pair (property search); if both are empty the result is empty. Results are paginated at 25 per page.
+
+```graphql
+query SearchByHub($hubId: ID!, $crit: SearchInput, $page: PaginationInput) {
+  searchByHub(hubId: $hubId, searchCriteria: $crit, pagination: $page) {
+    pagination { cursor }
+    results {
+      name
+      score
+      thumbnail { signedUrl }
+      matches { matchedText }
+      searchResultObject {
+        __typename
+        ... on Component { id primaryModel { designItem { id hub { id } } } }
+        ... on Model { id designItem { id hub { id } } }
+        ... on DesignItem { id hub { id } }
+        ... on DrawingItem { id hub { id } }
+        ... on ConfiguredDesignItem { id hub { id } }
+        ... on BasicItem { id hub { id } }
+        ... on Folder { id project { hub { id } } }
+      }
+    }
+  }
+}
+```
+
+The criteria is built as `{ query: freeText }` for free-text, or `{ searchFields: [{ searchableProperty: propDefID, PropertyQuery: [propValue] }] }` for a property search. Each result's polymorphic `searchResultObject` is flattened to a navigable `SearchHit { Name, Score, ThumbnailURL, Matched, ItemID, HubID, Kind }` — a `Component`/`Model` is resolved down to its owning `DesignItem` id so the row can drive Show-in-Location.
+
+---
+
+## Project Mutations
+
+Project lifecycle mutations (v3), in `api/projects.go`. Routed at `POST /api/projects` (create), `POST /api/projects/rename`, and `POST /api/projects/archive`. These require the `data:write` / `data:create` scope.
+
+```graphql
+mutation CreateProject($input: CreateProjectInput!) {
+  createProject(input: $input) { project { id name fusionWebUrl } }
+}
+
+mutation RenameProject($input: RenameProjectInput!) {
+  renameProject(input: $input) { project { id name fusionWebUrl } }
+}
+
+mutation ArchiveProject($input: ArchiveProjectInput!) {
+  archiveProject(input: $input) { project { id } }
+}
+```
+
+`CreateProject` / `RenameProject` return the project as a `NavItem`. `ArchiveProject` is reversible server-side via `restoreProject`. (`createProject` is v3-only.)
 
 ---
 
@@ -672,7 +869,7 @@ The `api` package endpoint is held in a package-level `var` rather than a `const
 
 ```go
 // api/client.go
-var graphqlEndpoint = "https://developer.api.autodesk.com/mfg/graphql"
+var graphqlEndpoint = "https://developer.api.autodesk.com/mfg/v3/graphql/public"
 ```
 
 Same-package tests (`api/*_test.go`) can write `graphqlEndpoint` directly. Callers in other packages use the exported helper:

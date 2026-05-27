@@ -4,6 +4,8 @@
 
 A local server and web UI for the [Autodesk Platform Services (APS)](https://aps.autodesk.com) Manufacturing Data Model. Run it on your LAN and let people browse your Fusion hubs, projects, folders, and designs from a browser — **each user signs in with their own Autodesk account**.
 
+> **v3 / Collaborative-Editing hubs only.** This app targets the **v3** Manufacturing Data Model GraphQL API exclusively, which Autodesk documents as available on **Collaborative-Editing (CE) hubs only** (`hubDataVersion` major version ≥ 2). Non-CE hubs are filtered out of the hub list, since their data does not resolve through the v3 graph.
+
 One Go binary: an HTTP server that exposes a JSON API and serves an embedded React/MUI single-page web UI. There are no external dependencies — it's pure Go standard library.
 
 ## Quick start
@@ -46,10 +48,12 @@ Logs go to the console and to `~/.config/fusionlocalserver/server.log`. The defa
 
 The web UI is a three-column browser — **Projects │ Contents │ Details** — with a global header (signed-in user + sign-out), a left rail (Hubs / Pins / Settings), and a clickable breadcrumb. Highlights:
 
-- **Details panel** — the document's metadata (type, part number, material, version, dates…) is always shown beside its **thumbnail**; tabs add **History**, **Properties**, **Uses**, **Where Used**, and **Drawings**.
+- **Details panel** — the document's metadata (type, part number, material, dates…) is always shown beside its **thumbnail**; tabs add **History**, **Properties**, **BOM**, **Uses**, **Where Used**, and **Drawings**. v3 has no integer version numbers, so History is a time-based change log (timestamp, change type, author) rather than a numbered version list.
 - **Thumbnails** are fetched once, cached server-side, warmed in the background as you browse, and streamed same-origin — so opening a design is usually instant.
-- **Properties** shows physical/mass properties (mass, volume, surface area, density, bounding box) from the v2 Manufacturing Data Model API.
-- **Uses / Where Used / Drawings** rows are clickable: selecting one navigates the browser straight to that document.
+- **Properties** shows a component's **extended base properties** (the hub's base-property definitions populated with the component's values) and its **physical/mass properties** (mass, volume, surface area, density, bounding box) from the v3 Manufacturing Data Model API.
+- **Search** — a global search lightbox runs a hub-wide search (free-text or by a searchable property); results jump straight to the document via Show-in-Location.
+- **Uses / Where Used / Drawings** rows are clickable: selecting one navigates the browser straight to that document. (v3 has no reverse-reference query, so **Where Used returns empty** — see [`docs/v3-where-used.md`](docs/v3-where-used.md).)
+- **Projects** can be **created** (the "+" button), **renamed**, and **archived** (right-click a project) using the v3 project mutations.
 - **Pins** and **Light/Dark/System theme** are available from the rail and Settings.
 
 See [`docs/web-ui.md`](docs/web-ui.md) for a full tour.
@@ -85,7 +89,9 @@ git clone https://github.com/schneik80/fusionlocalserver
 cd fusionlocalserver
 ```
 
-Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) with scope `data:read user-profile:read`. **Register a Callback URL for every origin users will reach the server by** — APS allows no wildcards, so each `http(s)://host:port/api/auth/callback` is a separate exact-match entry. For local development that is `http://localhost:8080/api/auth/callback`; add each LAN address (and each configured port) you intend to use.
+Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) with scope `data:read data:write data:create data:search user-profile:read`. (v3 needs the wider data scope: `data:search` for hub search and `data:write`/`data:create` for the project create/rename/archive mutations.) **Register a Callback URL for every origin users will reach the server by** — APS allows no wildcards, so each `http(s)://host:port/api/auth/callback` is a separate exact-match entry. For local development that is `http://localhost:8080/api/auth/callback`; add each LAN address (and each configured port) you intend to use.
+
+> **Re-login once after upgrading.** The v3 scope is wider than the old v2 `data:read user-profile:read` set, so existing users must re-consent (sign in again) once for the new scopes to take effect.
 
 ```sh
 echo "your-client-id" > .aps-client-id    # git-ignored
@@ -112,13 +118,14 @@ make build                                # vite build → embed UI (-tags embed
 
 | Doc | What it covers |
 |---|---|
-| [`docs/web-ui.md`](docs/web-ui.md) | The web UI: sign-in, the three-column browser, details tabs, pins, settings |
+| [`docs/web-ui.md`](docs/web-ui.md) | The web UI: sign-in, the three-column browser, details tabs, search, project create/rename/archive, pins, settings |
 | [`docs/authentication.md`](docs/authentication.md) | Per-user OAuth (PKCE) login, sessions, cookies, token refresh |
-| [`docs/api.md`](docs/api.md) | APS Manufacturing Data Model GraphQL queries, retry behaviour, debug logging |
+| [`docs/api.md`](docs/api.md) | APS Manufacturing Data Model **v3** GraphQL queries, retry behaviour, debug logging |
 | [`docs/architecture.md`](docs/architecture.md) | C4 diagrams, package layout, request/session flow, performance, resilience |
 | [`docs/development.md`](docs/development.md) | Building from source, configuration, release pipeline, dependencies |
 | [`docs/debugging.md`](docs/debugging.md) | Logging, `-v`, and **reporting a bug** — what to capture and how to file it |
 | [`docs/testing.md`](docs/testing.md) | Test strategy and how to run / extend the suite |
+| [`docs/v3-where-used.md`](docs/v3-where-used.md) | Why Where-Used returns empty on v3, and the options to resume it |
 | [`docs/server-webui-plan.md`](docs/server-webui-plan.md) | Historical: the original design plan for the server + web UI |
 
 ## License

@@ -62,19 +62,40 @@ func TestGetHubs_Pagination(t *testing.T) {
 					"pagination": map[string]any{"cursor": "PAGE2"},
 					"results": []map[string]any{
 						{
-							"id":           "h1",
-							"name":         "Hub1",
-							"fusionWebUrl": "https://example/h1",
+							"id":             "h1",
+							"name":           "Hub1",
+							"fusionWebUrl":   "https://example/h1",
+							"hubDataVersion": "2.0.0", // CE — kept
 							"alternativeIdentifiers": map[string]any{
 								"dataManagementAPIHubId": "ah1",
 							},
 						},
 						{
-							"id":           "h2",
-							"name":         "Hub2",
-							"fusionWebUrl": "https://example/h2",
+							"id":             "h2",
+							"name":           "Hub2",
+							"fusionWebUrl":   "https://example/h2",
+							"hubDataVersion": "2.0.0", // CE — kept
 							"alternativeIdentifiers": map[string]any{
 								"dataManagementAPIHubId": "ah2",
+							},
+						},
+						{
+							// Non-CE legacy hub — dropped by isCEHub.
+							"id":             "h-legacy",
+							"name":           "LegacyHub",
+							"fusionWebUrl":   "https://example/legacy",
+							"hubDataVersion": "1.0.0",
+							"alternativeIdentifiers": map[string]any{
+								"dataManagementAPIHubId": "ah-legacy",
+							},
+						},
+						{
+							// Missing hubDataVersion — also dropped.
+							"id":           "h-nover",
+							"name":         "NoVersionHub",
+							"fusionWebUrl": "https://example/nover",
+							"alternativeIdentifiers": map[string]any{
+								"dataManagementAPIHubId": "ah-nover",
 							},
 						},
 					},
@@ -89,9 +110,10 @@ func TestGetHubs_Pagination(t *testing.T) {
 					"pagination": map[string]any{"cursor": ""},
 					"results": []map[string]any{
 						{
-							"id":           "h3",
-							"name":         "Hub3",
-							"fusionWebUrl": "https://example/h3",
+							"id":             "h3",
+							"name":           "Hub3",
+							"fusionWebUrl":   "https://example/h3",
+							"hubDataVersion": "2.0.0", // CE — kept
 							"alternativeIdentifiers": map[string]any{
 								"dataManagementAPIHubId": "ah3",
 							},
@@ -265,15 +287,16 @@ func TestGetItems_TypenameMapping(t *testing.T) {
 	}
 }
 
-func TestGetItems_RequestsTipRootComponentVersion(t *testing.T) {
-	// The async classifier needs tipRootComponentVersion.id per design
-	// row to issue its occurrences probe without a second round-trip.
-	// This test pins the inline fragment into the request so a future
-	// query refactor can't silently strip it.
+func TestGetItems_RequestsTipRootModel(t *testing.T) {
+	// The async classifier needs the design's root Component id per row to
+	// issue its probes without a second round-trip. In v3 that comes from
+	// tipRootModel { component { id } }. This test pins the inline fragment
+	// into the request so a future query refactor can't silently strip it.
 	var sawFragment bool
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		if strings.Contains(req.Query, "... on DesignItem") &&
-			strings.Contains(req.Query, "tipRootComponentVersion") {
+			strings.Contains(req.Query, "tipRootModel") &&
+			strings.Contains(req.Query, "component") {
 			sawFragment = true
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
@@ -289,7 +312,7 @@ func TestGetItems_RequestsTipRootComponentVersion(t *testing.T) {
 		t.Fatalf("GetItems: %v", err)
 	}
 	if !sawFragment {
-		t.Errorf("query did not include ... on DesignItem { tipRootComponentVersion { id } }")
+		t.Errorf("query did not include ... on DesignItem { tipRootModel { component { id } } }")
 	}
 }
 
@@ -299,14 +322,14 @@ func TestGetItems_PopulatesComponentVersionID(t *testing.T) {
 			"itemsByFolder": map[string]any{
 				"pagination": map[string]any{"cursor": ""},
 				"results": []map[string]any{
-					// Design with tipRoot present.
+					// Design with tipRootModel.component present.
 					{
-						"__typename":              "DesignItem",
-						"id":                      "i1",
-						"name":                    "WithRoot",
-						"tipRootComponentVersion": map[string]any{"id": "urn:cv:1"},
+						"__typename":   "DesignItem",
+						"id":           "i1",
+						"name":         "WithRoot",
+						"tipRootModel": map[string]any{"component": map[string]any{"id": "urn:cv:1"}},
 					},
-					// Design without tipRoot (milestone-less, mid-translation, etc.)
+					// Design without tipRootModel (milestone-less, mid-translation, etc.)
 					{
 						"__typename": "DesignItem",
 						"id":         "i2",

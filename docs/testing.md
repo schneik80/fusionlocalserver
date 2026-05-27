@@ -71,12 +71,12 @@ A single helper lives in `internal/testutil/` (`graphql.go`). It auto-cleans via
 
 ```go
 srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-    if !strings.Contains(req.Query, "occurrences(pagination") {
-        t.Errorf("query missing occurrences field: %q", req.Query)
+    if !strings.Contains(req.Query, "bomRelations(depth") {
+        t.Errorf("query missing bomRelations field: %q", req.Query)
     }
     return testutil.GraphQLResponse{Data: map[string]any{
-        "componentVersion": map[string]any{
-            "occurrences": map[string]any{
+        "component": map[string]any{
+            "bomRelations": map[string]any{
                 "pagination": map[string]any{"cursor": ""},
                 "results":    []map[string]any{ /* ... */ },
             },

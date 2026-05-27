@@ -124,9 +124,6 @@ func TestGetItemDetails_AllFields(t *testing.T) {
 	if got.FusionWebURL != "https://fusion.example/widget-a" {
 		t.Errorf("FusionWebURL = %q, want %q", got.FusionWebURL, "https://fusion.example/widget-a")
 	}
-	if got.VersionNumber != 3 {
-		t.Errorf("VersionNumber = %d, want 3", got.VersionNumber)
-	}
 
 	wantCreated := time.Date(2024, 1, 15, 10, 30, 45, 0, time.UTC)
 	if !got.CreatedOn.Equal(wantCreated) {
@@ -152,31 +149,29 @@ func TestGetItemDetails_AllFields(t *testing.T) {
 	if got.Material != "Aluminum 6061" {
 		t.Errorf("Material = %q, want %q", got.Material, "Aluminum 6061")
 	}
-	if !got.IsMilestone {
-		t.Errorf("IsMilestone = false, want true")
-	}
 	if got.RootComponentVersionID != "urn:cv:xyz" {
 		t.Errorf("RootComponentVersionID = %q, want %q", got.RootComponentVersionID, "urn:cv:xyz")
 	}
+	wantTip := time.Date(2024, 2, 20, 14, 0, 0, 0, time.UTC)
+	if !got.TipTimestamp.Equal(wantTip) {
+		t.Errorf("TipTimestamp = %v, want %v", got.TipTimestamp, wantTip)
+	}
 
-	if len(got.Versions) != 3 {
-		t.Fatalf("len(Versions) = %d, want 3", len(got.Versions))
+	// Time-based history, sorted most-recent first (h3, h2, h1).
+	if len(got.History) != 3 {
+		t.Fatalf("len(History) = %d, want 3", len(got.History))
 	}
-	// Reversed: most-recent first.
-	if got.Versions[0].Number != 3 {
-		t.Errorf("Versions[0].Number = %d, want 3", got.Versions[0].Number)
+	if got.History[0].ID != "h3" || got.History[2].ID != "h1" {
+		t.Errorf("History order = [%s..%s], want [h3..h1]", got.History[0].ID, got.History[2].ID)
 	}
-	if got.Versions[1].Number != 2 {
-		t.Errorf("Versions[1].Number = %d, want 2", got.Versions[1].Number)
+	if got.History[0].ChangeType != "Properties Updated" {
+		t.Errorf("History[0].ChangeType = %q, want %q", got.History[0].ChangeType, "Properties Updated")
 	}
-	if got.Versions[2].Number != 1 {
-		t.Errorf("Versions[2].Number = %d, want 1", got.Versions[2].Number)
+	if got.History[0].Description != "third edit" {
+		t.Errorf("History[0].Description = %q, want %q", got.History[0].Description, "third edit")
 	}
-	if got.Versions[0].Comment != "third edit" {
-		t.Errorf("Versions[0].Comment = %q, want %q", got.Versions[0].Comment, "third edit")
-	}
-	if got.Versions[0].CreatedBy != "Grace Hopper" {
-		t.Errorf("Versions[0].CreatedBy = %q, want %q", got.Versions[0].CreatedBy, "Grace Hopper")
+	if got.History[0].Author != "Grace Hopper" {
+		t.Errorf("History[0].Author = %q, want %q", got.History[0].Author, "Grace Hopper")
 	}
 }
 
@@ -194,9 +189,8 @@ func TestGetItemDetails_DrawingItem_NoComponentVersion(t *testing.T) {
 			"lastModifiedOn": "2024-03-02T09:00:00Z",
 			"lastModifiedBy": map[string]any{"firstName": "X", "lastName": "Y"},
 			"fusionWebUrl":   "https://example/dwg",
-			"tipVersion":     map[string]any{"versionNumber": 1},
+			"history":        map[string]any{"results": []any{}},
 		},
-		"itemVersions": map[string]any{"results": []any{}},
 	}
 
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
@@ -219,9 +213,6 @@ func TestGetItemDetails_DrawingItem_NoComponentVersion(t *testing.T) {
 	}
 	if got.Material != "" {
 		t.Errorf("Material = %q, want empty", got.Material)
-	}
-	if got.IsMilestone {
-		t.Errorf("IsMilestone = true, want false")
 	}
 }
 

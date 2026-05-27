@@ -15,8 +15,8 @@ de-duplicated to one row per owning `DesignItem`.
 
 `ComponentVersion` no longer exists, and **there is no reverse-reference query
 in v3**. Confirmed on 2026-05-27 by live `__type` introspection of the v3
-endpoint (`/mfg/v3/graphql/public`) via the temporary `/api/_introspect-v3`
-route:
+endpoint (`/mfg/v3/graphql/public`) via a temporary `/api/_introspect-v3` route
+(since removed — see Pointers below):
 
 - Root `Query` has **no** `whereUsed` / `usedIn` / `referencedBy` / reverse
   query. Relationship traversal is forward-only:
@@ -62,6 +62,7 @@ turns up a viable query.
 ## Pointers
 
 - Implementation: `api/refs.go` → `GetWhereUsed` (and `v3FromModelFields`).
-- Schema oracle (temporary, remove before merge): `GET /api/_introspect-v3?type=<TypeName>`
-  in `server/handlers_introspect.go`.
+- Schema oracle: the temporary `GET /api/_introspect-v3?type=<TypeName>` route
+  (`server/handlers_introspect.go`) used during the investigation has since been
+  removed; rebuild it from git history if another introspection pass is needed.
 - Full v3 schema findings: agent memory `v3-api-schema-facts.md`.

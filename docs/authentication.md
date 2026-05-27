@@ -50,7 +50,7 @@ sequenceDiagram
     App->>App: state = random 32 bytes
     App->>PS: store {state → verifier, redirect_uri}
     App-->>B: 302 to authorize URL<br/>Set-Cookie: fls_pending=<state>; HttpOnly; SameSite=Lax
-    B->>APS: GET /authentication/v2/authorize<br/>?client_id&response_type=code&redirect_uri<br/>&scope=data:read user-profile:read&state<br/>&code_challenge&code_challenge_method=S256
+    B->>APS: GET /authentication/v2/authorize<br/>?client_id&response_type=code&redirect_uri<br/>&scope=data:read data:write data:create data:search user-profile:read&state<br/>&code_challenge&code_challenge_method=S256
     APS->>B: Autodesk login + consent
     B->>APS: credentials
     APS-->>B: 302 → <origin>/api/auth/callback?code&state
@@ -183,7 +183,9 @@ sequenceDiagram
 | User profile (display) | `https://api.userprofile.autodesk.com/userinfo` |
 | Redirect receiver | `<public-url>/api/auth/callback` when `-public-url` is set (one registration), else `<server-origin>/api/auth/callback` derived per request; must be registered on the APS app |
 
-**Required scopes:** `data:read user-profile:read`
+**Required scopes:** `data:read data:write data:create data:search user-profile:read`
+
+The v3 Manufacturing Data Model needs the wider data scope set: `data:read` for browsing, `data:search` for the hub-wide search (`searchByHub` / `searchablePropertiesByHub`), and `data:write` + `data:create` for the project create/rename/archive mutations. Because this is wider than the old v2 `data:read user-profile:read` set, every user must re-consent (sign in again) **once** for the new scopes to take effect. The `authentication/v2` Auth API version is unchanged — only the requested scope changed.
 
 ---
 

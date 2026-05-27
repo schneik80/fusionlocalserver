@@ -23,7 +23,7 @@ The binary is a single dedicated HTTP server: a JSON API under `/api` plus an em
 Each browser user signs in with their own Autodesk account via OAuth (Authorization Code + PKCE, backend-for-frontend). Register a **web app** at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps):
 
 - **App type:** Web app
-- **Scopes:** `data:read`, `user-profile:read`
+- **Scopes:** `data:read`, `data:write`, `data:create`, `data:search`, `user-profile:read` (v3 needs the wider data scope — `data:search` for hub search and `data:write`/`data:create` for the project mutations; existing users must re-login once after the scope widens)
 - **Callback URL:** one per origin that users reach the server by. The server derives `redirect_uri` from the request's origin as `<origin>/api/auth/callback`, so register a Callback URL for each origin. For local development that is:
 
   ```
@@ -153,7 +153,7 @@ graph TD
     static --> spa
 
     subgraph "auth/ package"
-        oauth["oauth.go\nBuildAuthURL / ExchangeCode / Refresh\n(scope data:read user-profile:read)"]
+        oauth["oauth.go\nBuildAuthURL / ExchangeCode / Refresh\n(scope data:read data:write data:create\ndata:search user-profile:read)"]
         userinfo["userinfo.go\nFetchUserProfile"]
         tokens["tokens.go\nTokenData / Valid()"]
     end

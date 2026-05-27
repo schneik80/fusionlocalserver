@@ -6,6 +6,8 @@ Authentication is **per user (Backend-For-Frontend)**: each browser user signs i
 
 The HTTP service sits on UI-agnostic layers — `api/` (APS Manufacturing Data Model GraphQL client), `auth/` (transport-agnostic OAuth PKCE primitives), `config/`, and `pins/`.
 
+> **v3-only, CE hubs only.** The `api/` client targets the **v3** Manufacturing Data Model GraphQL endpoint (`/mfg/v3/graphql/public`) exclusively. v3 is documented as available on **Collaborative-Editing (CE) hubs only**, so `GetHubs` filters the hub list to `hubDataVersion` major version ≥ 2 and non-CE hubs are hidden. OAuth requests the wider v3 scope set (`data:read data:write data:create data:search user-profile:read`).
+
 > The module is **pure Go standard library** — no third-party Go dependencies and no `go.sum`. The `web/` SPA's npm dependencies (React, MUI, Vite) are bundled into `server/webdist` and embedded into the binary at build time.
 
 ---
@@ -23,7 +25,7 @@ C4Context
 
     System_Ext(aps_auth, "APS Authentication v2", "OAuth 2.0 authorization server. Issues access and refresh tokens via the Authorization Code + PKCE flow.")
 
-    System_Ext(aps_mfg, "APS Manufacturing Data Model", "GraphQL API (v2). Exposes hubs, projects, folders, items, version history, thumbnails, and physical properties for Fusion designs.")
+    System_Ext(aps_mfg, "APS Manufacturing Data Model", "GraphQL API (v3, Collaborative-Editing hubs only). Exposes hubs, projects, folders, items, time-based history, thumbnails, physical properties, hub-wide search, and project mutations for Fusion designs.")
 
     SystemDb_Ext(fs, "Local Filesystem", "~/.config/fusionlocalserver/ — config.json (client id + region), server.json (listen port), pins-<hub>.json, and server.log. No tokens on disk; sessions live in memory.")
 
@@ -57,12 +59,12 @@ C4Container
 
         Component(config, "config", "Go package", "Three-layer config loader: env vars → config.json → build-time linker default. Resolves client id, optional client secret, and APS region.")
         Component(auth, "auth", "Go package", "Transport-agnostic OAuth 2.0 PKCE primitives: NewPKCE, BuildAuthURL, ExchangeCode, Refresh, FetchUserProfile, TokenData. No browser, no listener, no persistence.")
-        Component(api, "api", "Go package", "Typed GraphQL client. Cursor-paginated hierarchy queries, item details, refs, async assembly classification, thumbnails, physical properties. Redacting -v debug tracing.")
+        Component(api, "api", "Go package", "Typed v3 GraphQL client (CE hubs only). Cursor-paginated hierarchy queries with CE filter, item details + time-based history, BOM/Uses via bomRelations, async assembly classification (Component.hasChildren), thumbnails, physical + base/custom properties, hub-wide search, project mutations. Redacting -v debug tracing.")
         Component(pins, "pins", "Go package", "Per-hub bookmark storage. Load/Save scoped by sanitized hub ID; MigrateLegacy promotes the pre-hub-scoping single-file pins.json on first run.")
     }
 
     System_Ext(aps_auth, "APS Auth v2", "https://developer.api.autodesk.com/authentication/v2")
-    System_Ext(aps_gql, "APS MFG GraphQL v2", "https://developer.api.autodesk.com/mfg/graphql")
+    System_Ext(aps_gql, "APS MFG GraphQL v3", "https://developer.api.autodesk.com/mfg/v3/graphql/public")
     SystemDb_Ext(fs, "~/.config/fusionlocalserver/")
 
     Rel(main, config, "Loads config")
@@ -88,7 +90,8 @@ C4Container
 - **Runtime-configurable port.** Outside `-dev` mode the listen port is owned by the server and persisted in `~/.config/fusionlocalserver/server.json`. `POST /api/settings/port` validates and saves a new port, then an in-process listener rebind drops the old listener and binds the new one without restarting the process. Sessions live in memory and span the rebind, so a port change does not log anyone out.
 - **Embedded SPA vs. stub.** The React/MUI app is embedded only when built with `-tags embed_ui` (`server/static_embed.go`); a plain `go build` compiles `server/static_stub.go`, which serves a small "not built yet" shell. In `-dev` mode the static handler instead reverse-proxies non-`/api` requests to the Vite dev server for HMR.
 - **Thumbnail cache + image proxy.** A bounded, shared in-memory cache (`thumbCache`) holds thumbnail status/URLs and PNG bytes keyed by component-version id. It is warmed in the background off the per-row classify probe (bounded by `warmSem`), and `/api/items/thumbnail/image` streams the bytes same-origin so browsers never fetch the cross-origin APS signed URL directly.
-- **Physical properties.** `/api/items/properties` returns a design's mass/geometry properties (v2 API); generation is async, so the web UI polls until COMPLETED.
+- **Physical properties.** `/api/items/properties` returns a design's mass/geometry properties (v3 `Component.primaryModel.physicalProperties`); generation is async, so the web UI polls until COMPLETED. `/api/items/custom-properties` adds the component's extended base properties (hub base-property definitions merged with the component's `baseProperties`) plus custom properties.
+- **Search and project mutations.** `/api/search` + `/api/search/properties` run a hub-wide v3 search (`searchByHub` / `searchablePropertiesByHub`). `POST /api/projects` (create), `/api/projects/rename`, and `/api/projects/archive` drive the v3 project lifecycle mutations (require `data:write`/`data:create` scope).
 
 ### Runtime: CLI, logging, and filesystem
 
@@ -122,7 +125,7 @@ C4Component
     }
 
     System_Ext(aps_auth, "APS Auth v2")
-    System_Ext(aps_gql, "APS MFG GraphQL v2")
+    System_Ext(aps_gql, "APS MFG GraphQL v3")
 
     Rel(web_user, routes, "HTTP request")
     Rel(routes, mw, "wraps")
@@ -234,7 +237,7 @@ sequenceDiagram
     RA->>H: next with access token in ctx
     H->>H: tokenFromCtx(ctx)
     H->>API: GetFolders / GetItems / GetItemDetails / …
-    API->>APS: POST /mfg/graphql
+    API->>APS: POST /mfg/v3/graphql/public
     APS-->>API: JSON response
     API-->>H: typed result
     H-->>B: writeJSON(DTO)
@@ -245,7 +248,7 @@ A 401 from `requireAuth` is what the SPA turns into a login redirect. The SPA is
 
 ### Async assembly-vs-part classification
 
-After a folder/project's contents load, each design is enriched with an "assembly" / "part" subtype derived from whether its `tipRootComponentVersion` has any sub-component occurrences. The probe (`api.ClassifyAssembly`, exposed as `GET /api/items/classify`) is capped at 8 concurrent calls by a package-level semaphore in `api/classify.go`. The items queries pull `tipRootComponentVersion.id` inline for designs, so the classifier can probe occurrences without a second round-trip. The SPA dispatches one classify request per row and merges the result into the rendered list as each lands.
+After a folder/project's contents load, each design is enriched with an "assembly" / "part" subtype derived from the v3 `Component.hasChildren` flag (the root component has at least one direct sub-component). The probe (`api.ClassifyAssembly`, exposed as `GET /api/items/classify`) is capped at 8 concurrent calls by a package-level semaphore in `api/classify.go`. The items queries pull the root `Component` id inline for designs (`tipRootModel.component.id`), so the classifier can probe `hasChildren` without a second round-trip. The SPA dispatches one classify request per row and merges the result into the rendered list as each lands.
 
 ```mermaid
 sequenceDiagram
@@ -254,13 +257,13 @@ sequenceDiagram
     participant Sem as classifySem (cap 8)
     participant APS as APS GraphQL
 
-    Note over B: contents render with<br/>componentVersionId per design
+    Note over B: contents render with<br/>root Component id per design
     B->>H: GET /api/items/classify?cvid=… (one per row)
     par up to 8 concurrent
         H->>Sem: classifySem <- {}
         Sem-->>H: slot acquired
-        H->>APS: componentVersion(cvid).occurrences(limit:1)
-        APS-->>H: { results: [] | [{...}] }
+        H->>APS: component(componentId).hasChildren
+        APS-->>H: { hasChildren: true | false }
         H-->>B: { subtype: "assembly" | "part" }
     end
     Note over B: row updates in place with the subtype
@@ -272,17 +275,17 @@ sequenceDiagram
 
 A few targeted optimisations keep navigation snappy on large hubs:
 
-- **Thumbnail cache + image proxy** — the shared in-memory `thumbCache` (bounded, with TTL) holds thumbnail status/URL and PNG bytes keyed by component-version id, warmed in the background off the classify probe under `warmSem`. `/api/items/thumbnail/image` streams the bytes same-origin so each browser never re-fetches the cross-origin APS signed URL, and a second viewer of the same design is served from cache.
-- **Inline classifier input** — the hierarchy items queries pull `tipRootComponentVersion.id` inline for designs, so the assembly/part classifier can probe occurrences with a single extra call per row rather than a details round-trip first.
+- **Thumbnail cache + image proxy** — the shared in-memory `thumbCache` (bounded, with TTL) holds thumbnail status/URL and PNG bytes keyed by the v3 root `Component` id, warmed in the background off the classify probe under `warmSem` (the combined `ClassifyAndThumbnail` query fetches `hasChildren` + the thumbnail in one round-trip). `/api/items/thumbnail/image` streams the bytes same-origin so each browser never re-fetches the cross-origin APS signed URL, and a second viewer of the same design is served from cache.
+- **Inline classifier input** — the hierarchy items queries pull the root `Component` id inline for designs (`tipRootModel.component.id`), so the assembly/part classifier can probe `Component.hasChildren` with a single extra call per row rather than a details round-trip first.
 - **Parallel project-contents fetch** — the project-contents handler issues `foldersByProject` and `itemsByProject` concurrently via `sync.WaitGroup` rather than sequentially. Wall-clock latency drops to roughly the slower of the two queries.
-- **Bounded-parallelism assembly classifier** — `api.ClassifyAssembly` calls run under a package-level `classifySem` buffered channel (size 8), so at most 8 occurrence probes are in flight against the gateway at once; the rest queue on the semaphore. Wall-clock for a 50-item folder is roughly `ceil(N/8) × ~150 ms ≈ 1 s` vs the ~5 s a serial extended `itemsByFolder` query would cost.
+- **Bounded-parallelism assembly classifier** — `api.ClassifyAssembly` calls run under a package-level `classifySem` buffered channel (size 8), so at most 8 `Component.hasChildren` probes are in flight against the gateway at once; the rest queue on the semaphore. Wall-clock for a 50-item folder is roughly `ceil(N/8) × ~150 ms ≈ 1 s` vs the ~5 s a serial extended `itemsByFolder` query would cost.
 - **Client-side caching** — the SPA uses TanStack Query to memoise per-item details and the Uses / Where Used / Drawings relationship queries, so re-visiting an item or scanning a relationship across several designs does not refetch unchanged data. Item details are effectively immutable for a given item id (a save creates a new version, but the item id is stable).
 
 ---
 
 ## Resilience — APS gateway flakiness
 
-The APS Manufacturing Data Model GraphQL gateway (`/mfg/graphql`) intermittently returns `code:NOT_FOUND, errorType:UNKNOWN` for hub URNs it just successfully enumerated via the `hubs` query — the same access token, same hub ID, and same query body succeed and fail within seconds. The failure can occur on the very first paginated request (no cursor involved), so it is not a cursor-encoding issue, and reproduces against both the shared `*http.Client` and `http.DefaultClient`, so it is not a connection-state issue.
+The APS Manufacturing Data Model GraphQL gateway (`/mfg/v3/graphql/public`) intermittently returns `code:NOT_FOUND, errorType:UNKNOWN` for hub URNs it just successfully enumerated via the `hubs` query — the same access token, same hub ID, and same query body succeed and fail within seconds. The failure can occur on the very first paginated request (no cursor involved), so it is not a cursor-encoding issue, and reproduces against both the shared `*http.Client` and `http.DefaultClient`, so it is not a connection-state issue.
 
 `gqlQuery` (in `api/client.go`) wraps a single-shot `gqlQueryOnce` in a 3-attempt retry loop with backoffs `0 → 500 ms → 1.5 s`. Retry triggers are narrow:
 
@@ -323,19 +326,25 @@ fusionlocalserver/
 │   ├── userinfo.go          FetchUserProfile() — OIDC userinfo for the logged-in display name/email
 │   └── tokens.go            TokenData, TokenData.Valid() (in-memory only)
 │
-├── api/
+├── api/                     v3 ("Collaborative Editing") GraphQL client — CE hubs only
 │   ├── client.go            gqlQuery() retry loop + gqlQueryOnce(), NavItem (incl. ComponentVersionID
-│   │                        + Subtype), SetRegion()
-│   ├── queries.go           Hierarchy queries — GetHubs/Projects/Folders/Items; allPages() pagination;
-│   │                        items queries pull tipRootComponentVersion.id inline for designs so the
-│   │                        async classifier can probe occurrences without a second round-trip
-│   ├── classify.go          ClassifyAssembly(cvid) + classifySem semaphore (cap 8 concurrent)
-│   ├── details.go           GetItemDetails(), ItemDetails, VersionSummary, parseTime()
-│   ├── refs.go              Cross-reference queries: GetOccurrences, GetWhereUsed,
-│   │                        GetDrawingsForDesign, GetDrawingSource (Uses/WhereUsed/Drawings tabs)
+│   │                        + Subtype), SetRegion(); v3 endpoint /mfg/v3/graphql/public
+│   ├── property.go          Property — the v3 Property object ({value, displayValue}); Property.Str()
+│   ├── queries.go           Hierarchy queries — GetHubs (CE filter via isCEHub)/Projects/Folders/Items;
+│   │                        allPages() pagination; items queries pull the root Component id inline
+│   │                        (tipRootModel.component.id) so the async classifier can probe hasChildren
+│   ├── classify.go          ClassifyAssembly(componentId) via Component.hasChildren + classifySem (cap 8)
+│   ├── details.go           GetItemDetails(), ItemDetails, HistoryEntry (time-based change log), parseTime()
+│   ├── bom.go               GetBOM — immediate BOM via Component.bomRelations (real v3 quantity)
+│   ├── refs.go              Cross-reference queries: GetOccurrences (bomRelations), GetWhereUsed
+│   │                        (empty on v3 — see docs/v3-where-used.md), GetDrawingsForDesign, GetDrawingSource
+│   ├── customprops.go       GetCustomProperties — hub base-property defs merged with component base + custom
+│   ├── search.go            SearchByHub + GetSearchableProperties — hub-wide v3 search
+│   ├── projects.go          CreateProject / RenameProject / ArchiveProject mutations
+│   ├── permissions.go       GetProjectGroups / GetGroupMembers (project groups + roles)
 │   ├── locate.go            GetItemLocation — project + folder ancestry walk for Show in Location
-│   ├── thumbnail.go         Thumbnail status/URL query + image fetch (async generation)
-│   ├── properties.go        Physical (mass/geometry) properties — async generation, polled
+│   ├── thumbnail.go         Thumbnail status/URL query (Component.thumbnail) + ClassifyAndThumbnail + image fetch
+│   ├── properties.go        Physical (mass/geometry) properties via Component.primaryModel — async, polled
 │   └── debug.go             EnableDebug(io.Writer), dbgLog, redactSignedURLs() — raw GraphQL
 │                            request/response tracing routed to the server's console+file sink under -v
 │
@@ -353,8 +362,8 @@ fusionlocalserver/
 │   │                        redirect_uri per request; injects the session token into the request ctx
 │   ├── session.go           SessionStore (opaque ids, idle 12h / absolute 7d, per-session refresh mutex,
 │   │                        janitor) + PendingStore (in-flight logins keyed by CSRF state)
-│   ├── handlers*.go         Per-endpoint handlers (meta, nav, refs, props, pins, settings, thumbnail,
-│   │                        /api 404)
+│   ├── handlers*.go         Per-endpoint handlers (meta, nav, refs, props, perms, search, projects,
+│   │                        pins, settings, thumbnail, /api 404)
 │   ├── dto.go               JSON DTOs returned to the web client (MetaDTO, … — no fusion/step flags)
 │   ├── settings.go          server.json (runtime listen port) load/save
 │   ├── thumbcache.go        Bounded in-memory thumbnail status/URL/bytes cache (shared, TTL)
@@ -380,13 +389,14 @@ fusionlocalserver/
 │   └── graphql.go           In-process APS GraphQL fake (httptest.Server)
 │
 ├── docs/                    User + developer documentation
-│   ├── api.md               JSON API + GraphQL queries, retry behaviour, classifier, debug logging
+│   ├── api.md               v3 JSON API + GraphQL queries, retry behaviour, classifier, debug logging
 │   ├── architecture.md      This file — C4 diagrams, packages, data flow
 │   ├── authentication.md    Per-user OAuth Authorization Code + PKCE (BFF) flow
-│   ├── web-ui.md            Web UI: login, browser, tabs, Show-in-Location, pins, settings
+│   ├── web-ui.md            Web UI: login, browser, tabs, search, project mutations, pins, settings
 │   ├── development.md       Build, release, dependencies
 │   ├── debugging.md         End-user defect-submission guide
 │   ├── testing.md           Three-layer test strategy + how to extend
+│   ├── v3-where-used.md     Why Where-Used returns empty on v3 + options
 │   └── server-webui-plan.md Historical: original server + React/MUI web UI design record
 │
 ├── Makefile                 build (vite build → embed_ui → ldflags), install, run, dev, check

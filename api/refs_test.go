@@ -8,33 +8,37 @@ import (
 	"github.com/schneik80/fusionlocalserver/internal/testutil"
 )
 
+// prop builds a v3 Property object { value, displayValue }.
+func prop(s string) map[string]any {
+	return map[string]any{"value": s, "displayValue": s}
+}
+
 func TestGetOccurrences_DecodesAndPaginates(t *testing.T) {
 	calls := 0
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		calls++
-		if !strings.Contains(req.Query, "occurrences(pagination") {
-			t.Errorf("query missing occurrences field: %q", req.Query)
+		if !strings.Contains(req.Query, "bomRelations(depth") {
+			t.Errorf("query missing bomRelations field: %q", req.Query)
 		}
-		if got, _ := req.Variables["cvId"].(string); got != "CV1" {
-			t.Errorf("cvId variable = %v, want \"CV1\"", req.Variables["cvId"])
+		if got, _ := req.Variables["cv"].(string); got != "CV1" {
+			t.Errorf("cv variable = %v, want \"CV1\"", req.Variables["cv"])
 		}
 		switch calls {
 		case 1:
 			return testutil.GraphQLResponse{Data: map[string]any{
-				"componentVersion": map[string]any{
-					"occurrences": map[string]any{
+				"component": map[string]any{
+					"bomRelations": map[string]any{
 						"pagination": map[string]any{"cursor": "P2"},
 						"results": []map[string]any{
 							{
-								"id": "occ1",
-								"componentVersion": map[string]any{
-									"id":              "cvA",
-									"name":            "BoltA",
-									"partNumber":      "PN-1",
-									"partDescription": "M3 bolt",
-									"materialName":    "Steel",
-									"designItemVersion": map[string]any{
-										"item": map[string]any{
+								"toComponent": map[string]any{
+									"id":           "cvA",
+									"name":         prop("BoltA"),
+									"partNumber":   prop("PN-1"),
+									"description":  prop("M3 bolt"),
+									"materialName": prop("Steel"),
+									"primaryModel": map[string]any{
+										"designItem": map[string]any{
 											"id":           "diA",
 											"name":         "BoltA.f3d",
 											"fusionWebUrl": "https://x/a",
@@ -48,15 +52,14 @@ func TestGetOccurrences_DecodesAndPaginates(t *testing.T) {
 			}}
 		case 2:
 			return testutil.GraphQLResponse{Data: map[string]any{
-				"componentVersion": map[string]any{
-					"occurrences": map[string]any{
+				"component": map[string]any{
+					"bomRelations": map[string]any{
 						"pagination": map[string]any{"cursor": ""},
 						"results": []map[string]any{
 							{
-								"id": "occ2",
-								"componentVersion": map[string]any{
+								"toComponent": map[string]any{
 									"id":   "cvB",
-									"name": "Washer",
+									"name": prop("Washer"),
 								},
 							},
 						},
@@ -86,23 +89,31 @@ func TestGetOccurrences_DecodesAndPaginates(t *testing.T) {
 
 func TestGetWhereUsed_DecodesResults(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-		if !strings.Contains(req.Query, "whereUsed(pagination") {
-			t.Errorf("query missing whereUsed field: %q", req.Query)
+		if !strings.Contains(req.Query, "assemblyRelations(depth") {
+			t.Errorf("query missing assemblyRelations field: %q", req.Query)
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"whereUsed": map[string]any{
-					"pagination": map[string]any{"cursor": ""},
-					"results": []map[string]any{
-						{
-							"id":         "cvParent",
-							"name":       "MainAssembly",
-							"partNumber": "ASM-100",
-							"designItemVersion": map[string]any{
-								"item": map[string]any{
-									"id":           "diParent",
-									"name":         "Main.f3d",
-									"fusionWebUrl": "https://x/main",
+			"component": map[string]any{
+				"primaryModel": map[string]any{
+					"id": "selfModel",
+					"assemblyRelations": map[string]any{
+						"pagination": map[string]any{"cursor": ""},
+						"results": []map[string]any{
+							{
+								// toModel == self, so fromModel is a parent that uses us.
+								"toModel": map[string]any{"id": "selfModel"},
+								"fromModel": map[string]any{
+									"id": "parentModel",
+									"designItem": map[string]any{
+										"id":           "diParent",
+										"name":         "Main.f3d",
+										"fusionWebUrl": "https://x/main",
+									},
+									"component": map[string]any{
+										"id":         "cvParent",
+										"name":       prop("MainAssembly"),
+										"partNumber": prop("ASM-100"),
+									},
 								},
 							},
 						},
@@ -131,50 +142,38 @@ func TestGetWhereUsed_DecodesResults(t *testing.T) {
 // keeps only the first occurrence so the user sees each parent design
 // once. Orphan rows with no DesignItemID are passed through unchanged.
 func TestGetWhereUsed_DedupesByDesignItem(t *testing.T) {
+	// rel wraps a fromModel parent into an assemblyRelation whose toModel is
+	// the queried model itself (so GetWhereUsed keeps it).
+	rel := func(compID, diID, diName string) map[string]any {
+		from := map[string]any{
+			"id":        "fm-" + compID,
+			"component": map[string]any{"id": compID, "name": prop(compID)},
+		}
+		if diID != "" {
+			from["designItem"] = map[string]any{"id": diID, "name": diName}
+		}
+		return map[string]any{
+			"toModel":   map[string]any{"id": "selfModel"},
+			"fromModel": from,
+		}
+	}
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"whereUsed": map[string]any{
-					"pagination": map[string]any{"cursor": ""},
-					"results": []map[string]any{
-						// Three versions of the same parent design.
-						{
-							"id":   "cv-v1",
-							"name": "Robot v1",
-							"designItemVersion": map[string]any{
-								"item": map[string]any{"id": "di-robot", "name": "Robot.f3d"},
-							},
-						},
-						{
-							"id":   "cv-v2",
-							"name": "Robot v2",
-							"designItemVersion": map[string]any{
-								"item": map[string]any{"id": "di-robot", "name": "Robot.f3d"},
-							},
-						},
-						{
-							"id":   "cv-v3",
-							"name": "Robot v3",
-							"designItemVersion": map[string]any{
-								"item": map[string]any{"id": "di-robot", "name": "Robot.f3d"},
-							},
-						},
-						// A different parent design — should not be collapsed.
-						{
-							"id":   "cv-arm",
-							"name": "Arm",
-							"designItemVersion": map[string]any{
-								"item": map[string]any{"id": "di-arm", "name": "Arm.f3d"},
-							},
-						},
-						// Orphan with no DesignItemID — must pass through.
-						{
-							"id":   "cv-orphan-1",
-							"name": "Orphan1",
-						},
-						{
-							"id":   "cv-orphan-2",
-							"name": "Orphan2",
+			"component": map[string]any{
+				"primaryModel": map[string]any{
+					"id": "selfModel",
+					"assemblyRelations": map[string]any{
+						"pagination": map[string]any{"cursor": ""},
+						"results": []map[string]any{
+							// Three versions of the same parent design.
+							rel("cv-v1", "di-robot", "Robot.f3d"),
+							rel("cv-v2", "di-robot", "Robot.f3d"),
+							rel("cv-v3", "di-robot", "Robot.f3d"),
+							// A different parent design — should not be collapsed.
+							rel("cv-arm", "di-arm", "Arm.f3d"),
+							// Orphans with no DesignItemID — must pass through.
+							rel("cv-orphan-1", "", ""),
+							rel("cv-orphan-2", "", ""),
 						},
 					},
 				},
@@ -208,24 +207,24 @@ func TestGetWhereUsed_DedupesByDesignItem(t *testing.T) {
 // renders and the Show-in-Location handler navigates to.
 func TestGetDrawingSource_DecodesTipReference(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-		if !strings.Contains(req.Query, "tipDrawingVersion") {
-			t.Errorf("query missing tipDrawingVersion field: %q", req.Query)
+		if !strings.Contains(req.Query, "tipDrawing") {
+			t.Errorf("query missing tipDrawing field: %q", req.Query)
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
 			"item": map[string]any{
-				"tipDrawingVersion": map[string]any{
-					"componentVersion": map[string]any{
-						"id":              "cv-source",
-						"name":            "Robot",
-						"partNumber":      "PN-99",
-						"partDescription": "Main robot body",
-						"materialName":    "Steel",
-						"designItemVersion": map[string]any{
-							"item": map[string]any{
-								"id":           "di-robot",
-								"name":         "Robot.f3d",
-								"fusionWebUrl": "https://x/robot",
-							},
+				"tipDrawing": map[string]any{
+					"model": map[string]any{
+						"component": map[string]any{
+							"id":           "cv-source",
+							"name":         prop("Robot"),
+							"partNumber":   prop("PN-99"),
+							"description":  prop("Main robot body"),
+							"materialName": prop("Steel"),
+						},
+						"designItem": map[string]any{
+							"id":           "di-robot",
+							"name":         "Robot.f3d",
+							"fusionWebUrl": "https://x/robot",
 						},
 					},
 				},
@@ -251,13 +250,13 @@ func TestGetDrawingSource_DecodesTipReference(t *testing.T) {
 }
 
 // TestGetDrawingSource_NoTipReturnsEmpty: if the drawing has no
-// tipDrawingVersion (rare; freshly-created drawing without a saved
-// version), return an empty slice rather than a single all-empty ref.
+// tipDrawing (rare; freshly-created drawing without a saved version),
+// return an empty slice rather than a single all-empty ref.
 func TestGetDrawingSource_NoTipReturnsEmpty(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
 			"item": map[string]any{
-				"tipDrawingVersion": nil,
+				"tipDrawing": nil,
 			},
 		}}
 	})
@@ -272,74 +271,71 @@ func TestGetDrawingSource_NoTipReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestGetDrawingsForDesign_PaginatesVersions confirms the function
-// walks across multiple pages of DesignItem.versions when one round
-// trip isn't enough to capture all versions. APS caps query
-// complexity at 1000 points so the per-page outer limit is small (10
-// versions). Designs with many versions trigger additional round
-// trips — this test simulates that by returning a cursor on the
-// first page and "" on the second.
+// drawItemJSON builds one itemsByProject row for a DrawingItem whose tip
+// drawing's source design is designItemID.
+func drawItemJSON(id, name, modifiedOn, designItemID string) map[string]any {
+	return map[string]any{
+		"__typename":     "DrawingItem",
+		"id":             id,
+		"name":           name,
+		"lastModifiedOn": modifiedOn,
+		"fusionWebUrl":   "https://x/" + id,
+		"tipDrawing": map[string]any{
+			"model": map[string]any{
+				"designItem": map[string]any{"id": designItemID},
+			},
+		},
+	}
+}
+
+// TestGetDrawingsForDesign_PaginatesVersions confirms the function resolves
+// the design's project, then walks across multiple pages of itemsByProject
+// when one round trip isn't enough. APS caps query complexity at 1000 points
+// so the per-page limit is small. This test simulates pagination by returning
+// a cursor on the first project-items page and "" on the second.
 func TestGetDrawingsForDesign_PaginatesVersions(t *testing.T) {
 	page := 0
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
+		// First the project-resolution query, then the paginated item walk.
+		if strings.Contains(req.Query, "project { id }") {
+			if got, _ := req.Variables["itemId"].(string); got != "di-design" {
+				t.Errorf("project lookup itemId = %v, want di-design", req.Variables["itemId"])
+			}
+			return testutil.GraphQLResponse{Data: map[string]any{
+				"item": map[string]any{"project": map[string]any{"id": "proj-1"}},
+			}}
+		}
+		if !strings.Contains(req.Query, "itemsByProject") {
+			t.Errorf("unexpected query: %q", req.Query)
+		}
 		page++
 		switch page {
 		case 1:
 			if _, ok := req.Variables["cursor"]; ok {
-				t.Errorf("first call should not include cursor variable; got %v", req.Variables)
+				t.Errorf("first items call should not include cursor variable; got %v", req.Variables)
 			}
 			return testutil.GraphQLResponse{Data: map[string]any{
-				"item": map[string]any{
-					"versions": map[string]any{
-						"pagination": map[string]any{"cursor": "PAGE2"},
-						"results": []map[string]any{
-							{
-								"drawingItemVersions": map[string]any{
-									"results": []map[string]any{
-										{
-											"lastModifiedOn": "2026-01-01T00:00:00Z",
-											"item": map[string]any{
-												"id":           "di-top-view",
-												"name":         "Top View",
-												"fusionWebUrl": "https://x/top",
-											},
-										},
-									},
-								},
-							},
-						},
+				"itemsByProject": map[string]any{
+					"pagination": map[string]any{"cursor": "PAGE2"},
+					"results": []map[string]any{
+						drawItemJSON("di-top-view", "Top View", "2026-01-01T00:00:00Z", "di-design"),
 					},
 				},
 			}}
 		case 2:
 			if got, _ := req.Variables["cursor"].(string); got != "PAGE2" {
-				t.Errorf("second call cursor = %v, want PAGE2", req.Variables["cursor"])
+				t.Errorf("second items call cursor = %v, want PAGE2", req.Variables["cursor"])
 			}
 			return testutil.GraphQLResponse{Data: map[string]any{
-				"item": map[string]any{
-					"versions": map[string]any{
-						"pagination": map[string]any{"cursor": ""},
-						"results": []map[string]any{
-							{
-								"drawingItemVersions": map[string]any{
-									"results": []map[string]any{
-										{
-											"lastModifiedOn": "2026-02-01T00:00:00Z",
-											"item": map[string]any{
-												"id":           "di-section",
-												"name":         "Section A-A",
-												"fusionWebUrl": "https://x/sec",
-											},
-										},
-									},
-								},
-							},
-						},
+				"itemsByProject": map[string]any{
+					"pagination": map[string]any{"cursor": ""},
+					"results": []map[string]any{
+						drawItemJSON("di-section", "Section A-A", "2026-02-01T00:00:00Z", "di-design"),
 					},
 				},
 			}}
 		}
-		t.Fatalf("unexpected extra call: %d", page)
+		t.Fatalf("unexpected extra items call: %d", page)
 		return testutil.GraphQLResponse{}
 	})
 	swapEndpoint(t, srv.URL)
@@ -357,68 +353,41 @@ func TestGetDrawingsForDesign_PaginatesVersions(t *testing.T) {
 	}
 }
 
-// TestGetDrawingsForDesign_AggregatesAndDedupes asserts that drawings
-// are walked across every design version, deduped by their lineage URN
-// (so the same drawing showing up under multiple design versions
-// collapses to one row), and that the dedup keeps the most-recently-
-// modified version's metadata. Mirrors the real APS shape where one
-// drawing has versions tied to multiple design versions.
-func TestGetDrawingsForDesign_AggregatesAndDedupes(t *testing.T) {
+// TestGetDrawingsForDesign_FiltersAndSorts asserts that the project-wide
+// itemsByProject walk keeps only DrawingItems whose tipDrawing.model.designItem
+// matches the target design, drops drawings sourced from other designs and
+// non-drawing rows, and returns the survivors sorted newest-first.
+func TestGetDrawingsForDesign_FiltersAndSorts(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-		if !strings.Contains(req.Query, "drawingItemVersions") || !strings.Contains(req.Query, "DesignItem") {
+		if strings.Contains(req.Query, "project { id }") {
+			return testutil.GraphQLResponse{Data: map[string]any{
+				"item": map[string]any{"project": map[string]any{"id": "proj-1"}},
+			}}
+		}
+		if !strings.Contains(req.Query, "itemsByProject") ||
+			!strings.Contains(req.Query, "... on DrawingItem") ||
+			!strings.Contains(req.Query, "tipDrawing") {
 			t.Errorf("query shape unexpected: %q", req.Query)
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"item": map[string]any{
-				"versions": map[string]any{
-					"results": []map[string]any{
-						{
-							"drawingItemVersions": map[string]any{
-								"results": []map[string]any{
-									// One drawing, two versions (same lineage).
-									{
-										"id":             "dv-1-a",
-										"name":           "Top View",
-										"lastModifiedOn": "2026-01-15T10:30:00Z",
-										"lastModifiedBy": map[string]any{"firstName": "Ada"},
-										"item": map[string]any{
-											"id":           "di-top-view",
-											"name":         "Top View",
-											"fusionWebUrl": "https://x/top",
-										},
-									},
-									{
-										"id":             "dv-1-b",
-										"name":           "Top View",
-										"lastModifiedOn": "2026-03-01T08:00:00Z", // newer
-										"lastModifiedBy": map[string]any{"firstName": "Bob"},
-										"item": map[string]any{
-											"id":           "di-top-view",
-											"name":         "Top View",
-											"fusionWebUrl": "https://x/top",
-										},
-									},
-								},
-							},
-						},
-						{
-							"drawingItemVersions": map[string]any{
-								"results": []map[string]any{
-									{
-										"id":             "dv-2",
-										"name":           "Section A-A",
-										"lastModifiedOn": "2026-02-10T12:00:00Z",
-										"lastModifiedBy": map[string]any{"firstName": "Carol"},
-										"item": map[string]any{
-											"id":           "di-section",
-											"name":         "Section A-A",
-											"fusionWebUrl": "https://x/section",
-										},
-									},
-								},
-							},
-						},
-					},
+			"itemsByProject": map[string]any{
+				"pagination": map[string]any{"cursor": ""},
+				"results": []map[string]any{
+					// Two drawings sourced from the target design.
+					func() map[string]any {
+						d := drawItemJSON("di-top-view", "Top View", "2026-03-01T08:00:00Z", "di-design")
+						d["lastModifiedBy"] = map[string]any{"firstName": "Bob"}
+						return d
+					}(),
+					func() map[string]any {
+						d := drawItemJSON("di-section", "Section A-A", "2026-02-10T12:00:00Z", "di-design")
+						d["lastModifiedBy"] = map[string]any{"firstName": "Carol"}
+						return d
+					}(),
+					// Drawing sourced from a DIFFERENT design — must be filtered out.
+					drawItemJSON("di-other", "Other Drawing", "2026-04-01T00:00:00Z", "di-other-design"),
+					// A non-drawing row — must be filtered out.
+					{"__typename": "DesignItem", "id": "i-design", "name": "SomeDesign", "lastModifiedOn": "2026-05-01T00:00:00Z"},
 				},
 			},
 		}}
@@ -429,15 +398,15 @@ func TestGetDrawingsForDesign_AggregatesAndDedupes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDrawingsForDesign: %v", err)
 	}
-	// Expected: 2 unique drawings, sorted newest-first.
+	// Expected: 2 matching drawings, sorted newest-first.
 	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2 (one Top View dedup + one Section); got %+v", len(got), got)
+		t.Fatalf("len = %d, want 2 (Top View + Section); got %+v", len(got), got)
 	}
 	if got[0].DrawingItemID != "di-top-view" {
 		t.Errorf("first row should be Top View (newest modified), got %+v", got[0])
 	}
 	if got[0].ModifiedBy != "Bob" {
-		t.Errorf("dedup should keep newest entry's metadata, got ModifiedBy=%q", got[0].ModifiedBy)
+		t.Errorf("expected ModifiedBy=Bob for newest row, got %q", got[0].ModifiedBy)
 	}
 	if got[1].DrawingItemID != "di-section" {
 		t.Errorf("second row should be Section A-A, got %+v", got[1])

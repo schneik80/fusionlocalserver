@@ -20,17 +20,19 @@ func TestGetPhysicalProperties_Completed(t *testing.T) {
 			t.Errorf("Variables[cv] = %v, want cv-1", req.Variables["cv"])
 		}
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{
-				"physicalProperties": map[string]any{
-					"status":  "COMPLETED",
-					"area":    measureJSON("12.5", "cm^2"),
-					"volume":  measureJSON("3.4", "cm^3"),
-					"mass":    measureJSON("0.027", "kg"),
-					"density": measureJSON("8.0", "g/cm^3"),
-					"boundingBox": map[string]any{
-						"length": measureJSON("10", "mm"),
-						"width":  measureJSON("20", "mm"),
-						"height": measureJSON("30", "mm"),
+			"component": map[string]any{
+				"primaryModel": map[string]any{
+					"physicalProperties": map[string]any{
+						"status":  "COMPLETED",
+						"area":    measureJSON("12.5", "cm^2"),
+						"volume":  measureJSON("3.4", "cm^3"),
+						"mass":    measureJSON("0.027", "kg"),
+						"density": measureJSON("8.0", "g/cm^3"),
+						"boundingBox": map[string]any{
+							"length": measureJSON("10", "mm"),
+							"width":  measureJSON("20", "mm"),
+							"height": measureJSON("30", "mm"),
+						},
 					},
 				},
 			},
@@ -56,7 +58,9 @@ func TestGetPhysicalProperties_Completed(t *testing.T) {
 func TestGetPhysicalProperties_NullMapsToFailed(t *testing.T) {
 	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
-			"componentVersion": map[string]any{"physicalProperties": nil},
+			"component": map[string]any{
+				"primaryModel": map[string]any{"physicalProperties": nil},
+			},
 		}}
 	})
 	swapEndpoint(t, srv.URL)

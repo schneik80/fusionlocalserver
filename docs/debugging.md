@@ -119,7 +119,7 @@ The GraphQL gateway rejected the request as too expensive. If this comes from a 
 
 ### `unauthorized (HTTP 401)` / 401 from a data endpoint
 
-The session's access token is stale, was revoked, or lacks the `data:read` / `user-profile:read` scope. The web UI turns a 401 from the API into a prompt to sign in again. If a fresh sign-in still produces 401, the APS app registration may be misconfigured — see [`authentication.md`](authentication.md).
+The session's access token is stale, was revoked, or lacks one of the v3 scopes (`data:read data:write data:create data:search user-profile:read`). The web UI turns a 401 from the API into a prompt to sign in again. After upgrading from a v2 build the scope set widened, so existing users must sign in again once for the new scopes to take effect. If a fresh sign-in still produces 401, the APS app registration may be misconfigured (or missing a scope) — see [`authentication.md`](authentication.md).
 
 ### `GraphQL partial errors (kept data): …`
 
@@ -127,7 +127,7 @@ A response came back with both useful data and field-level errors. The client ke
 
 ### `ClassifyAssembly` query bursts after a folder load
 
-When a folder's contents load, the app dispatches up to 50 small `componentVersion(...).occurrences(pagination: { limit: 1 })` queries in parallel, capped at 8 concurrent in flight by a semaphore. Under `-v` this shows up as a burst of similar requests right after the `itemsByFolder` / `itemsByProject` response. Each one returns a single-result list (or empty) and refines a row's icon to assembly or part. If those queries 401 or get rate-limited, the corresponding rows silently keep their generic design icon — failures here never block navigation. See [`api.md`](api.md#classifyassembly--asyncpartassembly-subtype) for the query and the concurrency cap.
+When a folder's contents load, the app dispatches up to 50 small `component(componentId: …) { hasChildren … }` queries in parallel (the v3 classifier; usually combined with the thumbnail lookup), capped at 8 concurrent in flight by a semaphore. Under `-v` this shows up as a burst of similar requests right after the `itemsByFolder` / `itemsByProject` response. Each one returns the component's `hasChildren` boolean and refines a row's icon to assembly or part. If those queries 401 or get rate-limited, the corresponding rows silently keep their generic design icon — failures here never block navigation. See [`api.md`](api.md#classifyassembly--asyncpartassembly-subtype) for the query and the concurrency cap.
 
 ---
 

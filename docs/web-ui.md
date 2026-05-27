@@ -47,18 +47,19 @@ See [`docs/authentication.md`](authentication.md) for the full flow.
 
 ## Details panel
 
-Metadata (type, part number, description, material, version, dates) shows beside
+Metadata (type, part number, description, material, dates) shows beside
 the document's **thumbnail**. The **type** reads as a friendly label and, for
 designs, appends the assembly/part classification — e.g. "3D Design — Assembly",
-"3D Design — Part". Tabs:
+"3D Design — Part". (v3 has no integer version number, so there is no version
+field in the metadata — change history is the History tab below.) Tabs:
 
 | Tab | Shows |
 |-----|-------|
-| **History** | Version history (newest first) |
-| **Properties** | Physical/mass properties — mass, volume, surface area, density, bounding box (v2 Manufacturing Data Model) |
-| **BOM** | Flat bill of materials — Component / Part № / Material / Qty. Quantity is the occurrence count (the v2 API has no explicit quantity field) |
+| **History** | The time-based change log (newest first). v3 has no integer version numbers, so each entry is a change — timestamp, change type (e.g. "Version Created"), and author — rather than a numbered version |
+| **Properties** | A component's **extended base properties** (the hub's base-property definitions, populated with this component's values where set) followed by its **physical/mass properties** — mass, volume, surface area, density, bounding box (v3 Manufacturing Data Model) |
+| **BOM** | Immediate bill of materials — Component / Part № / Material / Qty. Quantity is a real v3 `quantity` field on each BOM relation (not an occurrence count). v3 `bomRelations` is depth-1, so this is the direct-children BOM, not a flattened multi-level tree |
 | **Uses** | Components used by this design (or, for a drawing, its source design) |
-| **Where Used** | Designs that use this component |
+| **Where Used** | Designs that use this component. v3 has **no reverse-reference query**, so this currently returns empty — see [`v3-where-used.md`](v3-where-used.md) |
 | **Drawings** | Drawings made from this design |
 | **Permissions** | The groups (and roles) with access to the item's project; expand a group to list its member users (member listing needs hub-admin access, otherwise a "no permission" note is shown) |
 
@@ -69,6 +70,32 @@ selecting one navigates the browser straight to that document.
 Thumbnails and physical properties are generated asynchronously by APS; the UI
 polls until each settles. Thumbnails are cached server-side and streamed
 same-origin, so repeat views are instant.
+
+## Search
+
+A **search lightbox** in the global header runs a **hub-wide** search across the
+active hub (v3 `searchByHub`). It supports two modes:
+
+- **Free text** — full-text search over the hub's documents.
+- **By property** — pick a searchable property (the picker is populated from the
+  hub's `searchablePropertiesByHub`) and supply a value.
+
+Each result row shows a thumbnail (when available) and the matched text;
+selecting a row uses Show-in-Location to navigate the browser straight to that
+document. Results are paginated and loaded on demand.
+
+## Projects — create, rename, archive
+
+The **Projects** column supports the v3 project lifecycle mutations:
+
+- **Create** — the **"+"** button adds a new project to the active hub
+  (`createProject`).
+- **Rename** — right-click a project and choose **Rename** (`renameProject`).
+- **Archive** — right-click a project and choose **Archive** (`archiveProject`;
+  reversible server-side via `restoreProject`).
+
+These require the wider v3 scope (`data:write` / `data:create`); see
+[`authentication.md`](authentication.md).
 
 ## Hubs, Pins, Settings
 
