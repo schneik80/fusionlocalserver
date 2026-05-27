@@ -254,6 +254,11 @@ function typeLabel(kind: string, typename?: string, subtype?: string): string {
   return sub ? `${base} — ${sub}` : base
 }
 
+// Fusion-native document kinds. Their "extension" is an internal type marker
+// (redundant with the Type row), so the Extension row is hidden for them and
+// shown only for uploaded files like PDF, DXF, or PNG.
+const FUSION_NATIVE_KINDS = new Set(['design', 'configured', 'drawing', 'schematic', 'pcb', 'ecad'])
+
 // LabelGrid renders a two-column label/value grid, dropping empty rows.
 function LabelGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
   const present = rows.filter(([, v]) => v !== undefined && v !== '' && v !== null)
@@ -307,7 +312,7 @@ function DetailsSummary({
     ['Material', query.material],
     ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
     ['Size', query.size],
-    ['Extension', query.extensionType],
+    ['Extension', FUSION_NATIVE_KINDS.has(kind) ? undefined : query.extensionType],
     ['Created', query.createdOn ? `${fmtDate(query.createdOn)} · ${query.createdBy ?? ''}` : undefined],
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
     ['Milestone', query.isMilestone ? 'Yes' : undefined],
