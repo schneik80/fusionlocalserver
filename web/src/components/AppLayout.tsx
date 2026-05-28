@@ -1,8 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faCubes,
-  faRightFromBracket,
-} from '@fortawesome/free-solid-svg-icons'
+import { faBuilding, faRightFromBracket } from '@fortawesome/free-solid-svg-icons'
 import {
   AppBar,
   Box,
@@ -70,7 +67,12 @@ export function AppLayout() {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <AppBar position="static">
         <Toolbar variant="dense" sx={{ gap: 1.5 }}>
-          <FontAwesomeIcon icon={faCubes} style={{ fontSize: 18, color: '#0696d7' }} />
+          <Box
+            component="img"
+            src="/logo-fusion.svg"
+            alt="fusionlocalserver"
+            sx={{ height: 22, width: 'auto', display: 'block' }}
+          />
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             fusionlocalserver
           </Typography>
@@ -83,7 +85,7 @@ export function AppLayout() {
           {nav.hubName && (
             <Chip
               size="small"
-              icon={<FontAwesomeIcon icon={faCubes} style={{ fontSize: 11 }} />}
+              icon={<FontAwesomeIcon icon={faBuilding} style={{ fontSize: 11 }} />}
               label={nav.hubName}
               onClick={() => setDialog('hubs')}
               variant="outlined"
