@@ -38,8 +38,8 @@ export function NavRail({
       }}
     >
       <Stack spacing={1.5}>
-        <RailButton icon={faMagnifyingGlass} label="Search" onClick={onOpenSearch} />
         <RailButton icon={faBuilding} label="Hubs" onClick={onOpenHubs} />
+        <RailButton icon={faMagnifyingGlass} label="Search" onClick={onOpenSearch} />
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />
       </Stack>
