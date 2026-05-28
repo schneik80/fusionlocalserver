@@ -80,6 +80,34 @@ export function ItemRow({
         ) : undefined
       }
     >
+      <Tooltip
+        title={
+          <RowTooltipBody
+            item={item}
+            pinned={pinned}
+            thumbCvId={thumbCvId}
+            thumbFailed={thumbFailed}
+          />
+        }
+        placement="right"
+        enterDelay={500}
+        enterNextDelay={200}
+        arrow
+        componentsProps={{
+          tooltip: {
+            sx: {
+              maxWidth: 280,
+              p: 0,
+              bgcolor: 'background.paper',
+              color: 'text.primary',
+              boxShadow: 4,
+              border: 1,
+              borderColor: 'divider',
+            },
+          },
+          arrow: { sx: { color: 'background.paper' } },
+        }}
+      >
       <ListItemButton
         selected={selected}
         onClick={onClick}
@@ -142,8 +170,71 @@ export function ItemRow({
           )}
         </Box>
       </ListItemButton>
+      </Tooltip>
     </ListItem>
   )
+}
+
+// RowTooltipBody is the rich hover card for a Contents row: large thumbnail (if
+// a design with a componentVersionId), the full untruncated name with a pin
+// indicator when pinned, and the full last-modified timestamp.
+function RowTooltipBody({
+  item,
+  pinned,
+  thumbCvId,
+  thumbFailed,
+}: {
+  item: Item
+  pinned: boolean
+  thumbCvId?: string
+  thumbFailed: boolean
+}) {
+  return (
+    <Box sx={{ p: 1.25, display: 'flex', flexDirection: 'column', gap: 1, minWidth: 200 }}>
+      {thumbCvId && !thumbFailed && (
+        <Box
+          component="img"
+          src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(thumbCvId)}`}
+          alt=""
+          sx={{
+            width: '100%',
+            maxHeight: 200,
+            objectFit: 'contain',
+            borderRadius: 0.5,
+            display: 'block',
+            bgcolor: 'action.hover',
+          }}
+        />
+      )}
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
+        <Typography
+          variant="body2"
+          sx={{ flex: 1, wordBreak: 'break-word', fontWeight: 500 }}
+        >
+          {item.name}
+        </Typography>
+        {pinned && (
+          <Box component="span" sx={{ color: 'primary.main', lineHeight: 1, mt: 0.25 }}>
+            <FontAwesomeIcon icon={faStar} style={{ fontSize: 12 }} />
+          </Box>
+        )}
+      </Box>
+      {item.lastModifiedOn && (
+        <Typography variant="caption" color="text.secondary">
+          Modified: {fmtLongDate(item.lastModifiedOn)}
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
+// fmtLongDate is the verbose locale date+time for the row tooltip (the inline
+// timestamp uses fmtShortDate; this one shows the full picture on hover).
+function fmtLongDate(s?: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  return d.toLocaleString()
 }
 
 // fmtShortDate renders an RFC3339 timestamp as a compact locale date (no time)
