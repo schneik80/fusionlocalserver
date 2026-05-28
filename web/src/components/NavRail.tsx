@@ -4,15 +4,21 @@ import {
   faBuilding,
   faGear,
   faMagnifyingGlass,
+  faMoon,
   faStar,
+  faSun,
 } from '@fortawesome/free-solid-svg-icons'
-import { IconButton, Paper, Stack, Tooltip } from '@mui/material'
+import { Box, IconButton, Paper, Stack, Tooltip } from '@mui/material'
 
 interface NavRailProps {
   onOpenSearch: () => void
   onOpenHubs: () => void
   onOpenPins: () => void
   onOpenSettings: () => void
+  /** current theme mode (drives the toggle icon) */
+  mode: 'light' | 'dark'
+  /** flips between light and dark */
+  onToggleTheme: () => void
 }
 
 export function NavRail({
@@ -20,6 +26,8 @@ export function NavRail({
   onOpenHubs,
   onOpenPins,
   onOpenSettings,
+  mode,
+  onToggleTheme,
 }: NavRailProps) {
   return (
     <Paper
@@ -35,6 +43,7 @@ export function NavRail({
         flexDirection: 'column',
         alignItems: 'center',
         pt: 1.5,
+        pb: 1.5,
       }}
     >
       <Stack spacing={1.5}>
@@ -43,6 +52,14 @@ export function NavRail({
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />
       </Stack>
+      {/* Theme toggle anchored at the very bottom of the rail. */}
+      <Box sx={{ mt: 'auto' }}>
+        <RailButton
+          icon={mode === 'dark' ? faSun : faMoon}
+          label={mode === 'dark' ? 'Switch to light' : 'Switch to dark'}
+          onClick={onToggleTheme}
+        />
+      </Box>
     </Paper>
   )
 }

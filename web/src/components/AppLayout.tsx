@@ -1,9 +1,7 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faCubes,
-  faMoon,
   faRightFromBracket,
-  faSun,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   AppBar,
@@ -91,11 +89,6 @@ export function AppLayout() {
               variant="outlined"
             />
           )}
-          <Tooltip title={mode === 'dark' ? 'Switch to light' : 'Switch to dark'}>
-            <IconButton aria-label="Toggle theme" onClick={toggle} sx={{ color: 'text.secondary' }}>
-              <FontAwesomeIcon icon={mode === 'dark' ? faSun : faMoon} style={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
           {authQ.data?.user && (authQ.data.user.name || authQ.data.user.email) && (
             <Typography variant="caption" color="text.secondary">
               {authQ.data.user.name || authQ.data.user.email}
@@ -115,6 +108,8 @@ export function AppLayout() {
           onOpenHubs={() => setDialog('hubs')}
           onOpenPins={() => setDialog('pins')}
           onOpenSettings={() => setDialog('settings')}
+          mode={mode}
+          onToggleTheme={toggle}
         />
         <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
           <BreadcrumbBar onOpenHubs={() => setDialog('hubs')} />
