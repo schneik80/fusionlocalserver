@@ -114,6 +114,42 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
     if (!available.includes(tab)) setTab('history')
   }, [available, tab])
 
+  // Refresh the active tab's data on tab change so the user never sees stale
+  // cached data from a previous visit to that tab. Invalidating triggers a
+  // refetch on the mounted observer (the just-revealed tab); other tabs go
+  // stale silently and refetch the next time they're shown.
+  const qc = useQueryClient()
+  useEffect(() => {
+    switch (tab) {
+      case 'history':
+        qc.invalidateQueries({ queryKey: ['details', hubId, item.id] })
+        break
+      case 'properties':
+        if (cvId) {
+          qc.invalidateQueries({ queryKey: ['customProperties', hubId, cvId] })
+          qc.invalidateQueries({ queryKey: ['properties', cvId] })
+        }
+        break
+      case 'bom':
+        if (cvId) qc.invalidateQueries({ queryKey: ['bom', cvId] })
+        break
+      case 'uses':
+        // useUses keys vary by design vs drawing shape — invalidate by prefix.
+        qc.invalidateQueries({ queryKey: ['uses'] })
+        break
+      case 'whereUsed':
+        if (cvId) qc.invalidateQueries({ queryKey: ['whereUsed', cvId] })
+        break
+      case 'drawings':
+        qc.invalidateQueries({ queryKey: ['drawings', hubId, item.id] })
+        break
+      case 'permissions':
+        qc.invalidateQueries({ queryKey: ['projectGroups'] })
+        break
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
   const detailsQ = useItemDetails(hubId, item.id)
   const cvId = item.componentVersionId || detailsQ.data?.rootComponentVersionId
   // Lazy assembly/part classification (cached, shared with the Contents column);
