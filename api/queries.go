@@ -248,20 +248,21 @@ func GetFolders(ctx context.Context, token, projectID string) ([]NavItem, error)
 		query GetFolders($projectId: ID!) {
 			foldersByProject(projectId: $projectId, pagination: { limit: 50 }) {
 				pagination { cursor }
-				results { id name }
+				results { id name lastModifiedOn }
 			}
 		}`
 	const qNext = `
 		query GetFoldersNext($projectId: ID!, $cursor: String!) {
 			foldersByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
-				results { id name }
+				results { id name lastModifiedOn }
 			}
 		}`
 
 	type folderResult struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		LastModifiedOn string `json:"lastModifiedOn"`
 	}
 
 	all, err := allPages(ctx, token, qFirst, qNext, map[string]any{"projectId": projectID}, func(data json.RawMessage) (string, []folderResult, error) {
@@ -284,7 +285,13 @@ func GetFolders(ctx context.Context, token, projectID string) ([]NavItem, error)
 
 	items := make([]NavItem, len(all))
 	for i, f := range all {
-		items[i] = NavItem{ID: f.ID, Name: f.Name, Kind: "folder", IsContainer: true}
+		items[i] = NavItem{
+			ID:             f.ID,
+			Name:           f.Name,
+			Kind:           "folder",
+			IsContainer:    true,
+			LastModifiedOn: f.LastModifiedOn,
+		}
 	}
 	return items, nil
 }
@@ -299,7 +306,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 			itemsByProject(projectId: $projectId, pagination: { limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
@@ -309,7 +316,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
@@ -350,7 +357,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
@@ -360,7 +367,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootModel { component { id } } }
 				}
 			}
@@ -396,10 +403,11 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 // v3 graph: DesignItem.tipRootModel -> Model.component -> Component.id);
 // drawings, configured designs, and folders leave it nil.
 type itemResult struct {
-	Typename     string `json:"__typename"`
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	TipRootModel *struct {
+	Typename       string `json:"__typename"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	LastModifiedOn string `json:"lastModifiedOn"`
+	TipRootModel   *struct {
 		Component *struct {
 			ID string `json:"id"`
 		} `json:"component"`
@@ -446,6 +454,7 @@ func navItemFromResult(it itemResult) NavItem {
 	if n.Kind == "design" && it.TipRootModel != nil && it.TipRootModel.Component != nil {
 		n.ComponentVersionID = it.TipRootModel.Component.ID
 	}
+	n.LastModifiedOn = it.LastModifiedOn
 	return n
 }
 

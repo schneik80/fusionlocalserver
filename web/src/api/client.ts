@@ -120,6 +120,34 @@ export const api = {
   folderContents: (hubId: string, folderId: string) =>
     request<Item[]>(`/api/folders/contents${qs({ hubId, folderId })}`),
 
+  createFolder: (args: { projectId: string; parentFolderId?: string; name: string }) =>
+    request<Item>('/api/folders', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
+  renameFolder: (args: { projectId: string; folderId: string; name: string }) =>
+    request<Item>('/api/folders/rename', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
+  moveFolder: (args: {
+    folderId: string
+    destinationProjectId: string
+    destinationFolderId?: string
+  }) =>
+    request<Item>('/api/folders/move', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
+  deleteFolder: (args: { hubId: string; folderId: string }) =>
+    request<void>('/api/folders/delete', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
   itemDetails: (hubId: string, itemId: string) =>
     request<Details>(`/api/items/details${qs({ hubId, itemId })}`),
 

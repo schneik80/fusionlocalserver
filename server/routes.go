@@ -34,6 +34,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/projects", prot(s.handleCreateProject))
 	mux.HandleFunc("POST /api/projects/rename", prot(s.handleRenameProject))
 	mux.HandleFunc("POST /api/projects/archive", prot(s.handleArchiveProject))
+	// Folder lifecycle mutations (v3; data:write/data:create).
+	mux.HandleFunc("POST /api/folders", prot(s.handleCreateFolder))
+	mux.HandleFunc("POST /api/folders/rename", prot(s.handleRenameFolder))
+	mux.HandleFunc("POST /api/folders/move", prot(s.handleMoveFolder))
+	mux.HandleFunc("POST /api/folders/delete", prot(s.handleDeleteFolder))
 	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
 	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
 	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))

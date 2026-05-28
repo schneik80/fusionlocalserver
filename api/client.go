@@ -87,6 +87,12 @@ type NavItem struct {
 	// pick the icon; an unclassified design falls back to the generic
 	// design icon until the refinement message lands.
 	Subtype string
+
+	// LastModifiedOn is the row's last-modification timestamp (RFC3339
+	// string, as the API returns it). Populated for items and folders so
+	// the Contents column can display the timestamp right-justified and
+	// sort by it.
+	LastModifiedOn string
 }
 
 type gqlRequest struct {

@@ -57,6 +57,8 @@ export function ItemRow({
   const thumbCvId = display.componentVersionId
   const [thumbFailed, setThumbFailed] = useState(false)
 
+  const modified = fmtShortDate(item.lastModifiedOn)
+
   return (
     <ListItem
       disablePadding
@@ -97,11 +99,19 @@ export function ItemRow({
             <FontAwesomeIcon icon={iconForItem(display)} style={{ fontSize: 15 }} />
           )}
         </ListItemIcon>
-        <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 0.75,
+          }}
+        >
           <Typography
             variant="body2"
             noWrap
-            sx={{ minWidth: 0, fontWeight: selected ? 600 : 400 }}
+            sx={{ minWidth: 0, flexShrink: 1, fontWeight: selected ? 600 : 400 }}
             title={item.name}
           >
             {item.name}
@@ -114,8 +124,34 @@ export function ItemRow({
               · {tag}
             </Typography>
           )}
+          {modified && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              title={item.lastModifiedOn}
+              sx={{
+                ml: 'auto',
+                pl: 1,
+                flexShrink: 0,
+                fontSize: 10,
+              }}
+            >
+              {modified}
+            </Typography>
+          )}
         </Box>
       </ListItemButton>
     </ListItem>
   )
+}
+
+// fmtShortDate renders an RFC3339 timestamp as a compact locale date (no time)
+// for the per-row "last modified" column. Mirrors DetailsPanel.fmtDate's
+// fallback behaviour; the title attribute preserves the full ISO string.
+function fmtShortDate(s?: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  return d.toLocaleDateString()
 }

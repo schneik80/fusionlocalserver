@@ -304,6 +304,51 @@ export function useProjectMutations(hubId: string | null) {
   return { create, rename, archive }
 }
 
+// useFolderMutations wires the v3 folder lifecycle (create / rename / move /
+// delete). On any success it invalidates BOTH the project-root contents query
+// and the current folder's contents query, since either or both may be active
+// depending on where the user is.
+export function useFolderMutations(
+  hubId: string | null,
+  projectId: string | null,
+  folderId: string | null,
+) {
+  const qc = useQueryClient()
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['projectContents', projectId] })
+    void qc.invalidateQueries({ queryKey: ['folderContents', hubId, folderId] })
+  }
+
+  const create = useMutation({
+    mutationFn: (v: { name: string; parentFolderId?: string }) =>
+      api.createFolder({
+        projectId: projectId!,
+        parentFolderId: v.parentFolderId,
+        name: v.name,
+      }),
+    onSuccess: invalidate,
+  })
+  const rename = useMutation({
+    mutationFn: (v: { folderId: string; name: string }) =>
+      api.renameFolder({ projectId: projectId!, folderId: v.folderId, name: v.name }),
+    onSuccess: invalidate,
+  })
+  const move = useMutation({
+    mutationFn: (v: { folderId: string; destinationFolderId?: string }) =>
+      api.moveFolder({
+        folderId: v.folderId,
+        destinationProjectId: projectId!,
+        destinationFolderId: v.destinationFolderId,
+      }),
+    onSuccess: invalidate,
+  })
+  const del = useMutation({
+    mutationFn: (folderId: string) => api.deleteFolder({ hubId: hubId!, folderId }),
+    onSuccess: invalidate,
+  })
+  return { create, rename, move, del }
+}
+
 export function usePinMutations(hubId: string | null) {
   const qc = useQueryClient()
   const invalidate = () => qc.invalidateQueries({ queryKey: ['pins', hubId] })

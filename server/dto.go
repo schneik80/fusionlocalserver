@@ -45,6 +45,9 @@ type ItemDTO struct {
 	IsContainer        bool   `json:"isContainer"`
 	ComponentVersionID string `json:"componentVersionId,omitempty"`
 	Subtype            string `json:"subtype,omitempty"`
+	// LastModifiedOn is the row's last-modification timestamp (RFC3339), used
+	// by the Contents column for the right-justified date and the sort.
+	LastModifiedOn string `json:"lastModifiedOn,omitempty"`
 }
 
 // ContentsDTO is the combined folders+items payload for GET /api/projects/contents.
@@ -230,6 +233,7 @@ func itemDTO(n api.NavItem) ItemDTO {
 		IsContainer:        n.IsContainer,
 		ComponentVersionID: n.ComponentVersionID,
 		Subtype:            n.Subtype,
+		LastModifiedOn:     n.LastModifiedOn,
 	}
 }
 

@@ -45,6 +45,7 @@ export interface Item {
   isContainer: boolean
   componentVersionId?: string
   subtype?: string // "assembly" | "part" | "dwg" | "template" | ""
+  lastModifiedOn?: string // RFC3339; populated by the server on items/folders rows
 }
 
 export interface Contents {
