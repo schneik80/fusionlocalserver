@@ -62,6 +62,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 	mux.HandleFunc("GET /api/items/custom-properties", prot(s.handleCustomProperties))
 
+	// Decoded model: 3D geometry (GLB) + parameters + timeline. The status
+	// endpoint kicks off a background download+decode job (lazy, on first call);
+	// /glb and /data serve the cached artifacts once it reports SUCCESS.
+	mux.HandleFunc("GET /api/items/model", prot(s.handleModelStatus))
+	mux.HandleFunc("GET /api/items/model/data", prot(s.handleModelData))
+	mux.HandleFunc("GET /api/items/model/glb", prot(s.handleModelGLB))
+
 	// Settings.
 	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))
 

@@ -17,6 +17,8 @@ import type {
   Item,
   Location,
   Meta,
+  ModelData,
+  ModelStatus,
   NamedProperty,
   PhysicalProperties,
   Pin,
@@ -137,6 +139,48 @@ export const useProperties = (
       if (q.state.dataUpdateCount >= 15) return false
       return 2000
     },
+  })
+
+// useModelStatus drives the lazy decode job for the 3D tab. The first poll
+// kicks off the server-side download+decode; subsequent polls (every 2s) track
+// it until SUCCESS or FAILED. Large assemblies can take minutes, so the poll is
+// capped generously (~150 polls ≈ 5 min) rather than the thumbnail's tighter
+// bound. ver is the item's tip timestamp, so a re-saved design decodes fresh.
+export const useModelStatus = (
+  args: { hubId: string | null; itemId: string | null; ver?: string; dmProjectId?: string },
+  enabled: boolean,
+): UseQueryResult<ModelStatus> =>
+  useQuery({
+    queryKey: ['model', args.hubId, args.itemId, args.ver],
+    queryFn: () =>
+      api.modelStatus({
+        hubId: args.hubId!,
+        itemId: args.itemId!,
+        ver: args.ver,
+        dmProjectId: args.dmProjectId,
+      }),
+    enabled: enabled && !!args.hubId && !!args.itemId,
+    staleTime: Infinity,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      if (s === 'SUCCESS' || s === 'FAILED') return false
+      if (q.state.dataUpdateCount >= 150) return false
+      return 2000
+    },
+  })
+
+// useModelData fetches the projected parameters/timeline once the decode job is
+// SUCCESS. It's static thereafter (the version identity is immutable), so cache
+// indefinitely.
+export const useModelData = (
+  args: { hubId: string | null; itemId: string | null; ver?: string },
+  enabled: boolean,
+): UseQueryResult<ModelData> =>
+  useQuery({
+    queryKey: ['modelData', args.hubId, args.itemId, args.ver],
+    queryFn: () => api.modelData({ hubId: args.hubId!, itemId: args.itemId!, ver: args.ver }),
+    enabled: enabled && !!args.hubId && !!args.itemId,
+    staleTime: Infinity,
   })
 
 export const useUses = (args: {

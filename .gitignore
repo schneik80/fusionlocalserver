@@ -3,6 +3,9 @@ fusionlocalserver
 fusionlocalserver.exe
 probe-assembly
 
+# Bundled f3d-reader CLI (placed by `make bundle`; never committed)
+/f3d-reader/
+
 # Build secrets — store your client_id here, never commit it
 .aps-client-id
 .aps-region

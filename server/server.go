@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -102,6 +103,14 @@ type Server struct {
 	// kicked off from the classify probe.
 	thumbs  *thumbCache
 	warmSem chan struct{}
+
+	// models is the on-disk cache of decoded designs (GLB + parameters +
+	// timeline), keyed by version identity and shared across clients. modelSem
+	// bounds concurrent reader subprocesses (each is memory-hungry). models is
+	// nil if the cache directory could not be created, in which case the model
+	// endpoints reply 503.
+	models   *modelCache
+	modelSem chan struct{}
 }
 
 // serveReason explains why the inner serve loop returned.
@@ -151,6 +160,18 @@ func Run(opts Options) error {
 		restartCh:        make(chan struct{}, 1),
 		thumbs:           newThumbCache(512, 10*time.Minute),
 		warmSem:          make(chan struct{}, 12),
+		modelSem:         make(chan struct{}, modelDecodeConcurrency),
+	}
+
+	// On-disk decoded-model cache under <config>/models. A failure to create it
+	// (e.g. no home dir) is non-fatal: the model endpoints reply 503 and the
+	// rest of the server runs normally.
+	if cfgDir, derr := config.Dir(); derr != nil {
+		logger.Warn("model cache disabled: cannot resolve config dir", "err", derr)
+	} else if mc, merr := newModelCache(filepath.Join(cfgDir, "models"), modelCacheMaxBytes); merr != nil {
+		logger.Warn("model cache disabled", "err", merr)
+	} else {
+		s.models = mc
 	}
 
 	// A canonical public URL fixes the OAuth redirect_uri (one APS registration)

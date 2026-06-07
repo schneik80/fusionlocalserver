@@ -15,6 +15,8 @@ import type {
   Item,
   Location,
   Meta,
+  ModelData,
+  ModelStatus,
   NamedProperty,
   PhysicalProperties,
   Pin,
@@ -193,6 +195,19 @@ export const api = {
 
   customProperties: (hubId: string, cvId: string) =>
     request<NamedProperty[]>(`/api/items/custom-properties${qs({ hubId, cvId })}`),
+
+  // Decoded model. modelStatus kicks off (and polls) the lazy download+decode
+  // job; modelData fetches the projected parameters/timeline once it's SUCCESS.
+  // modelGlbUrl is a plain URL for <model-viewer src> — the binary GLB is
+  // streamed (Range-capable) by the server, not fetched through request().
+  modelStatus: (args: { hubId: string; itemId: string; ver?: string; dmProjectId?: string }) =>
+    request<ModelStatus>(`/api/items/model${qs(args)}`),
+
+  modelData: (args: { hubId: string; itemId: string; ver?: string }) =>
+    request<ModelData>(`/api/items/model/data${qs(args)}`),
+
+  modelGlbUrl: (args: { hubId: string; itemId: string; ver?: string }) =>
+    `/api/items/model/glb${qs(args)}`,
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

@@ -29,21 +29,48 @@ import {
   useDrawings,
   useGroupMembers,
   useItemDetails,
+  useModelData,
+  useModelStatus,
   useProjectGroups,
   useProperties,
   useThumbnail,
   useUses,
   useWhereUsed,
 } from '../api/queries'
-import type { ComponentRef, Details, DrawingRef, Item, Measure, ProjectGroup } from '../api/types'
+import type {
+  ComponentRef,
+  Details,
+  DrawingRef,
+  Item,
+  Measure,
+  ModelData,
+  ProjectGroup,
+} from '../api/types'
 import { useNav } from '../state/nav'
 import { iconForItem } from './icons'
+import { ParametersTable } from './ParametersTable'
+import { TimelineList } from './TimelineList'
+import { SceneViewer } from './SceneViewer'
+import { ErrorBoundary } from './ErrorBoundary'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
-type TabKey = 'history' | 'properties' | 'bom' | 'uses' | 'whereUsed' | 'drawings' | 'permissions'
+type TabKey =
+  | 'model'
+  | 'parameters'
+  | 'timeline'
+  | 'history'
+  | 'properties'
+  | 'bom'
+  | 'uses'
+  | 'whereUsed'
+  | 'drawings'
+  | 'permissions'
 
 const TAB_LABEL: Record<TabKey, string> = {
+  model: '3D',
+  parameters: 'Parameters',
+  timeline: 'Timeline',
   history: 'History',
   properties: 'Properties',
   bom: 'BOM',
@@ -58,8 +85,9 @@ const TAB_LABEL: Record<TabKey, string> = {
 // applies to any document; everything else is History only.
 function tabsFor(kind: string): TabKey[] {
   if (kind === 'design')
-    return ['history', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
-  if (kind === 'configured') return ['history', 'properties', 'bom', 'permissions']
+    return ['model', 'parameters', 'timeline', 'history', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
+  if (kind === 'configured')
+    return ['model', 'parameters', 'timeline', 'history', 'properties', 'bom', 'permissions']
   if (kind === 'drawing') return ['history', 'uses', 'permissions']
   return ['history']
 }
@@ -121,6 +149,13 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
   const qc = useQueryClient()
   useEffect(() => {
     switch (tab) {
+      case 'model':
+      case 'parameters':
+      case 'timeline':
+        // The decoded model (geometry, parameters, timeline) is immutable for a
+        // given version, so don't invalidate on revisit — that would re-trigger
+        // the download+decode.
+        break
       case 'history':
         qc.invalidateQueries({ queryKey: ['details', hubId, item.id] })
         break
@@ -191,7 +226,25 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
         ))}
       </Tabs>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 2 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          // The 3D tab fills the area (tree pane + canvas); the rest scroll with padding.
+          ...(tab === 'model'
+            ? { display: 'flex', overflow: 'hidden' }
+            : { overflowY: 'auto', p: 2 }),
+        }}
+      >
+        {tab === 'model' && (
+          <Model3DTab hubId={hubId} itemId={item.id} ver={detailsQ.data?.tipTimestamp} active />
+        )}
+        {tab === 'parameters' && (
+          <ModelParametersTab hubId={hubId} itemId={item.id} ver={detailsQ.data?.tipTimestamp} active />
+        )}
+        {tab === 'timeline' && (
+          <ModelTimelineTab hubId={hubId} itemId={item.id} ver={detailsQ.data?.tipTimestamp} active />
+        )}
         {tab === 'history' && (
           <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
@@ -487,6 +540,148 @@ function BOMTab({ cvId, active }: { cvId?: string; active: boolean }) {
         </TableBody>
       </Table>
     </>
+  )
+}
+
+// The "3D", "Parameters", and "Timeline" tabs all draw from one server-side
+// decode job: it lazily downloads the design's native file, decodes it with
+// f3d-reader, and produces a GLB plus the projected parameters/timeline. Each
+// tab polls the same job status (PENDING → SUCCESS/FAILED, like the thumbnail
+// probe); React Query dedupes the shared queries so opening any of the three
+// triggers/reuses the single job. A design saved without cached graphics still
+// yields parameters/timeline (the 3D tab just reports no geometry).
+
+// useModelGate runs the shared status (+ optional data) queries and returns the
+// current phase so each tab can render uniformly. dmProjectId comes from nav
+// context because the item's own `project` field can't be resolved on these hubs.
+function useModelGate(
+  hubId: string | null,
+  itemId: string,
+  ver: string | undefined,
+  active: boolean,
+  needData: boolean,
+) {
+  const nav = useNav()
+  const dmProjectId = nav.project?.altId
+  const statusQ = useModelStatus({ hubId, itemId, ver, dmProjectId }, active)
+  const ready = statusQ.data?.status === 'SUCCESS'
+  const dataQ = useModelData({ hubId, itemId, ver }, active && ready && needData)
+  return { statusQ, dataQ, ready }
+}
+
+// ModelGate renders the shared loading/pending/failed states, and calls render()
+// once the decode has succeeded (and the projected data is loaded, if needed).
+function ModelGate({
+  hubId,
+  itemId,
+  ver,
+  active,
+  needData,
+  render,
+}: {
+  hubId: string | null
+  itemId: string
+  ver?: string
+  active: boolean
+  needData: boolean
+  render: (ctx: { data?: ModelData; hasGlb: boolean }) => ReactNode
+}) {
+  const { statusQ, dataQ } = useModelGate(hubId, itemId, ver, active, needData)
+  const status = statusQ.data?.status
+
+  if (statusQ.isLoading || (active && !status)) return <ModelProgress text="Preparing model…" />
+  if (statusQ.error) return <TabError error={statusQ.error as Error} />
+  if (status === 'PENDING')
+    return (
+      <ModelProgress text="Downloading & decoding the design… this can take a while for large assemblies." />
+    )
+  if (status === 'FAILED')
+    return <TabError error={new Error(statusQ.data?.error || 'Could not prepare this model.')} />
+
+  // SUCCESS.
+  if (needData && dataQ.isLoading) return <TabSpinner />
+  if (needData && dataQ.error) return <TabError error={dataQ.error as Error} />
+  return <>{render({ data: dataQ.data, hasGlb: !!statusQ.data?.hasGlb })}</>
+}
+
+// Model3DTab fills the tab area with the scene-tree pane + 3D canvas.
+function Model3DTab({
+  hubId,
+  itemId,
+  ver,
+  active,
+}: {
+  hubId: string | null
+  itemId: string
+  ver?: string
+  active: boolean
+}) {
+  return (
+    <ModelGate
+      hubId={hubId}
+      itemId={itemId}
+      ver={ver}
+      active={active}
+      needData={false}
+      render={({ hasGlb }) => {
+        if (!hasGlb || !hubId)
+          return (
+            <Box sx={{ p: 2 }}>
+              <TabEmpty text="No 3D geometry (this design was saved without cached graphics)." />
+            </Box>
+          )
+        // Keyed by glbUrl so switching documents fully remounts the viewer.
+        const glbUrl = api.modelGlbUrl({ hubId, itemId, ver })
+        return (
+          <ErrorBoundary label="3D viewer">
+            <SceneViewer key={glbUrl} glbUrl={glbUrl} />
+          </ErrorBoundary>
+        )
+      }}
+    />
+  )
+}
+
+function ModelParametersTab(props: {
+  hubId: string | null
+  itemId: string
+  ver?: string
+  active: boolean
+}) {
+  return (
+    <ModelGate
+      {...props}
+      needData
+      render={({ data }) => <ParametersTable parameters={data?.parameters ?? {}} />}
+    />
+  )
+}
+
+function ModelTimelineTab(props: {
+  hubId: string | null
+  itemId: string
+  ver?: string
+  active: boolean
+}) {
+  return (
+    <ModelGate
+      {...props}
+      needData
+      render={({ data }) => <TimelineList timeline={data?.timeline ?? []} />}
+    />
+  )
+}
+
+// ModelProgress shows a spinner with an explanatory line for the (potentially
+// slow) decode job.
+function ModelProgress({ text }: { text: string }) {
+  return (
+    <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+      <CircularProgress size={20} />
+      <Typography variant="body2" color="text.secondary">
+        {text}
+      </Typography>
+    </Stack>
   )
 }
 

@@ -91,6 +91,52 @@ export interface Thumbnail {
   signedUrl?: string
 }
 
+// ModelStatus mirrors server.ModelStatusDTO. status is the decode-job state
+// ("PENDING" | "SUCCESS" | "FAILED"); error is set on FAILED; hasGlb tells the
+// UI whether a 3D view is available (a design saved without cached graphics
+// decodes fine but exports no geometry).
+export interface ModelStatus {
+  status: string
+  error?: string
+  hasGlb?: boolean
+}
+
+// ModelParameter is one entry of synthesized.parameters from the f3d-reader.
+// userName is the Fusion ID handle (e.g. "d12"); name is the role/display
+// label. value is the raw internal magnitude; expression/unit are the
+// display-formatted form.
+export interface ModelParameter {
+  userName?: string
+  name?: string
+  expression?: string
+  value?: number
+  unit?: string
+  isUserDefined?: boolean
+  isDriven?: boolean
+  isOrphan?: boolean
+  ownerFeatureId?: string
+  type?: string
+}
+
+// ModelTimelineEntry is one entry of synthesized.timeline — an ordered feature
+// in the design's parametric history. Shape varies by feature type, so only the
+// common fields are typed; the rest is kept loose.
+export interface ModelTimelineEntry {
+  index?: number
+  type?: string
+  name?: string
+  displayName?: string
+  uuid?: string
+  [k: string]: unknown
+}
+
+// ModelData mirrors the projected server data.json: just the parameters map and
+// the ordered timeline lifted from the reader's synthesized envelope.
+export interface ModelData {
+  parameters: Record<string, ModelParameter>
+  timeline: ModelTimelineEntry[]
+}
+
 // Measure / PhysicalProperties mirror the v2 physical-properties DTOs.
 // status is "COMPLETED" | "FAILED" | (computing).
 export interface Measure {

@@ -15,7 +15,7 @@ LDFLAGS    := -X $(MODULE)/config.DefaultClientID=$(CLIENT_ID) \
               -X $(MODULE)/config.DefaultRegion=$(REGION) \
               -X main.version=$(VERSION)
 
-.PHONY: build install run clean check web
+.PHONY: build install run clean check web bundle
 
 # Build the React/MUI web UI into server/webdist. The whole server/webdist/
 # tree is gitignored build output; the `-tags embed_ui` builds below embed it
@@ -47,8 +47,18 @@ run: build
 dev:
 	go build -o fusionlocalserver .
 
+# Bundle the f3d-reader CLI next to the built binary so the 3D/parameters/
+# timeline feature can shell out to it. Run after `make build`. Point it at the
+# reader source with F3D_READER_SRC=/path/to/fusion-next/f3d-reader, or at a
+# prebuilt binary with F3D_READER_BIN=/path/to/f3d-reader. The reader lands at
+# ./f3d-reader/bin/f3d-reader, which the server resolves relative to its own
+# executable. For dev without bundling, set FLS_READER_BIN to a built reader.
+bundle: build
+	./scripts/bundle-reader.sh
+
 clean:
 	rm -f fusionlocalserver
+	rm -rf f3d-reader
 
 check:
 	go vet ./...
