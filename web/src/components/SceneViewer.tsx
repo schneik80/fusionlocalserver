@@ -160,24 +160,27 @@ export function SceneViewer({ glbUrl }: { glbUrl: string }) {
         controls.update()
 
         // CAD edge overlay using fat lines (LineMaterial honours linewidth in px;
-        // LineBasicMaterial is always 1px). Parented to each mesh so edges
-        // inherit transform + visibility.
+        // LineBasicMaterial is always 1px). Collect the meshes FIRST: adding the
+        // edge children during traverse() would make traverse visit each new
+        // LineSegments2 (itself a Mesh subclass) and recurse forever.
+        const meshes: THREE.Mesh[] = []
         gltf.scene.traverse((obj) => {
           const mesh = obj as THREE.Mesh
-          if (mesh.isMesh && mesh.geometry) {
-            const eg = new THREE.EdgesGeometry(mesh.geometry, EDGE_THRESHOLD_DEG)
-            const lsg = new LineSegmentsGeometry().fromEdgesGeometry(eg)
-            eg.dispose()
-            const lm = new LineMaterial({ color: 0x202020, linewidth: EDGE_WIDTH_PX })
-            lm.resolution.set(width, height)
-            const seg = new LineSegments2(lsg, lm)
-            seg.visible = edges
-            seg.renderOrder = 1
-            mesh.add(seg)
-            g.edgeLines.push(seg)
-            g.edgeMaterials.push(lm)
-          }
+          if (mesh.isMesh && mesh.geometry && !(obj instanceof LineSegments2)) meshes.push(mesh)
         })
+        for (const mesh of meshes) {
+          const eg = new THREE.EdgesGeometry(mesh.geometry, EDGE_THRESHOLD_DEG)
+          const lsg = new LineSegmentsGeometry().fromEdgesGeometry(eg)
+          eg.dispose()
+          const lm = new LineMaterial({ color: 0x202020, linewidth: EDGE_WIDTH_PX })
+          lm.resolution.set(width, height)
+          const seg = new LineSegments2(lsg, lm)
+          seg.visible = edges
+          seg.renderOrder = 1
+          mesh.add(seg)
+          g.edgeLines.push(seg)
+          g.edgeMaterials.push(lm)
+        }
 
         n8ao.configuration.aoRadius = maxDim * 0.15
         n8ao.configuration.distanceFalloff = n8ao.configuration.aoRadius
