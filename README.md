@@ -121,6 +121,7 @@ make build                                # vite build → embed UI (-tags embed
 | [`docs/web-ui.md`](docs/web-ui.md) | The web UI: sign-in, the three-column browser, details tabs, search, project create/rename/archive, pins, settings |
 | [`docs/authentication.md`](docs/authentication.md) | Per-user OAuth (PKCE) login, sessions, cookies, token refresh |
 | [`docs/api.md`](docs/api.md) | APS Manufacturing Data Model **v3** GraphQL queries, retry behaviour, debug logging |
+| [`docs/3d-viewer.md`](docs/3d-viewer.md) | The **3D / Parameters / Timeline** tabs: native-file download chain (MFGDM → Data Management → OSS), on-demand decode via `f3d-reader`, and the three.js viewer (AO, edges, HDRI) |
 | [`docs/architecture.md`](docs/architecture.md) | C4 diagrams, package layout, request/session flow, performance, resilience |
 | [`docs/development.md`](docs/development.md) | Building from source, configuration, release pipeline, dependencies |
 | [`docs/debugging.md`](docs/debugging.md) | Logging, `-v`, and **reporting a bug** — what to capture and how to file it |
