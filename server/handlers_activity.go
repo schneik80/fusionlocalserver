@@ -24,10 +24,6 @@ import (
 // aggregated to the requested scope, so project/folder/design reports need no
 // extra round-trips.
 func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
-	hub, ok := reqParam(w, r, "hub")
-	if !ok {
-		return
-	}
 	q := r.URL.Query()
 
 	scope := api.Scope(q.Get("scope"))
@@ -38,12 +34,6 @@ func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 	case api.ScopeHub, api.ScopeProject, api.ScopeFolder, api.ScopeDesign:
 	default:
 		writeError(w, http.StatusBadRequest, "invalid scope: must be hub, project, folder, or design")
-		return
-	}
-
-	id := q.Get("id")
-	if scope != api.ScopeHub && id == "" {
-		writeError(w, http.StatusBadRequest, "missing required query parameter: id (for scope "+string(scope)+")")
 		return
 	}
 
@@ -63,12 +53,47 @@ func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Design scope is sourced from the Manufacturing Data Model GraphQL (the
+	// notifications feed rejects this app's token). It takes the GraphQL hub id
+	// (hubId) and the item/lineage id (id) — the same pair the Details endpoint
+	// uses — not the feed slug.
+	if scope == api.ScopeDesign {
+		hubID, ok := reqParam(w, r, "hubId")
+		if !ok {
+			return
+		}
+		itemID := q.Get("id")
+		if itemID == "" {
+			writeError(w, http.StatusBadRequest, "missing required query parameter: id (the item/lineage id, for scope design)")
+			return
+		}
+		events, err := api.GetDesignActivity(ctx, token, hubID, itemID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		rep := api.BuildReport(events, scope, itemID, api.Bucket(q.Get("bucket")), from, to)
+		writeJSON(w, http.StatusOK, activityReportDTO(rep))
+		return
+	}
+
+	// Hub / project / folder scopes still come from the notifications feed (the
+	// hub slug aggregated server-side). NOTE: the feed currently returns HTTP 500
+	// for this app's token — these scopes are pending a GraphQL rebuild.
+	hub, ok := reqParam(w, r, "hub")
+	if !ok {
+		return
+	}
+	id := q.Get("id")
+	if scope != api.ScopeHub && id == "" {
+		writeError(w, http.StatusBadRequest, "missing required query parameter: id (for scope "+string(scope)+")")
+		return
+	}
 	events, err := api.GetActivityFeed(ctx, token, hub)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-
 	rep := api.BuildReport(events, scope, id, api.Bucket(q.Get("bucket")), from, to)
 	writeJSON(w, http.StatusOK, activityReportDTO(rep))
 }
