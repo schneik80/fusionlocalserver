@@ -22,6 +22,13 @@ var DefaultClientID = ""
 // Injected at build time alongside DefaultClientID when targeting a specific region.
 var DefaultRegion = ""
 
+// DefaultPublicURL is the canonical external base URL the APS app's OAuth
+// callback is registered under, e.g. "https://ryzen-nobara.local:8080". Injected
+// at build time alongside DefaultClientID so a built binary serves on the host
+// the APS app expects without needing the -public-url flag. The -public-url flag
+// still overrides it. Empty means "derive the redirect_uri from each request".
+var DefaultPublicURL = ""
+
 // Config holds the application configuration.
 type Config struct {
 	ClientID     string `json:"client_id"`

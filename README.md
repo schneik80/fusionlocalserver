@@ -89,9 +89,12 @@ Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps)
 
 ```sh
 echo "your-client-id" > .aps-client-id    # git-ignored
+echo "https://your-host:8080" > .aps-public-url   # optional, git-ignored: the URL your APS callback is registered under
 make build                                # vite build → embed UI (-tags embed_ui) → go build
 ./fusionlocalserver -tls                  # serve over HTTPS, or just: make run
 ```
+
+If `.aps-public-url` is present, `make build` bakes it in as the canonical base URL: the binary then builds the OAuth `redirect_uri` from it (so you register **one** callback) and redirects clients on other hosts to it — no `-public-url` flag needed. The flag still overrides the baked-in value.
 
 | Target | What it does |
 |--------|--------------|

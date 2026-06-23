@@ -23,6 +23,13 @@ func main() {
 	)
 	flag.Parse()
 
+	// Fall back to the build-time canonical URL (the address the APS app's OAuth
+	// callback is registered under) when -public-url is not given, so a published
+	// binary serves on the expected host without the flag.
+	if *publicURL == "" && config.DefaultPublicURL != "" {
+		*publicURL = config.DefaultPublicURL
+	}
+
 	cfg, cfgErr := config.Load()
 
 	if err := server.Run(server.Options{

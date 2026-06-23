@@ -9,10 +9,16 @@
 
 CLIENT_ID  ?= $(shell cat .aps-client-id 2>/dev/null | tr -d '[:space:]')
 REGION     ?= $(shell cat .aps-region 2>/dev/null | tr -d '[:space:]')
+# PUBLIC_URL is the canonical external base URL the APS app's OAuth callback is
+# registered under (e.g. https://ryzen-nobara.local:8080). Stored in a local
+# .aps-public-url file (git-ignored) and baked in, so the binary serves on the
+# host APS expects without the -public-url flag.
+PUBLIC_URL ?= $(shell cat .aps-public-url 2>/dev/null | tr -d '[:space:]')
 MODULE     := github.com/schneik80/fusionlocalserver
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS    := -X $(MODULE)/config.DefaultClientID=$(CLIENT_ID) \
               -X $(MODULE)/config.DefaultRegion=$(REGION) \
+              -X $(MODULE)/config.DefaultPublicURL=$(PUBLIC_URL) \
               -X main.version=$(VERSION)
 
 .PHONY: build install run clean check web
