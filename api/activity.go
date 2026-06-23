@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,11 +31,13 @@ func SetFeedBaseURLForTesting(u string) (restore func()) {
 }
 
 const (
-	// feedPageSize is the page size requested per call. The web client uses 40;
-	// the loop tolerates whatever page size the server actually returns.
-	feedPageSize = 100
+	// feedPageSize is the page size requested per call. The undocumented feed
+	// endpoint returns HTTP 500 for larger pages, so we use 40 — the value the
+	// Fusion Team web client uses and the only one observed to work. The loop
+	// tolerates whatever page size the server actually returns.
+	feedPageSize = 40
 	// feedMaxPages is a hard backstop so a misbehaving "nextPage" link can never
-	// spin forever (100 pages * 100 = 10k events, far beyond any real hub feed).
+	// spin forever (100 pages * 40 = 4k events, far beyond any real hub feed).
 	feedMaxPages = 100
 )
 
@@ -152,13 +155,15 @@ func fetchFeedPage(ctx context.Context, token, hubID string, start, count, page 
 	if err != nil {
 		return nil, fmt.Errorf("activity feed read: %w", err)
 	}
-	dbgLog("ACTIVITY RESPONSE HTTP %d (%d bytes)", resp.StatusCode, len(raw))
+	dbgLog("ACTIVITY RESPONSE HTTP %d (%d bytes) headers=[%s]", resp.StatusCode, len(raw), feedDiagHeaders(resp.Header))
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("activity feed unauthorized (HTTP 401) — token may be expired or lacks scope/entitlement")
+		return nil, fmt.Errorf("activity feed unauthorized (HTTP 401) for GET %s — token may be expired or lacks scope/entitlement [%s] body=%s",
+			u, feedDiagHeaders(resp.Header), bodySnippet(raw))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("activity feed HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, fmt.Errorf("activity feed GET %s -> HTTP %d [%s] body=%s",
+			u, resp.StatusCode, feedDiagHeaders(resp.Header), bodySnippet(raw))
 	}
 
 	var fr feedResponse
@@ -166,6 +171,37 @@ func fetchFeedPage(ctx context.Context, token, hubID string, start, count, page 
 		return nil, fmt.Errorf("activity feed decode: %w", err)
 	}
 	return &fr, nil
+}
+
+// feedDiagHeaders extracts the response headers that help diagnose a failed
+// feed call from the (undocumented) APS gateway: content type, any auth
+// challenge, and the gateway/trace request ids that Autodesk support keys on.
+func feedDiagHeaders(h http.Header) string {
+	var parts []string
+	for k, v := range h {
+		lk := strings.ToLower(k)
+		if lk == "content-type" || lk == "www-authenticate" || lk == "server" ||
+			strings.HasPrefix(lk, "x-ads-") || strings.HasPrefix(lk, "x-amzn-") ||
+			strings.Contains(lk, "request-id") || strings.Contains(lk, "requestid") ||
+			strings.Contains(lk, "trace") {
+			parts = append(parts, k+"="+strings.Join(v, ","))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
+}
+
+// bodySnippet renders an error-response body for logging, trimmed and capped so
+// a large HTML gateway error page can't flood the log.
+func bodySnippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		return "(empty)"
+	}
+	if len(s) > 500 {
+		s = s[:500] + "…"
+	}
+	return s
 }
 
 // --- raw feed wire types (numeric fields arrive as JSON strings) ---
