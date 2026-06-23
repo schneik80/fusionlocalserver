@@ -30,14 +30,15 @@ Branch: `feature/activity-reports`. Plan: `plan.md`. Feed contract: `feed-contra
 - **Phase 5 spikes:** milestone count via the Manufacturing Data Model GraphQL (confirm the
   `isMilestone` field is queryable across `itemVersions`); comment text via each feed object's
   `links rel=comment` (when `postCount>0`).
-- **Phase 6 validation:** run `./fusionlocalserver -server`, sign in, open the **Activity** view; then
+- **Phase 6 validation:** run `./fusionlocalserver -tls`, sign in, open the **Activity** view; then
   cross-check a known design (e.g. `_CEBIT_LASTPENDEL_FINAL`, feed `version:10`) against the Fusion
   Team web UI. Confirm our app's own 3-legged token is accepted by the (undocumented) feed endpoint.
 
 ## Run
 
 ```
-go build ./... && ./fusionlocalserver -server        # add -tls for https
-# or dev: (terminal 1) go run . -server   (terminal 2) cd web && npm run dev
+make run                                  # build UI + binary, serve over HTTPS (-tls default)
+# or: go build ./... && ./fusionlocalserver -tls
+# or dev: (terminal 1) go run . -dev   (terminal 2) cd web && npm run dev
 ```
-Open the app, pick a hub, click the **Activity** rail icon.
+Open the app (https://<host>:8080), pick a hub, click the **Activity** rail icon.

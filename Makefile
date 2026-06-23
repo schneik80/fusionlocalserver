@@ -34,12 +34,16 @@ install: web
 	@[ -n "$(CLIENT_ID)" ] || (echo "ERROR: CLIENT_ID is not set. See Makefile header." && exit 1)
 	go install -tags embed_ui -ldflags "$(LDFLAGS)" .
 
-# Build the full app and serve it on the LAN. Binds 0.0.0.0:8080 by default
-# (change the port from the web UI's Settings dialog); startup logs the
-# reachable http://<lan-ip>:8080 URLs so you can open it from another machine.
-# Pass ARGS to add flags, e.g. `make run ARGS="-v"`.
+# Build the full app and serve it over HTTPS on the LAN. Binds 0.0.0.0:8080 by
+# default (change the port from the web UI's Settings dialog); startup logs the
+# reachable https://<lan-ip>:8080 URLs so you can open it from another machine.
+# -tls is on by default so the session cookie is Secure (a self-signed cert is
+# auto-generated/cached; supply your own via ARGS="-tls-cert … -tls-key …").
+# Pass ARGS to add flags, e.g. `make run ARGS="-v"`. To serve plain HTTP instead,
+# override TLS: `make run TLS=`.
+TLS ?= -tls
 run: build
-	./fusionlocalserver $(ARGS)
+	./fusionlocalserver $(TLS) $(ARGS)
 
 # Dev build: no embedded UI and no embedded client_id — for local dev using env
 # vars or config.json. Go-only (stub UI); pair with `cd web && npm run dev` and

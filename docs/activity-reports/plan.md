@@ -149,7 +149,7 @@ hour/day/month/year filters.
 
 - `go test ./...` (feed parser against fixture; aggregation; handler tests).
 - `cd web && npm run build` (tsc + vite) clean.
-- Run `./fusionlocalserver -server` (optionally `-tls`), sign in, open the Activity view; confirm the
+- Run `./fusionlocalserver -tls` (serves HTTPS), sign in, open the Activity view; confirm the
   time-series filters and contributor list render for hub/project/folder/design scopes.
 - **Ground-truth cross-check:** for a known design (e.g. `_CEBIT_LASTPENDEL_FINAL`, feed shows `version:10`)
   confirm version count, contributors (note "Kevin Schneider" vs "Kevin Schneider IMA"), created and

@@ -102,10 +102,12 @@ echo your-client-id > .aps-client-id          # or pass CLIENT_ID= to make
 make build                                     # produces ./fusionlocalserver
 make install                                   # same, into $GOPATH/bin
 
-# Build and serve (binds 0.0.0.0:8080 by default; change the port from the
-# web UI's Settings dialog). Startup logs the reachable LAN URLs.
-make run                                        # = make build, then serve
+# Build and serve over HTTPS (binds 0.0.0.0:8080 by default; change the port from
+# the web UI's Settings dialog). -tls is on by default (self-signed cert auto-
+# generated/cached). Startup logs the reachable https LAN URLs.
+make run                                        # = make build, then serve over HTTPS
 make run ARGS="-v"                             # add flags (here: verbose logging)
+make run TLS=                                   # serve plain HTTP instead (not for shared networks)
 
 # Dev build: no embedded UI, no embedded client_id (stub UI shell).
 # Pair with the Vite dev server for HMR:

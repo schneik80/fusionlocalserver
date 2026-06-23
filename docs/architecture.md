@@ -92,7 +92,7 @@ C4Container
 
 ### Runtime: CLI, logging, and filesystem
 
-- **CLI flags.** Only two: `-v` (verbose — raises logging to debug) and `-dev` (reverse-proxy the UI to the Vite dev server for HMR, pinning the listen port). There is no `-server` and no `-addr`.
+- **CLI flags.** `-v` (verbose — raises logging to debug), `-dev` (reverse-proxy the UI to the Vite dev server for HMR, pinning the listen port), `-tls` (serve over HTTPS so the session cookie is `Secure`; a self-signed cert is auto-generated/cached when `-tls-cert`/`-tls-key` are not supplied), and `-public-url` (canonical external base URL the OAuth `redirect_uri` is built from). The binary always serves — there is no `-server` and no `-addr` (the listen port is changed from the web UI's Settings dialog).
 - **Logging.** A single `log/slog` text logger (`server/logging.go`) writes to `io.MultiWriter(os.Stdout, ~/.config/fusionlocalserver/server.log)`. The default level is **info** — essential lines only: startup, warnings, errors, and auth events. `-v` raises it to **debug**, which adds the per-request line (`server/middleware.go` `logRequest`, logged at debug) and routes the `api` package's raw GraphQL request/response tracing to the same sinks. `signedUrl` values are redacted from traces at the source. There is no in-memory ring buffer, no self-managed `debug.log`, and no `FUSIONLOCALSERVER_DEBUG` env var.
 - **Filesystem.** `~/.config/fusionlocalserver/` holds `config.json` (client id + region), `server.json` (listen port), `pins-<hub>.json`, and `server.log`. Sessions and APS tokens live in memory only — there is **no `tokens.json`**, so a process restart logs everyone out.
 

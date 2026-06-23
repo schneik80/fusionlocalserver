@@ -17,8 +17,9 @@ references (uses / where-used / drawings), thumbnails, BOM, and pins.
 go build ./...        # backend
 go test ./...         # all unit tests (offline)
 cd web && npm install && npm run build   # frontend → embedded into server/webdist via //go:embed
-./fusionlocalserver -server               # run (add -tls for https)
-# dev: (t1) go run . -server   (t2) cd web && npm run dev   (Vite proxies /api)
+make run                                 # build UI + binary, serve over HTTPS (-tls is on by default)
+./fusionlocalserver -tls                 # or run the built binary directly (HTTPS; self-signed cert auto-generated)
+# dev: (t1) go run . -dev   (t2) cd web && npm run dev   (Vite proxies /api)
 ```
 `server/webdist` is gitignored and embedded at compile time — **build the web before `go build`** for the UI to ship in the binary.
 

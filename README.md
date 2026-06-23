@@ -10,20 +10,20 @@ One Go binary: an HTTP server that exposes a JSON API and serves an embedded Rea
 
 ```sh
 echo "your-aps-client-id" > .aps-client-id   # one time; see "Building from source"
-make run                                      # build the UI + binary, then serve
+make run                                      # build the UI + binary, then serve over HTTPS
 ```
 
-`make run` binds `0.0.0.0:8080` and logs every reachable URL at startup:
+`make run` serves over **HTTPS** (`-tls` is on by default), binds `0.0.0.0:8080`, and logs every reachable URL at startup:
 
 ```
-server starting  addr=0.0.0.0:8080 ...
-reachable on the LAN  url=http://localhost:8080
-reachable on the LAN  url=http://192.168.1.50:8080
+server starting  addr=0.0.0.0:8080 tls=true ...
+reachable on the LAN  url=https://localhost:8080
+reachable on the LAN  url=https://192.168.1.50:8080
 ```
 
-Open one of those URLs in a browser and click **Sign in with Autodesk**. Each visitor authenticates with their own Autodesk account; the server holds their tokens in a per-session store keyed by an `HttpOnly` cookie, and proxies their data calls under their own identity. Tokens never reach the browser's JavaScript.
+The first time, `-tls` generates and caches a self-signed certificate under `~/.config/fusionlocalserver/` (browsers warn once — accept it); pass `-tls-cert`/`-tls-key` to supply your own PEM pair. Open one of those URLs in a browser and click **Sign in with Autodesk**. Each visitor authenticates with their own Autodesk account; the server holds their tokens in a per-session store keyed by an `HttpOnly` cookie, and proxies their data calls under their own identity. Tokens never reach the browser's JavaScript.
 
-> ⚠️ **Plain HTTP on the LAN.** Without `-tls` the session cookie is not marked `Secure` (browsers drop `Secure` cookies over `http://`), so anyone able to sniff the wire could capture a cookie and hijack that user's session until it expires. Use **`-tls`** (below) or front the server with a TLS-terminating proxy; the cookie automatically becomes `Secure` once requests arrive over HTTPS. A warning is logged when the server binds a non-loopback address over plain HTTP.
+> ⚠️ **Don't disable TLS on a shared network.** Over plain HTTP the session cookie is not marked `Secure` (browsers drop `Secure` cookies over `http://`), so anyone able to sniff the wire could capture a cookie and hijack that user's session until it expires. `make run` keeps `-tls` on for this reason; only override it (`make run TLS=`) behind a TLS-terminating proxy or for loopback-only testing. A warning is logged when the server binds a non-loopback address over plain HTTP.
 
 ### Flags & settings
 
@@ -85,18 +85,18 @@ git clone https://github.com/schneik80/fusionlocalserver
 cd fusionlocalserver
 ```
 
-Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) with scope `data:read user-profile:read`. **Register a Callback URL for every origin users will reach the server by** — APS allows no wildcards, so each `http(s)://host:port/api/auth/callback` is a separate exact-match entry. For local development that is `http://localhost:8080/api/auth/callback`; add each LAN address (and each configured port) you intend to use.
+Register a web app at [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) with scope `data:read user-profile:read`. **Register a Callback URL for every origin users will reach the server by** — APS allows no wildcards, so each `http(s)://host:port/api/auth/callback` is a separate exact-match entry. Since the server serves HTTPS by default, that is `https://localhost:8080/api/auth/callback` for local development (use `http://…` only if you run with `make run TLS=`); add each LAN address (and each configured port) you intend to use.
 
 ```sh
 echo "your-client-id" > .aps-client-id    # git-ignored
 make build                                # vite build → embed UI (-tags embed_ui) → go build
-./fusionlocalserver                       # or: make run
+./fusionlocalserver -tls                  # serve over HTTPS, or just: make run
 ```
 
 | Target | What it does |
 |--------|--------------|
 | `make build` | Build the web UI, embed it (`-tags embed_ui`), and compile with the client ID baked in |
-| `make run` | `make build` then serve on the LAN (`ARGS="-v"` to add flags) |
+| `make run` | `make build` then serve over HTTPS on the LAN (`-tls` on by default; `make run TLS=` for plain HTTP, `ARGS="-v"` to add flags) |
 | `make dev` | Go-only build, **no** embedded UI (serves a stub) and no embedded client ID — pair with `cd web && npm run dev` and `./fusionlocalserver -dev` for hot reload |
 | `make check` | `go vet ./...` + `go test -race ./...` |
 
