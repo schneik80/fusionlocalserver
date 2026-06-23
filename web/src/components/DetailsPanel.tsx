@@ -26,6 +26,7 @@ import {
   useBOM,
   useClassify,
   useCustomProperties,
+  useDesignActivity,
   useDrawings,
   useGroupMembers,
   useItemDetails,
@@ -38,13 +39,23 @@ import {
 import type { ComponentRef, Details, DrawingRef, Item, Measure, ProjectGroup } from '../api/types'
 import { useNav } from '../state/nav'
 import { iconForItem } from './icons'
+import ActivityHeatmap from './ActivityHeatmap'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
-type TabKey = 'history' | 'properties' | 'bom' | 'uses' | 'whereUsed' | 'drawings' | 'permissions'
+type TabKey =
+  | 'history'
+  | 'activity'
+  | 'properties'
+  | 'bom'
+  | 'uses'
+  | 'whereUsed'
+  | 'drawings'
+  | 'permissions'
 
 const TAB_LABEL: Record<TabKey, string> = {
   history: 'History',
+  activity: 'Activity',
   properties: 'Properties',
   bom: 'BOM',
   uses: 'Uses',
@@ -58,9 +69,9 @@ const TAB_LABEL: Record<TabKey, string> = {
 // applies to any document; everything else is History only.
 function tabsFor(kind: string): TabKey[] {
   if (kind === 'design')
-    return ['history', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
-  if (kind === 'configured') return ['history', 'properties', 'bom', 'permissions']
-  if (kind === 'drawing') return ['history', 'uses', 'permissions']
+    return ['history', 'activity', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
+  if (kind === 'configured') return ['history', 'activity', 'properties', 'bom', 'permissions']
+  if (kind === 'drawing') return ['history', 'activity', 'uses', 'permissions']
   return ['history']
 }
 
@@ -159,6 +170,7 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
         {tab === 'history' && (
           <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
+        {tab === 'activity' && <ActivityTab hubId={hubId} itemId={item.id} active={tab === 'activity'} />}
         {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
         {tab === 'bom' && <BOMTab cvId={cvId} active />}
         {tab === 'uses' && (
@@ -512,6 +524,25 @@ function WhereUsedTab({ cvId, active }: { cvId?: string; active: boolean }) {
       emptyText="Not used by any design"
     />
   )
+}
+
+// ActivityTab shows the design's change activity as an isometric heat map,
+// sourced from the GraphQL-backed design activity report (hubId = GraphQL hub
+// id, itemId = lineage urn).
+function ActivityTab({
+  hubId,
+  itemId,
+  active,
+}: {
+  hubId: string | null
+  itemId: string
+  active: boolean
+}) {
+  const q = useDesignActivity(active ? hubId : null, active ? itemId : null)
+  if (q.isLoading) return <TabSpinner />
+  if (q.error) return <TabError error={q.error as Error} />
+  if (!q.data) return <TabEmpty text="No activity recorded" />
+  return <ActivityHeatmap report={q.data} />
 }
 
 function DrawingsTab({

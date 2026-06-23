@@ -251,6 +251,20 @@ export const useActivityReport = (
     staleTime: STALE,
   })
 
+// useDesignActivity fetches one design's activity report (GraphQL-sourced).
+// hubId is the GraphQL hub id and itemId the lineage urn — the same pair the
+// Details endpoints use. Daily buckets; the heatmap re-buckets client-side.
+export const useDesignActivity = (
+  hubId: string | null | undefined,
+  itemId: string | null | undefined,
+): UseQueryResult<ActivityReport> =>
+  useQuery({
+    queryKey: ['designActivity', hubId, itemId],
+    queryFn: () => api.designActivity({ hubId: hubId!, itemId: itemId!, bucket: 'day' }),
+    enabled: !!hubId && !!itemId,
+    staleTime: STALE,
+  })
+
 export const usePins = (hubId: string | null): UseQueryResult<Pin[]> =>
   useQuery({
     queryKey: ['pins', hubId],

@@ -145,6 +145,15 @@ export const api = {
     to?: string
   }) => request<ActivityReport>(`/api/activity/report${qs(args)}`),
 
+  // designActivity reports a single design's activity, sourced from the
+  // Manufacturing Data Model GraphQL (the notifications feed rejects this app's
+  // token). hubId is the GraphQL hub id and itemId the lineage urn — the same
+  // pair the Details endpoints take.
+  designActivity: (args: { hubId: string; itemId: string; bucket?: string }) =>
+    request<ActivityReport>(
+      `/api/activity/report${qs({ scope: 'design', hubId: args.hubId, id: args.itemId, bucket: args.bucket })}`,
+    ),
+
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 
   addPin: (hubId: string, pin: Partial<Pin>) =>
