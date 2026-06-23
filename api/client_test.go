@@ -213,6 +213,44 @@ func TestGqlQuery_DeepFieldErrorReturnsData(t *testing.T) {
 	}
 }
 
+// TestGqlQuery_ShallowFieldErrorReturnsData covers the MFG gateway's flaky
+// item.fusionWebUrl: a depth-2 leaf error (path ["item","fusionWebUrl"]) on an
+// otherwise fully-populated item. The whole item's sibling data is usable, so
+// we must surface it and NOT retry — the old len(path) <= 2 heuristic wrongly
+// retried this and failed the whole call.
+func TestGqlQuery_ShallowFieldErrorReturnsData(t *testing.T) {
+	prev := retryBackoffs
+	retryBackoffs = []time.Duration{0, 1 * time.Millisecond, 1 * time.Millisecond}
+	t.Cleanup(func() { retryBackoffs = prev })
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"data": { "item": { "id": "I1", "name": "Cylinder Body", "fusionWebUrl": null } },
+			"errors": [{
+				"message": "Internal Server Error",
+				"path": ["item", "fusionWebUrl"],
+				"extensions": { "code": "INTERNAL_SERVER_ERROR", "errorType": "UNKNOWN" }
+			}]
+		}`)
+	}))
+	t.Cleanup(srv.Close)
+	swapEndpoint(t, srv.URL)
+
+	raw, err := gqlQuery(context.Background(), "tok", "query Q {}", nil)
+	if err != nil {
+		t.Fatalf("expected no error (data should pass through), got %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("call count = %d, want 1 (no retry on shallow leaf error)", got)
+	}
+	if !strings.Contains(string(raw), `"Cylinder Body"`) {
+		t.Errorf("usable data not surfaced: %s", raw)
+	}
+}
+
 func TestGqlQuery_NoRetryOnConcreteError(t *testing.T) {
 	// errorType not "UNKNOWN" → must not retry.
 	prev := retryBackoffs

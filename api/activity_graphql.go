@@ -26,11 +26,10 @@ import (
 // Information Model" for items not yet migrated, which would nullify the whole
 // query; activity reports don't need them.
 func GetDesignActivity(ctx context.Context, token, hubID, itemID string) ([]ActivityEvent, error) {
-	// Deliberately minimal. fusionWebUrl is omitted: the MFG service intermittently
-	// returns INTERNAL_SERVER_ERROR for that one field (path ["item","fusionWebUrl"],
-	// errorType UNKNOWN, depth 2), which gqlQuery treats as retriable and then fails
-	// the whole call — discarding the otherwise-complete item + itemVersions data.
-	// The report doesn't need the web URL.
+	// Deliberately minimal — the report doesn't need fusionWebUrl, so it is not
+	// requested. (gqlQuery now surfaces partial data when a leaf field like
+	// item.fusionWebUrl flakily 500s, so requesting it would be safe; it is just
+	// unused here.)
 	const q = `
 		query DesignActivity($hubId: ID!, $itemId: ID!) {
 			item(hubId: $hubId, itemId: $itemId) {

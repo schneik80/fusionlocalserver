@@ -94,9 +94,9 @@ type gqlError struct {
 	Message string `json:"message"`
 	// Path is the location of the error in the GraphQL response. Per spec
 	// it is a list of strings (field names) and ints (array indices), so
-	// we decode as []any. Path length is used to distinguish root-level
-	// failures (the data is unusable) from leaf-level failures (the data
-	// list still works, just one cell is null).
+	// we decode as []any. Its presence distinguishes a localized field-level
+	// failure (the data still has usable content) from a path-less, non-
+	// localized gateway/root failure (retry-worthy).
 	Path       []any `json:"path"`
 	Extensions struct {
 		Code      string `json:"code"`
@@ -191,23 +191,23 @@ func gqlQueryOnce(ctx context.Context, token string, body []byte, vars map[strin
 	hasData := len(gr.Data) > 0 && string(gr.Data) != "null"
 	if len(gr.Errors) > 0 {
 		msgs := make([]string, len(gr.Errors))
-		// Retry only when an UNKNOWN-flavoured error nullifies the data
-		// at or near the root (path depth ≤ 2). Deep field-level errors
-		// (e.g. one item's fusionWebUrl is unreachable because its owning
-		// project was deactivated) leave the surrounding result list
-		// usable, so retrying is wasteful — the next attempt produces
-		// the same partial response.
+		// Retry only a path-less UNKNOWN error: that is a non-localized
+		// (gateway/root) failure where the result is unusable even when the data
+		// envelope is present (e.g. {"hub":{"projects":null}}). An error that
+		// carries a path is field-level — even a shallow one like
+		// ["item","fusionWebUrl"], which the MFG gateway intermittently 500s —
+		// and leaves usable sibling data, so it is surfaced below rather than
+		// retried (a retry just reproduces the same partial response).
 		retriable := false
 		for i, e := range gr.Errors {
 			msgs[i] = e.Message
-			if e.Extensions.ErrorType == "UNKNOWN" && len(e.Path) <= 2 {
+			if e.Extensions.ErrorType == "UNKNOWN" && len(e.Path) == 0 {
 				retriable = true
 			}
 		}
-		// Surface partial data: if the response contains usable content
-		// (data is non-null and we aren't going to retry), pass it
-		// through. The errors are still recorded in the debug log via
-		// the response dump above, so they're not lost.
+		// Surface partial data: if the response still carries usable content and
+		// we are not retrying, pass it through. The errors are still recorded in
+		// the debug response dump above, so they are not lost.
 		if !retriable && hasData {
 			dbgLog("GraphQL partial errors (kept data): %s", strings.Join(msgs, "; "))
 			return gr.Data, nil, false
