@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Box, IconButton, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Box, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
 import { alpha, darken, lighten, useTheme } from '@mui/material/styles'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons'
 import type { ActivityReport } from '../api/types'
 
 // ActivityHeatmap renders a design's activity as an isometric 3D heat map —
@@ -179,9 +177,6 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
   const minWin = windowStartOf(gran, createdMs)
   const maxWin = windowStartOf(gran, lastMs)
   const winStart = Math.min(maxWin, Math.max(minWin, windowStartOf(gran, anchorMs)))
-  const canPrev = winStart > minWin
-  const canNext = winStart < maxWin
-  const step = (dir: number) => setAnchorMs(addWindows(gran, winStart, dir))
 
   const timestamps = useMemo(
     () =>
@@ -202,6 +197,22 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
     () => [empty, lighten(accent, 0.55), lighten(accent, 0.37), lighten(accent, 0.18), accent],
     [accent, empty],
   )
+
+  // Per-window change totals across the whole activity span — the data for the
+  // clickable timeline. Each dot is one increment, coloured by the same ramp.
+  const windows = useMemo(() => {
+    const out: { start: number; total: number }[] = []
+    for (let w = minWin; w <= maxWin; w = addWindows(gran, w, 1)) {
+      const end = addWindows(gran, w, 1)
+      let n = 0
+      for (const t of timestamps) if (t >= w && t < end) n++
+      out.push({ start: w, total: n })
+    }
+    return out
+  }, [timestamps, gran, minWin, maxWin])
+  const maxWindowTotal = windows.reduce((m, w) => Math.max(m, w.total), 0)
+  const dotLevel = (n: number) =>
+    n <= 0 || maxWindowTotal <= 0 ? 0 : Math.max(1, Math.min(4, Math.ceil((n / maxWindowTotal) * 4)))
 
   const TW = gran === 'day' ? 14 : gran === 'week' ? 28 : gran === 'month' ? 18 : 13
   const TH = TW / 2
@@ -324,22 +335,68 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
         </ToggleButtonGroup>
       </Stack>
 
-      {/* Window stepper */}
-      <Stack direction="row" alignItems="center" justifyContent="center" spacing={1}>
-        <IconButton size="small" onClick={() => step(-1)} disabled={!canPrev} aria-label="previous">
-          <FontAwesomeIcon icon={faChevronLeft} />
-        </IconButton>
-        <Stack alignItems="center" sx={{ minWidth: 200 }}>
-          <Typography variant="body2" fontWeight={600}>
-            {windowLabel(gran, winStart)}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {total} {total === 1 ? 'change' : 'changes'} in this {gran}
-          </Typography>
+      {/* Window timeline: one dot per increment, coloured by its change count
+          (same ramp as the heat map). Click a dot to load that window. */}
+      <Box sx={{ overflowX: 'auto', py: 0.5 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.5}
+          sx={{ position: 'relative', minWidth: 'min-content', px: 1 }}
+        >
+          <Box
+            sx={{ position: 'absolute', left: 8, right: 8, top: '50%', height: 2, bgcolor: 'divider', zIndex: 0 }}
+          />
+          {windows.map((wd) => {
+            const selected = wd.start === winStart
+            return (
+              <Tooltip
+                key={wd.start}
+                title={`${windowLabel(gran, wd.start)} — ${wd.total} ${wd.total === 1 ? 'change' : 'changes'}`}
+              >
+                <Box
+                  component="button"
+                  onClick={() => setAnchorMs(wd.start)}
+                  aria-label={windowLabel(gran, wd.start)}
+                  sx={{
+                    zIndex: 1,
+                    p: 0,
+                    m: 0,
+                    border: 0,
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 20,
+                    height: 22,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: selected ? 16 : 11,
+                      height: selected ? 16 : 11,
+                      borderRadius: '50%',
+                      bgcolor: ramp[dotLevel(wd.total)],
+                      border: selected ? 2 : 1,
+                      borderColor: selected ? 'primary.main' : 'divider',
+                      boxShadow: selected ? 1 : 0,
+                      transition: 'all .1s',
+                    }}
+                  />
+                </Box>
+              </Tooltip>
+            )
+          })}
         </Stack>
-        <IconButton size="small" onClick={() => step(1)} disabled={!canNext} aria-label="next">
-          <FontAwesomeIcon icon={faChevronRight} />
-        </IconButton>
+      </Box>
+      <Stack alignItems="center" spacing={0}>
+        <Typography variant="body2" fontWeight={600}>
+          {windowLabel(gran, winStart)}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {total} {total === 1 ? 'change' : 'changes'} in this {gran}
+        </Typography>
       </Stack>
 
       {/* Isometric grid (scrolls horizontally if wide) */}
