@@ -4,6 +4,7 @@
 // always travel as query params, never path segments.
 
 import type {
+  ActivityReport,
   AuthMe,
   BOMRow,
   Classify,
@@ -134,6 +135,15 @@ export const api = {
 
   customProperties: (cvId: string) =>
     request<NamedProperty[]>(`/api/items/custom-properties${qs({ cvId })}`),
+
+  activityReport: (args: {
+    hub: string
+    scope?: string
+    id?: string
+    bucket?: string
+    from?: string
+    to?: string
+  }) => request<ActivityReport>(`/api/activity/report${qs(args)}`),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

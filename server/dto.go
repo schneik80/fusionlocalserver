@@ -45,6 +45,9 @@ type ItemDTO struct {
 	IsContainer        bool   `json:"isContainer"`
 	ComponentVersionID string `json:"componentVersionId,omitempty"`
 	Subtype            string `json:"subtype,omitempty"`
+	// Slug is the short hub identifier (e.g. "imallc") used by the activity feed
+	// endpoint. Populated for hubs only; derived from AltID / WebURL.
+	Slug string `json:"slug,omitempty"`
 }
 
 // ContentsDTO is the combined folders+items payload for GET /api/projects/contents.
@@ -219,7 +222,7 @@ func fmtTime(t time.Time) string {
 }
 
 func itemDTO(n api.NavItem) ItemDTO {
-	return ItemDTO{
+	d := ItemDTO{
 		ID:                 n.ID,
 		Name:               n.Name,
 		Kind:               n.Kind,
@@ -229,6 +232,10 @@ func itemDTO(n api.NavItem) ItemDTO {
 		ComponentVersionID: n.ComponentVersionID,
 		Subtype:            n.Subtype,
 	}
+	if n.Kind == "hub" {
+		d.Slug = api.HubSlug(n.AltID, n.WebURL)
+	}
+	return d
 }
 
 func itemDTOs(ns []api.NavItem) []ItemDTO {

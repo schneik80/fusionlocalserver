@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Activity Log Analysis</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }
+        h2 { color: #666; margin-top: 30px; }
+        .summary { background: #e8f5e9; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .heatmap { margin: 30px 0; }
+        .heatmap-row { display: flex; margin: 5px 0; }
+        .heatmap-date { width: 120px; text-align: right; padding-right: 15px; font-size: 12px; }
+        .heatmap-cell { width: 30px; height: 30px; margin: 2px; border-radius: 3px; display: inline-block; text-align: center; line-height: 30px; font-size: 10px; color: #fff; font-weight: bold; }
+        .scale { display: flex; align-items: center; margin-top: 15px; }
+        .scale-label { margin-right: 10px; font-size: 12px; }
+        .scale-item { width: 30px; height: 20px; display: inline-block; margin: 0 2px; border-radius: 3px; }
+        .top-docs { background: #f5f5f5; padding: 20px; border-radius: 5px; }
+        .doc-item { padding: 10px; margin: 5px 0; background: white; border-left: 4px solid #4CAF50; }
+        .category-list { margin-left: 20px; }
+        .category-item { padding: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Activity Log Analysis</h1>
+        
+        <div class="summary">
+            <h2>Summary</h2>
+            <p><strong>Total Activities:</strong> 78</p>
+            <p><strong>Date Range:</strong> September 26, 2025 to October 23, 2025</p>
+            <p><strong>Unique Dates:</strong> 11</p>
+            <p><strong>Average Activities per Day:</strong> 7.1</p>
+        </div>
+        
+        <h2>Activity Heatmap by Day</h2>
+        <div class="heatmap" id="heatmap">
+            
+    <div class="heatmap-row">
+        <span class="heatmap-date">Sep 26, 2025</span>
+        <span class="heatmap-cell" style="background: #e6550d;">9</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Sep 30, 2025</span>
+        <span class="heatmap-cell" style="background: #fec981;">3</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 1, 2025</span>
+        <span class="heatmap-cell" style="background: #fff7ec;">1</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 2, 2025</span>
+        <span class="heatmap-cell" style="background: #a63603;">26</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 8, 2025</span>
+        <span class="heatmap-cell" style="background: #fec981;">3</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 10, 2025</span>
+        <span class="heatmap-cell" style="background: #a63603;">16</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 13, 2025</span>
+        <span class="heatmap-cell" style="background: #fff7ec;">1</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 15, 2025</span>
+        <span class="heatmap-cell" style="background: #fff7ec;">1</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 17, 2025</span>
+        <span class="heatmap-cell" style="background: #fff7ec;">1</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 19, 2025</span>
+        <span class="heatmap-cell" style="background: #fec981;">3</span>
+    </div>
+    <div class="heatmap-row">
+        <span class="heatmap-date">Oct 23, 2025</span>
+        <span class="heatmap-cell" style="background: #a63603;">14</span>
+    </div>
+        </div>
+        <div class="scale">
+            <span class="scale-label">Scale:</span>
+            <span class="scale-item" style="background: #fff7ec;"></span>
+            <span class="scale-item" style="background: #fec981;"></span>
+            <span class="scale-item" style="background: #fd8d3c;"></span>
+            <span class="scale-item" style="background: #e6550d;"></span>
+            <span class="scale-item" style="background: #a63603;"></span>
+            <span style="margin-left: 10px; font-size: 11px; color: #666;">Less → More Activities</span>
+        </div>
+        
+        <h2>Top 10 Most Active Documents</h2>
+        <div class="top-docs">
+            
+    <div class="doc-item">
+        <strong>1. Untitled</strong> - 2 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>2. pc_rpi_healthypi_v3</strong> - 2 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>3. M3 x 22mm Screw Socket Head</strong> - 2 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>4. CFG - Center Slipper ASSY</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>5. Center Slipper Outdrive</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>6. Center Slipper Outdrive Pin</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>7. Center Slipper Adjuster Nut</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>8. Center Slipper Front Disk</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>9. Center Slipper Spring</strong> - 1 activity(ies)
+    </div>
+    <div class="doc-item">
+        <strong>10. Center Slipper Mid Disk</strong> - 1 activity(ies)
+    </div>
+        </div>
+        
+        <h2>Activity by Category</h2>
+        <div class='category-list'><div class='category-item'><strong>3D Printers:</strong> 26 activities</div><div class='category-item'><strong>RC - 1˸10 4WD Buggy:</strong> 13 activities</div><div class='category-item'><strong>Libraries:</strong> 11 activities</div><div class='category-item'><strong>Data Set Archive:</strong> 6 activities</div><div class='category-item'><strong>LIB - Mechanical:</strong> 5 activities</div><div class='category-item'><strong>RC - 1˸10 Egress:</strong> 5 activities</div><div class='category-item'><strong>SolidWorks Workspace:</strong> 4 activities</div><div class='category-item'><strong>Personal:</strong> 3 activities</div><div class='category-item'><strong>Crowdsupply:</strong> 2 activities</div><div class='category-item'><strong>API Test Documents:</strong> 1 activities</div></div>
+    </div>
+</body>
+</html>

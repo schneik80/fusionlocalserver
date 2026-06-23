@@ -49,6 +49,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 	mux.HandleFunc("GET /api/items/custom-properties", prot(s.handleCustomProperties))
 
+	// Activity reports (hub/project/folder/design).
+	mux.HandleFunc("GET /api/activity/report", prot(s.handleActivityReport))
+
 	// Settings.
 	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))
 

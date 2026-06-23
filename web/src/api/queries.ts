@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-query'
 import { api } from './client'
 import type {
+  ActivityReport,
   AuthMe,
   BOMRow,
   Classify,
@@ -231,6 +232,22 @@ export const useItemLocation = (
     queryKey: ['location', hubId, itemId],
     queryFn: () => api.itemLocation(hubId!, itemId!),
     enabled: enabled && !!hubId && !!itemId,
+    staleTime: STALE,
+  })
+
+// useActivityReport fetches the scoped activity report. `hub` is the hub slug
+// (Item.slug). scope/id select the level; the whole hub feed is fetched and
+// aggregated server-side, so changing scope/id is cheap and cache-friendly.
+export const useActivityReport = (
+  hub: string | null | undefined,
+  scope: string,
+  id: string,
+  bucket: string,
+): UseQueryResult<ActivityReport> =>
+  useQuery({
+    queryKey: ['activityReport', hub, scope, id, bucket],
+    queryFn: () => api.activityReport({ hub: hub!, scope, id: id || undefined, bucket }),
+    enabled: !!hub,
     staleTime: STALE,
   })
 

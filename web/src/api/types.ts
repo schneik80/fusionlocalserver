@@ -45,6 +45,7 @@ export interface Item {
   isContainer: boolean
   componentVersionId?: string
   subtype?: string // "assembly" | "part" | "dwg" | "template" | ""
+  slug?: string // hub slug (e.g. "imallc"), populated for hubs only
 }
 
 export interface Contents {
@@ -177,6 +178,78 @@ export interface Classify {
   componentVersionId: string
   isAssembly: boolean
   subtype: string // "assembly" | "part"
+}
+
+// --- Activity reports (mirror server/dto_activity.go) ---
+
+export type ActivityScope = 'hub' | 'project' | 'folder' | 'design'
+export type ActivityBucket = 'hour' | 'day' | 'month' | 'year'
+
+export interface ActivityActor {
+  accountId?: string
+  displayName: string
+  email?: string
+}
+
+export interface ActivityContributor {
+  accountId?: string
+  displayName: string
+  email?: string
+  eventCount: number
+  firstSeen?: string
+  lastSeen?: string
+}
+
+export interface ActivityTimeBucket {
+  start: string // RFC3339
+  count: number
+}
+
+export interface ActivityChild {
+  type: string // "project" | "folder" | "design"
+  id: string
+  name: string
+  eventCount: number
+  lastChange?: string
+}
+
+export interface ActivityEvent {
+  entityType: string // "design" | "community"
+  entityId: string
+  entityName: string
+  timestamp?: string
+  action: string
+  actor: ActivityActor
+  versionNumber?: number
+  projectId?: string
+  projectName?: string
+  folderUrn?: string
+  lineageUrn?: string
+  fileType?: string
+  webUrl?: string
+  views?: number
+  comments?: number
+  likes?: number
+  detail?: string
+}
+
+export interface ActivityReport {
+  scope: ActivityScope | string
+  scopeId?: string
+  scopeName?: string
+  hubId?: string
+  totalEvents: number
+  designCount: number
+  versionCount: number
+  contributorCount: number
+  createdOn?: string
+  lastChange?: string
+  bucket: ActivityBucket | string
+  timeline: ActivityTimeBucket[]
+  contributors: ActivityContributor[]
+  children: ActivityChild[]
+  events: ActivityEvent[]
+  eventsTruncated: boolean
 }
 
 // Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
