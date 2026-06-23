@@ -1,51 +1,23 @@
 package api
 
 import (
-	"context"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"html"
-	"io"
-	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// feedBaseURL is the root of the (undocumented, first-party) Fusion Team
-// notifications service the web client uses for its activity feed. It is a var
-// (not const) so tests can point it at an httptest.Server; production never
-// reassigns it. See docs/activity-reports/feed-contract.md.
-var feedBaseURL = "https://developer.api.autodesk.com/fusionteam/notifications/v2"
+// Activity model shared by the design-scope activity report. The Fusion Team
+// notifications feed this once fed is first-party-gated (returns HTTP 500 for
+// this app's token), so activity is sourced from the Manufacturing Data Model
+// GraphQL instead — see api/activity_graphql.go. HubSlug is retained because the
+// nav still derives a hub slug for display (server/dto.go).
 
-// SetFeedBaseURLForTesting overrides the notifications base URL and returns a
-// restore func. Tests only; production MUST NOT call this.
-func SetFeedBaseURLForTesting(u string) (restore func()) {
-	prev := feedBaseURL
-	feedBaseURL = u
-	return func() { feedBaseURL = prev }
-}
-
+// Activity action verbs (inferred — there is no explicit verb in the data).
 const (
-	// feedPageSize is the page size requested per call. The undocumented feed
-	// endpoint returns HTTP 500 for larger pages, so we use 40 — the value the
-	// Fusion Team web client uses and the only one observed to work. The loop
-	// tolerates whatever page size the server actually returns.
-	feedPageSize = 40
-	// feedMaxPages is a hard backstop so a misbehaving "nextPage" link can never
-	// spin forever (100 pages * 40 = 4k events, far beyond any real hub feed).
-	feedMaxPages = 100
-)
-
-// Activity action verbs (inferred — the feed JSON carries no explicit verb).
-const (
-	ActionCreated   = "created"
-	ActionUpdated   = "updated"
-	ActionCommunity = "community" // lifecycle events (project created, etc.)
+	ActionCreated = "created"
+	ActionUpdated = "updated"
 )
 
 // Actor identifies who performed an activity.
@@ -55,14 +27,14 @@ type Actor struct {
 	Email       string `json:"email,omitempty"`
 }
 
-// ActivityEvent is one normalized entry from the activity feed. Every event
-// carries the full hub -> project -> folder -> design hierarchy, so the
-// aggregation layer can group it at any scope without extra round-trips.
+// ActivityEvent is one normalized activity entry. For a design report each
+// version becomes one event (api/activity_graphql.go); the lineage/hierarchy
+// fields let BuildReport filter and roll up.
 type ActivityEvent struct {
 	// EntityType is the kind of thing the event is about: "design" for file
-	// versions, "community" for lifecycle events (e.g. project created).
+	// versions, "community" for lifecycle events.
 	EntityType string    `json:"entityType"`
-	EntityID   string    `json:"entityId"`   // permalinkId / object id
+	EntityID   string    `json:"entityId"`   // permalinkId / lineage id
 	EntityName string    `json:"entityName"` // displayTitle / fileName
 	Timestamp  time.Time `json:"timestamp"`  // when the change happened (absolute)
 	Action     string    `json:"action"`
@@ -88,305 +60,19 @@ type ActivityEvent struct {
 
 	// Bonus signals
 	Views    int `json:"views,omitempty"`
-	Comments int `json:"comments,omitempty"` // postCount
+	Comments int `json:"comments,omitempty"`
 	Likes    int `json:"likes,omitempty"`
 
-	// Detail holds extra human-readable context (e.g. the COMMUNITY event text).
+	// Detail holds extra human-readable context.
 	Detail string `json:"detail,omitempty"`
 
-	Source string `json:"source"` // "feed"
+	Source string `json:"source"` // "graphql"
 }
 
-// GetActivityFeed fetches and normalizes the full network activity feed for a
-// hub, following pagination until the server stops advertising a next page.
-// hubID is the short hub slug (e.g. "imallc"), not the a.* Data Management id.
-func GetActivityFeed(ctx context.Context, token, hubID string) ([]ActivityEvent, error) {
-	if hubID == "" {
-		return nil, fmt.Errorf("activity: empty hubID")
-	}
-	var events []ActivityEvent
-	seen := make(map[string]struct{})
-	for page := 1; page <= feedMaxPages; page++ {
-		start := (page - 1) * feedPageSize
-		resp, err := fetchFeedPage(ctx, token, hubID, start, feedPageSize, page)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range resp.Objects {
-			ev := o.normalize()
-			// Guard against page overlap (pages should be disjoint, but the
-			// feed is volatile while edits land).
-			key := ev.EntityID + "|" + ev.Timestamp.Format(time.RFC3339Nano) + "|" + strconv.Itoa(ev.VersionNumber)
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			events = append(events, ev)
-		}
-		if len(resp.Objects) == 0 || !feedHasNextPage(resp.Links.Link) {
-			break
-		}
-	}
-	return events, nil
-}
-
-func fetchFeedPage(ctx context.Context, token, hubID string, start, count, page int) (*feedResponse, error) {
-	u := fmt.Sprintf("%s/hubs/%s/feeds/network/@me?count=%d&start=%d&page=%d",
-		feedBaseURL, url.PathEscape(hubID), count, start, page)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/json")
-	if region != "" {
-		req.Header.Set("X-Ads-Region", region)
-	}
-
-	dbgLog("ACTIVITY REQUEST %s", u)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("activity feed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("activity feed read: %w", err)
-	}
-	dbgLog("ACTIVITY RESPONSE HTTP %d (%d bytes) headers=[%s]", resp.StatusCode, len(raw), feedDiagHeaders(resp.Header))
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("activity feed unauthorized (HTTP 401) for GET %s — token may be expired or lacks scope/entitlement [%s] body=%s",
-			u, feedDiagHeaders(resp.Header), bodySnippet(raw))
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("activity feed GET %s -> HTTP %d [%s] body=%s",
-			u, resp.StatusCode, feedDiagHeaders(resp.Header), bodySnippet(raw))
-	}
-
-	var fr feedResponse
-	if err := json.Unmarshal(raw, &fr); err != nil {
-		return nil, fmt.Errorf("activity feed decode: %w", err)
-	}
-	return &fr, nil
-}
-
-// feedDiagHeaders extracts the response headers that help diagnose a failed
-// feed call from the (undocumented) APS gateway: content type, any auth
-// challenge, and the gateway/trace request ids that Autodesk support keys on.
-func feedDiagHeaders(h http.Header) string {
-	var parts []string
-	for k, v := range h {
-		lk := strings.ToLower(k)
-		if lk == "content-type" || lk == "www-authenticate" || lk == "server" ||
-			strings.HasPrefix(lk, "x-ads-") || strings.HasPrefix(lk, "x-amzn-") ||
-			strings.Contains(lk, "request-id") || strings.Contains(lk, "requestid") ||
-			strings.Contains(lk, "trace") {
-			parts = append(parts, k+"="+strings.Join(v, ","))
-		}
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, " ")
-}
-
-// bodySnippet renders an error-response body for logging, trimmed and capped so
-// a large HTML gateway error page can't flood the log.
-func bodySnippet(b []byte) string {
-	s := strings.TrimSpace(string(b))
-	if s == "" {
-		return "(empty)"
-	}
-	if len(s) > 500 {
-		s = s[:500] + "…"
-	}
-	return s
-}
-
-// --- raw feed wire types (numeric fields arrive as JSON strings) ---
-
-type feedResponse struct {
-	StartIndex   string       `json:"startIndex"`
-	Count        string       `json:"count"`
-	TotalObjects string       `json:"totalObjects"`
-	Objects      []feedObject `json:"objects"`
-	Links        struct {
-		// In the envelope this is a single object; within per-item payloads it
-		// is an array. Decode raw and probe both shapes (see feedHasNextPage).
-		Link json.RawMessage `json:"link"`
-	} `json:"links"`
-}
-
-type feedObject struct {
-	AtType          string        `json:"@type"`
-	Type            string        `json:"type"` // DATA | COMMUNITY
-	ID              string        `json:"id"`
-	PermalinkID     string        `json:"permalinkId"`
-	DisplayTitle    string        `json:"displayTitle"`
-	FileName        string        `json:"fileName"`
-	FileType        string        `json:"fileType"`
-	PermalinkURL    string        `json:"permalinkUrl"`
-	CreationTime    string        `json:"creationTime"`
-	LastModified    string        `json:"lastModified"`
-	ChangeTime      string        `json:"changeTime"`
-	Version         string        `json:"version"`
-	LineageURN      string        `json:"lineageUrn"`
-	TipVersionURN   string        `json:"tipVersionUrn"`
-	ParentFolderURN string        `json:"parentFolderUrn"`
-	PostCount       string        `json:"postCount"`
-	LikeCount       string        `json:"likeCount"`
-	Owner           feedUser      `json:"owner"`
-	LastActivity    feedActor     `json:"lastActivity"`
-	LastUpdate      feedActor     `json:"lastUpdate"`
-	PublishedTo     feedGroup     `json:"publishedTo"`
-	Hub             feedHub       `json:"hub"`
-	Views           feedViews     `json:"views"`
-	Title           feedHTMLField `json:"title"`
-}
-
-type feedUser struct {
-	AccountID   string `json:"accountId"`
-	DisplayName string `json:"displayName"`
-	UserID      string `json:"userId"` // email
-}
-
-type feedActor struct {
-	Time        string `json:"time"`
-	AccountID   string `json:"accountId"`
-	DisplayName string `json:"displayName"`
-}
-
-type feedGroup struct {
-	Type            string `json:"type"`
-	ID              string `json:"id"`
-	PublishedToName string `json:"publishedToName"`
-	PublishedToURL  string `json:"publishedToUrl"`
-}
-
-type feedHub struct {
-	Name    string `json:"name"`
-	HubID   string `json:"hubId"`
-	ForgeID string `json:"forgeId"`
-}
-
-type feedViews struct {
-	Views   string `json:"views"`
-	Viewers string `json:"viewers"`
-}
-
-type feedHTMLField struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
-}
-
-// normalize converts a raw feed object into an ActivityEvent.
-func (o feedObject) normalize() ActivityEvent {
-	name := o.DisplayTitle
-	if name == "" {
-		name = o.FileName
-	}
-	id := o.PermalinkID
-	if id == "" {
-		id = o.ID
-	}
-	ev := ActivityEvent{
-		EntityID:      id,
-		EntityName:    name,
-		Timestamp:     firstTime(parseEpochMillis(o.ChangeTime), parseEpochMillis(o.LastActivity.Time), parseEpochMillis(o.LastModified), parseEpochMillis(o.CreationTime)),
-		VersionNumber: atoiSafe(o.Version),
-		HubID:         o.Hub.HubID,
-		HubName:       o.Hub.Name,
-		HubForgeID:    o.Hub.ForgeID,
-		ProjectID:     o.PublishedTo.ID,
-		ProjectName:   o.PublishedTo.PublishedToName,
-		FolderURN:     o.ParentFolderURN,
-		LineageURN:    o.LineageURN,
-		FileType:      o.FileType,
-		WebURL:        o.PermalinkURL,
-		CreatedOn:     parseEpochMillis(o.CreationTime),
-		Owner:         Actor{AccountID: o.Owner.AccountID, DisplayName: o.Owner.DisplayName, Email: o.Owner.UserID},
-		Views:         atoiSafe(o.Views.Views),
-		Comments:      atoiSafe(o.PostCount),
-		Likes:         atoiSafe(o.LikeCount),
-		Source:        "feed",
-	}
-	ev.Actor = o.bestActor()
-
-	if o.Type == "COMMUNITY" || o.AtType == "activityFeedDataObject" {
-		ev.EntityType = "community"
-		ev.Action = ActionCommunity
-		ev.Detail = stripHTML(firstNonEmpty(o.Title.Content, o.DisplayTitle))
-		if t := parseEpochMillis(o.CreationTime); !t.IsZero() {
-			ev.Timestamp = t
-		}
-		return ev
-	}
-
-	ev.EntityType = "design"
-	if ev.VersionNumber <= 1 {
-		ev.Action = ActionCreated
-	} else {
-		ev.Action = ActionUpdated
-	}
-	return ev
-}
-
-// bestActor picks the most specific last-actor available, falling back to owner.
-func (o feedObject) bestActor() Actor {
-	if o.LastActivity.DisplayName != "" || o.LastActivity.AccountID != "" {
-		return Actor{AccountID: o.LastActivity.AccountID, DisplayName: o.LastActivity.DisplayName}
-	}
-	if o.LastUpdate.DisplayName != "" || o.LastUpdate.AccountID != "" {
-		return Actor{AccountID: o.LastUpdate.AccountID, DisplayName: o.LastUpdate.DisplayName}
-	}
-	return Actor{AccountID: o.Owner.AccountID, DisplayName: o.Owner.DisplayName, Email: o.Owner.UserID}
-}
-
-// --- small parse helpers ---
-
-// parseEpochMillis parses a string of epoch milliseconds (the feed's time
-// format). Empty / "0" / unparseable yields the zero time.
-func parseEpochMillis(s string) time.Time {
-	s = strings.TrimSpace(s)
-	if s == "" || s == "0" {
-		return time.Time{}
-	}
-	ms, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || ms <= 0 {
-		return time.Time{}
-	}
-	return time.UnixMilli(ms).UTC()
-}
-
-func atoiSafe(s string) int {
-	n, _ := strconv.Atoi(strings.TrimSpace(s))
-	return n
-}
-
-func firstTime(ts ...time.Time) time.Time {
-	for _, t := range ts {
-		if !t.IsZero() {
-			return t
-		}
-	}
-	return time.Time{}
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-// HubSlug derives the short hub slug (e.g. "imallc") the notifications feed
-// needs from the identifiers the GraphQL hub list already provides: the Data
-// Management hub id (`a.` + base64("business:<slug>")) or, failing that, the
-// subdomain of the fusion web URL (https://<slug>.autodesk360.com/…). Returns
-// "" if neither yields a usable slug.
+// HubSlug derives the short hub slug (e.g. "imallc") from the identifiers the
+// GraphQL hub list provides: the Data Management hub id (`a.` + base64(
+// "business:<slug>")) or, failing that, the subdomain of the fusion web URL
+// (https://<slug>.autodesk360.com/…). Returns "" if neither yields a slug.
 func HubSlug(altID, webURL string) string {
 	if s := slugFromAltID(altID); s != "" {
 		return s
@@ -437,42 +123,4 @@ func slugFromURL(webURL string) string {
 		return ""
 	}
 	return label
-}
-
-var htmlTagRE = regexp.MustCompile(`<[^>]*>`)
-
-// stripHTML removes tags and unescapes entities for a plain-text rendering of
-// COMMUNITY event titles (which arrive as HTML anchors).
-func stripHTML(s string) string {
-	if s == "" {
-		return ""
-	}
-	s = htmlTagRE.ReplaceAllString(s, "")
-	s = html.UnescapeString(s)
-	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
-}
-
-// feedHasNextPage reports whether the envelope's links advertise a next page.
-// The "link" value is a single object in the envelope but an array elsewhere,
-// so both shapes are probed.
-func feedHasNextPage(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	type rel struct {
-		Rel string `json:"rel"`
-	}
-	var one rel
-	if json.Unmarshal(raw, &one) == nil && one.Rel != "" {
-		return strings.EqualFold(one.Rel, "nextPage")
-	}
-	var many []rel
-	if json.Unmarshal(raw, &many) == nil {
-		for _, l := range many {
-			if strings.EqualFold(l.Rel, "nextPage") {
-				return true
-			}
-		}
-	}
-	return false
 }

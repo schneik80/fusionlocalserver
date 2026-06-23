@@ -1,31 +1,15 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
-import {
-  faBuilding,
-  faChartLine,
-  faFolderTree,
-  faGear,
-  faStar,
-} from '@fortawesome/free-solid-svg-icons'
+import { faBuilding, faFolderTree, faGear, faStar } from '@fortawesome/free-solid-svg-icons'
 import { Divider, IconButton, Paper, Stack, Tooltip } from '@mui/material'
 
-export type MainView = 'browser' | 'dashboard'
-
 interface NavRailProps {
-  view: MainView
-  onSelectView: (v: MainView) => void
   onOpenHubs: () => void
   onOpenPins: () => void
   onOpenSettings: () => void
 }
 
-export function NavRail({
-  view,
-  onSelectView,
-  onOpenHubs,
-  onOpenPins,
-  onOpenSettings,
-}: NavRailProps) {
+export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps) {
   return (
     <Paper
       square
@@ -45,18 +29,7 @@ export function NavRail({
       <Stack spacing={1.5}>
         <RailButton icon={faBuilding} label="Hubs" onClick={onOpenHubs} />
         <Divider flexItem sx={{ mx: 1 }} />
-        <RailButton
-          icon={faFolderTree}
-          label="Browser"
-          active={view === 'browser'}
-          onClick={() => onSelectView('browser')}
-        />
-        <RailButton
-          icon={faChartLine}
-          label="Activity"
-          active={view === 'dashboard'}
-          onClick={() => onSelectView('dashboard')}
-        />
+        <RailButton icon={faFolderTree} label="Browser" active onClick={() => {}} />
         <Divider flexItem sx={{ mx: 1 }} />
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />

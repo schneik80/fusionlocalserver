@@ -136,15 +136,6 @@ export const api = {
   customProperties: (cvId: string) =>
     request<NamedProperty[]>(`/api/items/custom-properties${qs({ cvId })}`),
 
-  activityReport: (args: {
-    hub: string
-    scope?: string
-    id?: string
-    bucket?: string
-    from?: string
-    to?: string
-  }) => request<ActivityReport>(`/api/activity/report${qs(args)}`),
-
   // designActivity reports a single design's activity, sourced from the
   // Manufacturing Data Model GraphQL (the notifications feed rejects this app's
   // token). hubId is the GraphQL hub id and itemId the lineage urn — the same

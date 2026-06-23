@@ -8,35 +8,38 @@ import (
 	"github.com/schneik80/fusionlocalserver/api"
 )
 
-// handleActivityReport -> api.GetActivityFeed + api.BuildReport.
+// handleActivityReport -> api.GetDesignActivity + api.BuildReport. Design scope
+// only (the notifications feed is first-party-gated for this app's token).
 //
 // Query params:
-//   - hub    (required) the hub slug, e.g. "imallc" (ItemDTO.slug from /api/hubs)
-//   - scope  hub | project | folder | design  (default: hub)
-//   - id     scope target id (required unless scope=hub):
-//     project -> publishedTo group id, folder -> folder urn,
-//     design  -> permalink id or lineage urn
+//   - hubId  (required) the GraphQL hub id (urn:adsk.ace:prod.scope:…)
+//   - id     (required) the item/lineage id (urn:adsk.wipprod:dm.lineage:…)
+//   - scope  optional; if given must be "design"
 //   - bucket hour | day | month | year (default: day)
 //   - from   lower time bound (RFC3339 or epoch ms), optional
 //   - to     upper time bound (RFC3339 or epoch ms), optional
-//
-// The whole hub feed is fetched once (it carries every level's hierarchy) and
-// aggregated to the requested scope, so project/folder/design reports need no
-// extra round-trips.
 func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	scope := api.Scope(q.Get("scope"))
-	if scope == "" {
-		scope = api.ScopeHub
-	}
-	switch scope {
-	case api.ScopeHub, api.ScopeProject, api.ScopeFolder, api.ScopeDesign:
-	default:
-		writeError(w, http.StatusBadRequest, "invalid scope: must be hub, project, folder, or design")
+	// Design scope only. Activity is sourced from the Manufacturing Data Model
+	// GraphQL — the Fusion Team notifications feed is first-party-gated (returns
+	// HTTP 500 for this app's token), so hub/project/folder reports are not
+	// offered. hubId is the GraphQL hub id and id the item/lineage id, the same
+	// pair the Details endpoint uses.
+	if scope := q.Get("scope"); scope != "" && scope != string(api.ScopeDesign) {
+		writeError(w, http.StatusBadRequest, "only scope=design is supported")
 		return
 	}
 
+	hubID, ok := reqParam(w, r, "hubId")
+	if !ok {
+		return
+	}
+	itemID := q.Get("id")
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "missing required query parameter: id (the item/lineage id)")
+		return
+	}
 	from, ok := parseQueryTime(w, q.Get("from"), "from")
 	if !ok {
 		return
@@ -53,48 +56,12 @@ func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Design scope is sourced from the Manufacturing Data Model GraphQL (the
-	// notifications feed rejects this app's token). It takes the GraphQL hub id
-	// (hubId) and the item/lineage id (id) — the same pair the Details endpoint
-	// uses — not the feed slug.
-	if scope == api.ScopeDesign {
-		hubID, ok := reqParam(w, r, "hubId")
-		if !ok {
-			return
-		}
-		itemID := q.Get("id")
-		if itemID == "" {
-			writeError(w, http.StatusBadRequest, "missing required query parameter: id (the item/lineage id, for scope design)")
-			return
-		}
-		events, err := api.GetDesignActivity(ctx, token, hubID, itemID)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		rep := api.BuildReport(events, scope, itemID, api.Bucket(q.Get("bucket")), from, to)
-		writeJSON(w, http.StatusOK, activityReportDTO(rep))
-		return
-	}
-
-	// Hub / project / folder scopes still come from the notifications feed (the
-	// hub slug aggregated server-side). NOTE: the feed currently returns HTTP 500
-	// for this app's token — these scopes are pending a GraphQL rebuild.
-	hub, ok := reqParam(w, r, "hub")
-	if !ok {
-		return
-	}
-	id := q.Get("id")
-	if scope != api.ScopeHub && id == "" {
-		writeError(w, http.StatusBadRequest, "missing required query parameter: id (for scope "+string(scope)+")")
-		return
-	}
-	events, err := api.GetActivityFeed(ctx, token, hub)
+	events, err := api.GetDesignActivity(ctx, token, hubID, itemID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	rep := api.BuildReport(events, scope, id, api.Bucket(q.Get("bucket")), from, to)
+	rep := api.BuildReport(events, api.ScopeDesign, itemID, api.Bucket(q.Get("bucket")), from, to)
 	writeJSON(w, http.StatusOK, activityReportDTO(rep))
 }
 

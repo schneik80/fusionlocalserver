@@ -7,7 +7,7 @@ references (uses / where-used / drawings), thumbnails, BOM, and pins.
 
 ## Layout
 - `auth/` — 3-legged PKCE OAuth against APS; per-session in-memory tokens (auto-refresh). **Never persist tokens.**
-- `api/` — APS clients: Manufacturing Data Model **GraphQL** (`client.go`, `queries.go`, `details.go`, `refs.go`, …) and the Fusion Team notifications **activity feed** (`activity.go`, `activity_report.go`).
+- `api/` — APS clients: Manufacturing Data Model **GraphQL** (`client.go`, `queries.go`, `details.go`, `refs.go`, …). **Design activity** is GraphQL-sourced (`activity_graphql.go` → `activity_report.go`); `activity.go` keeps the shared types + `HubSlug` (the notifications feed it once used is first-party-gated — removed).
 - `server/` — Go 1.22 `net/http.ServeMux`; routes in `routes.go`; handlers `handlers_*.go`; DTOs in `dto*.go`; session/auth middleware (`fls_session` cookie).
 - `web/` — React 18 + Vite + TypeScript + MUI v6 + @tanstack/react-query (+ recharts). API wrapper `src/api/client.ts`, hooks `src/api/queries.ts`.
 - `config/` — `APS_CLIENT_ID` / `APS_CLIENT_SECRET` / `APS_REGION` (env or `~/.config/fusionlocalserver/config.json`). Build-time `config.Default{ClientID,Region,PublicURL}` are injected via ldflags from `.aps-client-id` / `.aps-region` / `.aps-public-url` (git-ignored); `DefaultPublicURL` bakes in the canonical OAuth callback host so the binary needs no `-public-url` flag.
@@ -29,8 +29,9 @@ make run                                 # build UI + binary, serve over HTTPS (
 - Commit/push only when asked.
 
 ## Active work
-**Activity reports** (hub/project/folder/design dashboard) on branch
-`feature/activity-reports`. Start here: **`docs/activity-reports/STATUS.md`**
-(what's done / what's left), plus `plan.md` and `feed-contract.md`.
-Phases 0–4 done (feed acquisition, aggregation, `/api/activity/report`,
-dashboard). Phases 5 (milestones/comments) and 6 (live validation) remain.
+**Design activity** on branch `feature/activity-reports`. Shipped as a per-design
+**Activity tab** (`web/src/components/ActivityHeatmap.tsx`) — an isometric heat map
+with Day/Week/Month/Year windows + a prev/next stepper, off the GraphQL design
+report (`/api/activity/report?scope=design&hubId=…&id=…`). The hub/project/folder
+dashboard was **removed** (the notifications feed it relied on is first-party-gated).
+See **`docs/activity-reports/STATUS.md`**.

@@ -44,15 +44,27 @@ acquisition layer swapped.
   - Note: query omits `fusionWebUrl` — MFG intermittently 500s that one leaf field, and gqlQuery's
     retry logic then discards the whole (otherwise complete) response. Lost the design deep-link for now.
 
-## Remaining
+## Scope capped to design-only (2026-06-23)
 
-- **Folder / project / hub scopes** — still wired to the dead feed in `server/handlers_activity.go`
-  (return 502). Rebuild on GraphQL: enumerate items in scope (`GetProjectItems`/`GetItems`) → fan out
-  `GetDesignActivity` → aggregate. Cap/lazy-load hub scope (could be many designs).
-- **Dashboard navigation** — UI still lands on hub scope (broken) and drills via feed-native child ids.
-  Rework to navigate into a design and call the GraphQL design path; then rebuild parent scopes.
-- **Phase 5 spikes:** milestone count via `isMilestone` across `itemVersions`; comment text. (Comments
-  and views/likes were feed-only social signals — not available from GraphQL history.)
+The hub/project/folder dashboard was **removed** — its acquisition was the first-party-gated feed
+and the approach is DOA. The feature is now a per-design **Activity tab**:
+
+- ✅ **Activity tab** (`web/src/components/ActivityHeatmap.tsx`) on designs/configured/drawings — an
+  isometric heat map (inspired by isometric-contributions). Day/Week/Month/Year pick a *window* (24
+  hours / 7 days / day-calendar / full-year day-calendar); a prev/next stepper walks windows, clamped
+  to the design's activity span. Bar height + colour encode change count; sparse axis labels; render
+  bounded 800–1200 px. Off `/api/activity/report?scope=design&hubId=…&id=…`.
+- 🗑️ **Removed:** `ActivityDashboard.tsx`, the NavRail Browser/Activity toggle, `useActivityReport` /
+  `api.activityReport`, the feed client (`api/activity.go` `GetActivityFeed` + wire types + tests/
+  fixtures). `/api/activity/report` is design-only; `api/activity.go` keeps only shared types + `HubSlug`.
+
+## Possible follow-ons (not planned)
+
+- `gqlQuery` partial-data fix (return usable data on a leaf-field `UNKNOWN` error instead of retrying)
+  — also fixes the Details panel's flaky `fusionWebUrl`.
+- Richer per-change events (property / part-number changes) via the typed-history GraphQL query —
+  currently one event per saved version (`itemVersions`).
+- Milestone count via `isMilestone` across `itemVersions`.
 
 ## Run
 

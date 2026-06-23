@@ -21,11 +21,10 @@ import { QUERY_CACHE_KEY } from '../queryPersist'
 import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { loadLastHub, useNav } from '../state/nav'
-import { ActivityDashboard } from './ActivityDashboard'
 import { BreadcrumbBar } from './BreadcrumbBar'
 import { BrowserColumns } from './BrowserColumns'
 import { HubSwitcher } from './HubSwitcher'
-import { NavRail, type MainView } from './NavRail'
+import { NavRail } from './NavRail'
 import { PinsDialog } from './PinsDialog'
 import { SettingsDialog } from './SettingsDialog'
 
@@ -33,7 +32,6 @@ type DialogKind = 'hubs' | 'pins' | 'settings' | null
 
 export function AppLayout() {
   const [dialog, setDialog] = useState<DialogKind>(null)
-  const [view, setView] = useState<MainView>('browser')
   const nav = useNav()
   const metaQ = useMeta()
   const authQ = useAuthMe()
@@ -112,15 +110,13 @@ export function AppLayout() {
 
       <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <NavRail
-          view={view}
-          onSelectView={setView}
           onOpenHubs={() => setDialog('hubs')}
           onOpenPins={() => setDialog('pins')}
           onOpenSettings={() => setDialog('settings')}
         />
         <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
           <BreadcrumbBar onOpenHubs={() => setDialog('hubs')} />
-          {view === 'browser' ? <BrowserColumns /> : <ActivityDashboard />}
+          <BrowserColumns />
         </Box>
       </Box>
 

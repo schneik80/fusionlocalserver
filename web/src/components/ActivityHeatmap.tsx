@@ -108,8 +108,6 @@ function buildWindow(timestamps: number[], gran: Gran, winStart: number): Built 
     switch (gran) {
       case 'day':
         return winStart + Math.floor((t - winStart) / HOUR_MS) * HOUR_MS
-      case 'year':
-        return startOfMonth(t)
       default:
         return startOfDay(t)
     }
@@ -139,9 +137,21 @@ function buildWindow(timestamps: number[], gran: Gran, winStart: number): Built 
     }
     for (const row of [1, 3, 5]) left.push({ row, text: WEEKDAYS[row] })
   } else {
-    const y = new Date(winStart).getUTCFullYear()
-    for (let m = 0; m < 12; m++) cells.push({ col: m, row: 0, count: counts.get(Date.UTC(y, m, 1)) ?? 0 })
-    for (let m = 0; m < 12; m++) top.push({ col: m, text: MONTHS[m] })
+    // year: full day calendar (week column × weekday row), GitHub-style, with a
+    // month label where each month begins along the top.
+    const base = startOfWeek(winStart)
+    let lastMonth = -1
+    for (let dms = winStart; dms < winEnd; dms += DAY_MS) {
+      const col = Math.round((startOfWeek(dms) - base) / (7 * DAY_MS))
+      const d = new Date(dms)
+      cells.push({ col, row: d.getUTCDay(), count: counts.get(startOfDay(dms)) ?? 0 })
+      const m = d.getUTCMonth()
+      if (m !== lastMonth) {
+        top.push({ col, text: MONTHS[m] })
+        lastMonth = m
+      }
+    }
+    for (const row of [1, 3, 5]) left.push({ row, text: WEEKDAYS[row] })
   }
 
   let maxCount = 0
@@ -193,7 +203,7 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
     [accent, empty],
   )
 
-  const TW = gran === 'day' ? 14 : gran === 'week' ? 28 : gran === 'month' ? 18 : 22
+  const TW = gran === 'day' ? 14 : gran === 'week' ? 28 : gran === 'month' ? 18 : 13
   const TH = TW / 2
   const MAX_BAR = TW * 2.2
   const levelOf = (count: number) =>

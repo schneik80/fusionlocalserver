@@ -235,22 +235,6 @@ export const useItemLocation = (
     staleTime: STALE,
   })
 
-// useActivityReport fetches the scoped activity report. `hub` is the hub slug
-// (Item.slug). scope/id select the level; the whole hub feed is fetched and
-// aggregated server-side, so changing scope/id is cheap and cache-friendly.
-export const useActivityReport = (
-  hub: string | null | undefined,
-  scope: string,
-  id: string,
-  bucket: string,
-): UseQueryResult<ActivityReport> =>
-  useQuery({
-    queryKey: ['activityReport', hub, scope, id, bucket],
-    queryFn: () => api.activityReport({ hub: hub!, scope, id: id || undefined, bucket }),
-    enabled: !!hub,
-    staleTime: STALE,
-  })
-
 // useDesignActivity fetches one design's activity report (GraphQL-sourced).
 // hubId is the GraphQL hub id and itemId the lineage urn — the same pair the
 // Details endpoints use. Daily buckets; the heatmap re-buckets client-side.
