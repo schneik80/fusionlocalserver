@@ -19,7 +19,7 @@ import {
 } from '@mui/material'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons'
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, ApiError } from '../api/client'
 import {
@@ -30,6 +30,7 @@ import {
   useDesignActivity,
   useDrawings,
   useGroupMembers,
+  useRollupActivity,
   useItemDetails,
   useProjectGroups,
   useProperties,
@@ -37,16 +38,7 @@ import {
   useUses,
   useWhereUsed,
 } from '../api/queries'
-import type {
-  ActivityEvent,
-  ActivityReport,
-  ComponentRef,
-  Details,
-  DrawingRef,
-  Item,
-  Measure,
-  ProjectGroup,
-} from '../api/types'
+import type { ComponentRef, Details, DrawingRef, Item, Measure, ProjectGroup } from '../api/types'
 import { useNav } from '../state/nav'
 import { iconForItem } from './icons'
 import ActivityHeatmap from './ActivityHeatmap'
@@ -181,7 +173,13 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
           <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
         )}
         {tab === 'activity' && (
-          <ActivityTab hubId={hubId} itemId={item.id} cvId={cvId} active={tab === 'activity'} />
+          <ActivityTab
+            hubId={hubId}
+            itemId={item.id}
+            cvId={cvId}
+            subtype={subtype}
+            active={tab === 'activity'}
+          />
         )}
         {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
         {tab === 'bom' && <BOMTab cvId={cvId} active />}
@@ -538,95 +536,51 @@ function WhereUsedTab({ cvId, active }: { cvId?: string; active: boolean }) {
   )
 }
 
-// mergeActivity folds child design reports into the parent's, producing a single
-// report whose events feed the heat map. Versions sum; contributors and the
-// created/last-change span are recomputed across the merged events.
-function mergeActivity(base: ActivityReport, children: ActivityReport[]): ActivityReport {
-  const events: ActivityEvent[] = [...base.events]
-  let versionCount = base.versionCount
-  let createdMs = base.createdOn ? Date.parse(base.createdOn) : Number.POSITIVE_INFINITY
-  let lastMs = base.lastChange ? Date.parse(base.lastChange) : Number.NEGATIVE_INFINITY
-  for (const c of children) {
-    for (const e of c.events) events.push(e)
-    versionCount += c.versionCount
-    if (c.createdOn) createdMs = Math.min(createdMs, Date.parse(c.createdOn))
-    if (c.lastChange) lastMs = Math.max(lastMs, Date.parse(c.lastChange))
-  }
-  const actors = new Set<string>()
-  for (const e of events) {
-    const k = e.actor?.accountId || e.actor?.displayName
-    if (k) actors.add(k)
-  }
-  return {
-    ...base,
-    events,
-    totalEvents: events.length,
-    versionCount,
-    contributorCount: actors.size,
-    createdOn: Number.isFinite(createdMs) ? new Date(createdMs).toISOString() : base.createdOn,
-    lastChange: lastMs > Number.NEGATIVE_INFINITY ? new Date(lastMs).toISOString() : base.lastChange,
-  }
-}
-
 // ActivityTab shows the design's change activity as an isometric heat map,
-// sourced from the GraphQL-backed design activity report. "Roll up child
-// changes" merges every immediate child document's activity into the heat map.
+// sourced from the GraphQL-backed design activity report. "Roll up child changes"
+// merges every descendant document's activity in (computed server-side).
+//
+// The descendant walk runs only for assemblies (per the folder-level
+// classification), so a leaf part loads the tab without that cost.
 function ActivityTab({
   hubId,
   itemId,
   cvId,
+  subtype,
   active,
 }: {
   hubId: string | null
   itemId: string
   cvId?: string
+  subtype?: string
   active: boolean
 }) {
   const reportQ = useDesignActivity(active ? hubId : null, active ? itemId : null)
 
-  // Children = ALL descendant documents (recursive occurrence tree), deduped by
-  // lineage id. The backend walk already dedupes by design, but a design can own
-  // several component versions, so dedupe by lineage here too.
-  const descendantsQ = useDescendants(cvId, active && !!cvId)
-  const children = useMemo(() => {
+  // Only assemblies have children; gate the (potentially expensive) recursive
+  // descendant enumeration on that so parts skip it entirely on tab load.
+  const isAssembly = subtype === 'assembly'
+  const descendantsQ = useDescendants(cvId, active && !!cvId && isAssembly)
+  const childItemIds = useMemo(() => {
     const seen = new Set<string>()
-    const out: { itemId: string; name: string }[] = []
     for (const u of descendantsQ.data ?? []) {
       const id = u.designItemId
-      if (!id || id === itemId || seen.has(id)) continue
-      seen.add(id)
-      out.push({ itemId: id, name: u.designItemName || u.name })
+      if (id && id !== itemId) seen.add(id)
     }
-    return out
+    return [...seen]
   }, [descendantsQ.data, itemId])
+  const childCount = childItemIds.length
+  const hasChildren = isAssembly && childCount > 0
 
   const [rollup, setRollup] = useState(false)
 
-  // Fetch each child's activity only while rolled up. staleTime 0 so re-enabling
-  // refetches fresh — child docs may change in real time — and keyed by child id
-  // so navigating to a different document never reuses these results. While the
-  // document stays put, react-query serves the in-memory results so flipping
-  // Day/Week/Month/Year (handled inside the heat map) needs no refetch.
-  const childResults = useQueries({
-    queries:
-      rollup && hubId
-        ? children.map((c) => ({
-            queryKey: ['designActivity', hubId, c.itemId],
-            queryFn: () => api.designActivity({ hubId, itemId: c.itemId, bucket: 'day' }),
-            staleTime: 0,
-          }))
-        : [],
-  })
-  const rollupLoading = rollup && childResults.some((r) => r.isPending || r.isFetching)
-  const childData = childResults.map((r) => r.data).filter(Boolean) as ActivityReport[]
-  const childSig = childData.map((d) => `${d.scopeId}:${d.totalEvents}`).join('|')
+  // Roll-up is computed server-side (enumerate ids here, fan out + merge there)
+  // so even a large assembly completes reliably in one request.
+  const rollupQ = useRollupActivity(hubId, itemId, childItemIds, rollup && hasChildren)
+  const rollupLoading =
+    rollup && (descendantsQ.isLoading || rollupQ.isPending || rollupQ.isFetching)
 
-  const report = useMemo(() => {
-    if (!reportQ.data) return null
-    if (!rollup || rollupLoading) return reportQ.data
-    return mergeActivity(reportQ.data, childData)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportQ.data, rollup, rollupLoading, childSig])
+  const report = rollup && !rollupLoading && rollupQ.data ? rollupQ.data : reportQ.data
 
   if (reportQ.isLoading) return <TabSpinner />
   if (reportQ.error) return <TabError error={reportQ.error as Error} />
@@ -634,12 +588,8 @@ function ActivityTab({
   return (
     <ActivityHeatmap
       report={report}
-      childCount={children.length}
-      rollup={
-        children.length > 0
-          ? { checked: rollup, loading: rollupLoading, onChange: setRollup }
-          : undefined
-      }
+      childCount={isAssembly ? childCount : undefined}
+      rollup={hasChildren ? { checked: rollup, loading: rollupLoading, onChange: setRollup } : undefined}
     />
   )
 }

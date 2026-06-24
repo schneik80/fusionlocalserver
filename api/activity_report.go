@@ -26,10 +26,12 @@ const (
 	BucketYear  Bucket = "year"
 )
 
-// maxReportEvents caps the recent-events list returned in a report so a busy
-// hub can't produce an unbounded payload. TotalEvents always reflects the true
-// (uncapped) count; EventsTruncated flags when the list was trimmed.
-const maxReportEvents = 500
+// maxReportEvents caps the events list returned in a report so a pathological
+// case can't produce an unbounded payload. The heat map buckets from this list,
+// so the cap is high enough that a realistic design — or a large assembly's
+// rolled-up child set — is rendered in full. TotalEvents always reflects the
+// true (uncapped) count; EventsTruncated flags when the list was trimmed.
+const maxReportEvents = 50000
 
 // Contributor is one actor's rolled-up participation within a scope.
 type Contributor struct {

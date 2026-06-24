@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -62,6 +64,46 @@ func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rep := api.BuildReport(events, api.ScopeDesign, itemID, api.Bucket(q.Get("bucket")), from, to)
+	writeJSON(w, http.StatusOK, activityReportDTO(rep))
+}
+
+// handleActivityRollup merges a design's activity with all of its child
+// documents' activity, server-side. Body: { hubId, itemId, childItemIds[] } —
+// the caller enumerates descendants (GET /api/items/descendants) and passes the
+// distinct child lineage ids here. The fan-out runs with bounded concurrency and
+// a generous timeout so even a large assembly rolls up completely in one call.
+func (s *Server) handleActivityRollup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		HubID        string   `json:"hubId"`
+		ItemID       string   `json:"itemId"`
+		ChildItemIDs []string `json:"childItemIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.HubID == "" || body.ItemID == "" {
+		writeError(w, http.StatusBadRequest, "hubId and itemId are required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	token, ok := s.token(ctx, w, r)
+	if !ok {
+		return
+	}
+
+	events, err := api.RollUpDesignActivity(ctx, token, body.HubID, body.ItemID, body.ChildItemIDs)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Aggregate across every merged event (scope=hub + empty id matches all),
+	// then label the report as the parent design's.
+	rep := api.BuildReport(events, api.ScopeHub, "", api.BucketDay, time.Time{}, time.Time{})
+	rep.Scope = api.ScopeDesign
+	rep.ScopeID = body.ItemID
 	writeJSON(w, http.StatusOK, activityReportDTO(rep))
 }
 

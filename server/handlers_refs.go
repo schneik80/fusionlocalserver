@@ -57,7 +57,9 @@ func (s *Server) handleDescendants(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := s.reqCtx(r)
+	// A deep assembly's occurrence walk can far exceed the default per-call
+	// timeout, so give it a generous dedicated budget to enumerate in full.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	token, ok := s.token(ctx, w, r)
 	if !ok {

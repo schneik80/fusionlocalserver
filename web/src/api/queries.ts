@@ -262,6 +262,25 @@ export const useDesignActivity = (
     staleTime: STALE,
   })
 
+// useRollupActivity computes a design's activity merged with all of its child
+// documents, server-side. Enabled only while rolled up; staleTime 0 so each
+// enable fetches fresh (child docs may change in real time) and keyed by the
+// child-id set so a result is never reused for a different document. While the
+// document stays mounted, Day/Week/Month/Year flips (handled inside the heat map)
+// don't refetch.
+export const useRollupActivity = (
+  hubId: string | null | undefined,
+  itemId: string | null | undefined,
+  childItemIds: string[],
+  enabled: boolean,
+): UseQueryResult<ActivityReport> =>
+  useQuery({
+    queryKey: ['rollupActivity', hubId, itemId, [...childItemIds].sort().join(',')],
+    queryFn: () => api.rollupActivity({ hubId: hubId!, itemId: itemId!, childItemIds }),
+    enabled: enabled && !!hubId && !!itemId,
+    staleTime: 0,
+  })
+
 export const usePins = (hubId: string | null): UseQueryResult<Pin[]> =>
   useQuery({
     queryKey: ['pins', hubId],

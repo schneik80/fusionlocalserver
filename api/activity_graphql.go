@@ -4,7 +4,58 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
+
+// rollupFanout bounds concurrent per-document activity fetches during a child
+// roll-up — enough to be fast on a large assembly without hammering the APS
+// gateway (which would rate-limit and cause retries/incompleteness).
+const rollupFanout = 12
+
+// RollUpDesignActivity fetches the parent design's activity plus every supplied
+// child document's activity (concurrently, bounded) and returns the merged event
+// set. The parent fetch must succeed; a child whose activity errors is logged and
+// skipped rather than failing the whole roll-up. Doing the fan-out server-side —
+// instead of the browser firing one request per descendant — keeps a large
+// assembly's roll-up reliable and complete.
+func RollUpDesignActivity(ctx context.Context, token, hubID, parentItemID string, childItemIDs []string) ([]ActivityEvent, error) {
+	ids := append([]string{parentItemID}, childItemIDs...)
+	type result struct {
+		events []ActivityEvent
+		err    error
+	}
+	results := make([]result, len(ids))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, rollupFanout)
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			evs, err := GetDesignActivity(ctx, token, hubID, id)
+			results[i] = result{evs, err}
+		}(i, id)
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	var all []ActivityEvent
+	for i, r := range results {
+		if r.err != nil {
+			if i == 0 {
+				return nil, fmt.Errorf("rollup parent activity: %w", r.err)
+			}
+			dbgLog("rollup: activity(%s) failed: %v", ids[i], r.err)
+			continue
+		}
+		all = append(all, r.events...)
+	}
+	return all, nil
+}
 
 // GraphQL-backed activity acquisition. The first-party Fusion Team notifications
 // feed (api/activity.go) rejects this app's token with HTTP 500, so design-scope

@@ -50,8 +50,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 	mux.HandleFunc("GET /api/items/custom-properties", prot(s.handleCustomProperties))
 
-	// Activity reports (hub/project/folder/design).
+	// Activity reports (per design; rollup merges in child documents).
 	mux.HandleFunc("GET /api/activity/report", prot(s.handleActivityReport))
+	mux.HandleFunc("POST /api/activity/rollup", prot(s.handleActivityRollup))
 
 	// Settings.
 	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))

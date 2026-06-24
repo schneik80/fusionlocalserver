@@ -134,9 +134,11 @@ func GetOccurrences(ctx context.Context, token, componentVersionID string) ([]Co
 // not sink the whole walk); a cancelled context aborts and returns its error.
 func GetAllDescendants(ctx context.Context, token, rootCvID string) ([]ComponentRef, error) {
 	const (
-		maxDescendantNodes = 2000
-		maxDescendantDepth = 64
-		descendantFanout   = 8
+		// High backstops so a real (even very large) assembly is enumerated in
+		// full; they only guard against a pathological/runaway tree.
+		maxDescendantNodes = 20000
+		maxDescendantDepth = 256
+		descendantFanout   = 12
 	)
 	visited := make(map[string]struct{})
 	frontier := []string{rootCvID}

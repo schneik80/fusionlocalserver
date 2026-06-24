@@ -150,6 +150,15 @@ export const api = {
       `/api/activity/report${qs({ scope: 'design', hubId: args.hubId, id: args.itemId, bucket: args.bucket })}`,
     ),
 
+  // rollupActivity merges a design's activity with all of its child documents'
+  // activity, computed server-side (bounded concurrency, generous timeout). The
+  // caller passes the descendant lineage ids it enumerated.
+  rollupActivity: (args: { hubId: string; itemId: string; childItemIds: string[] }) =>
+    request<ActivityReport>('/api/activity/rollup', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 
   addPin: (hubId: string, pin: Partial<Pin>) =>
