@@ -152,6 +152,19 @@ export const useUses = (args: {
     staleTime: STALE,
   })
 
+// useDescendants fetches the recursive occurrence tree (all child documents).
+// Heavier than useUses (one level) — backs the Activity tab's child roll-up.
+export const useDescendants = (
+  cvId: string | undefined,
+  enabled: boolean,
+): UseQueryResult<ComponentRef[]> =>
+  useQuery({
+    queryKey: ['descendants', cvId],
+    queryFn: () => api.descendants(cvId!),
+    enabled: enabled && !!cvId,
+    staleTime: STALE,
+  })
+
 export const useWhereUsed = (
   cvId: string | undefined,
   enabled: boolean,

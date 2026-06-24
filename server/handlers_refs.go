@@ -49,6 +49,28 @@ func (s *Server) handleUses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, componentRefDTOs(refs))
 }
 
+// handleDescendants returns every distinct descendant component of a design
+// (the recursive occurrence tree), deduped by owning design lineage. Backs the
+// Activity tab's "roll up child changes", which needs all child documents.
+func (s *Server) handleDescendants(w http.ResponseWriter, r *http.Request) {
+	cvID, ok := reqParam(w, r, "cvId")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	token, ok := s.token(ctx, w, r)
+	if !ok {
+		return
+	}
+	refs, err := api.GetAllDescendants(ctx, token, cvID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, componentRefDTOs(refs))
+}
+
 // handleWhereUsed -> api.GetWhereUsed (query: cvId).
 func (s *Server) handleWhereUsed(w http.ResponseWriter, r *http.Request) {
 	cvID, ok := reqParam(w, r, "cvId")

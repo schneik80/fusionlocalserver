@@ -1,5 +1,15 @@
 import { useMemo, useState } from 'react'
-import { Box, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import {
+  Box,
+  Checkbox,
+  CircularProgress,
+  FormControlLabel,
+  Stack,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+  Typography,
+} from '@mui/material'
 import { alpha, darken, lighten, useTheme } from '@mui/material/styles'
 import type { ActivityReport } from '../api/types'
 
@@ -164,7 +174,17 @@ function buildWindow(timestamps: number[], gran: Gran, winStart: number): Built 
 const fmtDate = (s?: string) =>
   s ? new Date(s).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
 
-export default function ActivityHeatmap({ report }: { report: ActivityReport }) {
+export default function ActivityHeatmap({
+  report,
+  childCount,
+  rollup,
+}: {
+  report: ActivityReport
+  childCount?: number
+  // When the design has children, the tab passes a roll-up control. `loading`
+  // shows a spinner over the chart while child activity is being merged in.
+  rollup?: { checked: boolean; loading: boolean; onChange: (next: boolean) => void }
+}) {
   const theme = useTheme()
   const [gran, setGran] = useState<Gran>('week')
 
@@ -326,6 +346,12 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
         <Typography variant="body2" color="text.secondary">
           <b>{report.versionCount}</b> versions · <b>{report.contributorCount}</b>{' '}
           {report.contributorCount === 1 ? 'contributor' : 'contributors'} · {report.totalEvents} changes
+          {childCount ? (
+            <>
+              {' '}
+              · <b>{childCount}</b> child {childCount === 1 ? 'document' : 'documents'}
+            </>
+          ) : null}
         </Typography>
         <ToggleButtonGroup size="small" exclusive value={gran} onChange={(_, v: Gran | null) => v && setGran(v)}>
           <ToggleButton value="day">Day</ToggleButton>
@@ -335,6 +361,30 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
         </ToggleButtonGroup>
       </Stack>
 
+      {/* Roll-up toggle (only when the design has children). */}
+      {rollup && (
+        <FormControlLabel
+          sx={{ m: 0 }}
+          control={
+            <Checkbox
+              size="small"
+              checked={rollup.checked}
+              onChange={(e) => rollup.onChange(e.target.checked)}
+            />
+          }
+          label={<Typography variant="body2">Roll up child changes</Typography>}
+        />
+      )}
+
+      {rollup?.loading ? (
+        <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ py: 6 }}>
+          <CircularProgress />
+          <Typography variant="caption" color="text.secondary">
+            Rolling up child activity…
+          </Typography>
+        </Stack>
+      ) : (
+        <>
       {/* Window timeline: one dot per increment, coloured by its change count
           (same ramp as the heat map). Click a dot to load that window. */}
       <Box sx={{ overflowX: 'auto', py: 0.5 }}>
@@ -431,6 +481,8 @@ export default function ActivityHeatmap({ report }: { report: ActivityReport }) 
           {fmtDate(report.createdOn)} → {fmtDate(report.lastChange)}
         </Typography>
       </Stack>
+        </>
+      )}
     </Stack>
   )
 }

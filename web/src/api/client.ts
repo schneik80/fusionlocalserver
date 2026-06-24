@@ -110,6 +110,11 @@ export const api = {
   uses: (args: { cvId?: string; hubId?: string; drawingItemId?: string }) =>
     request<ComponentRef[]>(`/api/items/uses${qs(args)}`),
 
+  // descendants is the recursive occurrence tree (all child documents), used by
+  // the Activity tab's child roll-up.
+  descendants: (cvId: string) =>
+    request<ComponentRef[]>(`/api/items/descendants${qs({ cvId })}`),
+
   whereUsed: (cvId: string) =>
     request<ComponentRef[]>(`/api/items/where-used${qs({ cvId })}`),
 

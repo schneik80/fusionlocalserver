@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -121,6 +122,77 @@ func GetOccurrences(ctx context.Context, token, componentVersionID string) ([]Co
 		}
 	}
 	return refs, nil
+}
+
+// GetAllDescendants walks the occurrence tree breadth-first from rootCvID and
+// returns every distinct descendant component, deduped by owning design lineage
+// (falling back to component-version id). Each distinct design is visited once,
+// so cost is bounded by the number of distinct descendant designs rather than
+// total instances; maxDescendantNodes and maxDescendantDepth backstop pathological
+// trees, and each level's occurrence fetches run with bounded concurrency.
+// Per-node fetch errors are logged and skipped (a deactivated sub-project must
+// not sink the whole walk); a cancelled context aborts and returns its error.
+func GetAllDescendants(ctx context.Context, token, rootCvID string) ([]ComponentRef, error) {
+	const (
+		maxDescendantNodes = 2000
+		maxDescendantDepth = 64
+		descendantFanout   = 8
+	)
+	visited := make(map[string]struct{})
+	frontier := []string{rootCvID}
+	var out []ComponentRef
+
+	for depth := 0; depth < maxDescendantDepth && len(frontier) > 0 && len(out) < maxDescendantNodes; depth++ {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		// Fetch this level's occurrences concurrently (bounded).
+		levelRefs := make([][]ComponentRef, len(frontier))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, descendantFanout)
+		for i, cv := range frontier {
+			wg.Add(1)
+			go func(i int, cv string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				refs, err := GetOccurrences(ctx, token, cv)
+				if err != nil {
+					dbgLog("descendants: occurrences(%s) failed: %v", cv, err)
+					return
+				}
+				levelRefs[i] = refs
+			}(i, cv)
+		}
+		wg.Wait()
+
+		var next []string
+		for _, refs := range levelRefs {
+			for _, ref := range refs {
+				key := ref.DesignItemID
+				if key == "" {
+					key = ref.ID
+				}
+				if key == "" {
+					continue
+				}
+				if _, seen := visited[key]; seen {
+					continue
+				}
+				visited[key] = struct{}{}
+				out = append(out, ref)
+				if ref.ID != "" {
+					next = append(next, ref.ID) // recurse via the child's componentVersion id
+				}
+				if len(out) >= maxDescendantNodes {
+					dbgLog("descendants: hit node cap (%d) — result truncated", maxDescendantNodes)
+					return out, nil
+				}
+			}
+		}
+		frontier = next
+	}
+	return out, nil
 }
 
 // GetDrawingSource returns the source design(s) referenced by the given
