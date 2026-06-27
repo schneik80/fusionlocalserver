@@ -48,6 +48,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/items/classify", prot(s.handleClassify))
 	mux.HandleFunc("GET /api/items/thumbnail", prot(s.handleThumbnail))
 	mux.HandleFunc("GET /api/items/thumbnail/image", prot(s.handleThumbnailImage))
+	mux.HandleFunc("GET /api/items/drawing/preview", prot(s.handleDrawingPreview))
 	mux.HandleFunc("GET /api/items/properties", prot(s.handleProperties))
 	mux.HandleFunc("GET /api/items/custom-properties", prot(s.handleCustomProperties))
 

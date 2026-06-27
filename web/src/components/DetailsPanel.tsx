@@ -95,7 +95,12 @@ export function DetailsPanel() {
       }}
     >
       {selected ? (
-        <SelectedDetails key={selected.id} hubId={nav.hubId} item={selected} />
+        <SelectedDetails
+          key={selected.id}
+          hubId={nav.hubId}
+          item={selected}
+          projectAltId={nav.project?.altId}
+        />
       ) : (
         <Box
           sx={{
@@ -115,7 +120,15 @@ export function DetailsPanel() {
   )
 }
 
-function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) {
+function SelectedDetails({
+  hubId,
+  item,
+  projectAltId,
+}: {
+  hubId: string | null
+  item: Item
+  projectAltId?: string
+}) {
   const available = useMemo(() => tabsFor(item.kind), [item.kind])
   const [tab, setTab] = useState<TabKey>('history')
 
@@ -150,7 +163,14 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
               error={detailsQ.error as Error | null}
             />
           </Box>
-          <Thumbnail cvId={cvId} name={item.name} />
+          <Thumbnail
+            kind={item.kind}
+            itemId={item.id}
+            cvId={cvId}
+            name={item.name}
+            hubId={hubId}
+            projectAltId={projectAltId}
+          />
         </Box>
       </Box>
 
@@ -199,14 +219,30 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
 const THUMBNAIL_POLL_TIMEOUT_MS = 30_000
 
 // Thumbnail renders the component's preview image, sitting to the right of the
-// details metadata. Only designs (and configured designs) carry a
-// componentVersionId, so for everything else cvId is undefined and nothing is
-// shown (the metadata then takes the full width). Capped at 200×200.
-function Thumbnail({ cvId, name }: { cvId?: string; name: string }) {
-  // Give up on a perpetually-PENDING thumbnail after a window. Disabling the
-  // query via `enabled` also stops its 2s polling.
+// details metadata. Designs and configured designs carry a componentVersionId
+// for the MFGDM thumbnail. Drawings load a high-res preview extracted from
+// the .f2d file. For everything else, nothing is shown.
+function Thumbnail({
+  kind,
+  itemId,
+  cvId,
+  name,
+  hubId,
+  projectAltId,
+}: {
+  kind: string
+  itemId: string
+  cvId?: string
+  name: string
+  hubId: string | null
+  projectAltId?: string
+}) {
+  const isDrawing = kind === 'drawing'
+  const isDesign = kind === 'design' || kind === 'configured'
+
+  // For designs: poll MFGDM thumbnail via cvId.
   const [gaveUp, setGaveUp] = useState(false)
-  const q = useThumbnail(cvId, !!cvId && !gaveUp)
+  const q = useThumbnail(isDesign ? cvId : undefined, isDesign && !!cvId && !gaveUp)
   const status = q.data?.status
 
   useEffect(() => {
@@ -216,12 +252,21 @@ function Thumbnail({ cvId, name }: { cvId?: string; name: string }) {
     return () => window.clearTimeout(timer)
   }, [cvId, status])
 
-  if (!cvId) return null
-  // No image to show: a hard error, a failed/absent thumbnail, or we gave up
-  // waiting for a still-generating one.
-  if (q.isError || status === 'FAILED' || gaveUp) return null
+  if (!isDesign && !isDrawing) return null
 
-  const ready = status === 'SUCCESS'
+  // For designs: no image if hard error, failed thumbnail, or we gave up waiting.
+  if (isDesign && (q.isError || status === 'FAILED' || gaveUp)) return null
+
+  const designReady = isDesign && status === 'SUCCESS'
+  const drawingImageUrl =
+    isDrawing && hubId && projectAltId
+      ? `/api/items/drawing/preview?hubId=${encodeURIComponent(hubId)}&itemId=${encodeURIComponent(
+          itemId
+        )}&dmProjectId=${encodeURIComponent(projectAltId)}`
+      : undefined
+
+  const showLoading = isDrawing && !!projectAltId && !drawingImageUrl
+  const showContent = designReady || (isDrawing && !!drawingImageUrl)
 
   return (
     <Box
@@ -238,19 +283,27 @@ function Thumbnail({ cvId, name }: { cvId?: string; name: string }) {
         overflow: 'hidden',
       }}
     >
-      {ready ? (
+      {showContent ? (
         <Box
           component="img"
-          // Same-origin proxy: the server caches the bytes (usually pre-warmed
-          // by the classify probe) and streams them, avoiding a cross-origin
-          // fetch to the APS CDN on every view.
-          src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId)}`}
-          alt={`${name} thumbnail`}
+          src={
+            isDesign
+              ? `/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId!)}`
+              : drawingImageUrl!
+          }
+          alt={`${name} preview`}
           sx={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          onError={(e) => {
+            if (isDrawing) {
+              // Fall back to MFGDM thumbnail on drawing preview failure
+              const img = e.currentTarget as HTMLImageElement
+              img.src = `/api/items/thumbnail/image?cvId=${encodeURIComponent(itemId)}`
+            }
+          }}
         />
-      ) : (
+      ) : showLoading ? (
         <CircularProgress size={28} />
-      )}
+      ) : null}
     </Box>
   )
 }
