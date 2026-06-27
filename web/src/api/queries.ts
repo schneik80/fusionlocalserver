@@ -19,6 +19,7 @@ import type {
   Location,
   Meta,
   NamedProperty,
+  PermLayer,
   PhysicalProperties,
   Pin,
   ProjectGroup,
@@ -162,6 +163,21 @@ export const useDescendants = (
     queryKey: ['descendants', cvId],
     queryFn: () => api.descendants(cvId!),
     enabled: enabled && !!cvId,
+    staleTime: STALE,
+  })
+
+// usePermissionsPath fetches per-layer access (project → folders) for a document.
+export const usePermissionsPath = (
+  hubId: string | null,
+  projectId: string | null | undefined,
+  projectName: string | undefined,
+  folders: { id: string; name: string }[],
+  enabled: boolean,
+): UseQueryResult<PermLayer[]> =>
+  useQuery({
+    queryKey: ['permPath', hubId, projectId, folders.map((f) => f.id)],
+    queryFn: () => api.permissionsPath({ hubId: hubId!, projectId: projectId!, projectName, folders }),
+    enabled: enabled && !!hubId && !!projectId,
     staleTime: STALE,
   })
 

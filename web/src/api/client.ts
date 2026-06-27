@@ -18,6 +18,7 @@ import type {
   Meta,
   NamedProperty,
   PhysicalProperties,
+  PermLayer,
   Pin,
   ProjectGroup,
   SetPortResponse,
@@ -158,6 +159,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(args),
     }),
+
+  // permissionsPath returns the access at each layer of a document's path
+  // (project → folders, root→leaf): groups + individual members with roles.
+  permissionsPath: (args: {
+    hubId: string
+    projectId: string
+    projectName?: string
+    folders: { id: string; name: string }[]
+  }) => {
+    const p = new URLSearchParams()
+    p.set('hubId', args.hubId)
+    p.set('projectId', args.projectId)
+    if (args.projectName) p.set('projectName', args.projectName)
+    for (const f of args.folders) {
+      p.append('folderId', f.id)
+      p.append('folderName', f.name)
+    }
+    return request<PermLayer[]>(`/api/permissions/path?${p.toString()}`)
+  },
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

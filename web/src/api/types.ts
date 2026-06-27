@@ -161,6 +161,26 @@ export interface GroupMember {
   status?: string
 }
 
+// PermMember mirrors server.MemberDTO — an individual user with a role + status
+// on a project or folder (a contributor / folder member).
+export interface PermMember {
+  userId: string
+  name: string
+  email?: string
+  role: string
+  status?: string // ACTIVE | INACTIVE | PENDING
+}
+
+// PermLayer mirrors server.PermLayerDTO — one layer of a document's access path
+// (the project, or a folder) with the groups and individual members granted there.
+export interface PermLayer {
+  type: string // "project" | "folder"
+  id: string
+  name?: string
+  groups: ProjectGroup[]
+  members: PermMember[]
+}
+
 export interface FolderRef {
   id: string
   name: string

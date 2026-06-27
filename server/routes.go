@@ -43,6 +43,7 @@ func (s *Server) routes() http.Handler {
 
 	// Permissions (project groups + roles; group members need hub-admin access).
 	mux.HandleFunc("GET /api/projects/groups", prot(s.handleProjectGroups))
+	mux.HandleFunc("GET /api/permissions/path", prot(s.handlePermissionsPath))
 	mux.HandleFunc("GET /api/groups/members", prot(s.handleGroupMembers))
 	mux.HandleFunc("GET /api/items/classify", prot(s.handleClassify))
 	mux.HandleFunc("GET /api/items/thumbnail", prot(s.handleThumbnail))

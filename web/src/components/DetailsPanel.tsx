@@ -18,10 +18,9 @@ import {
   Typography,
 } from '@mui/material'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, ApiError } from '../api/client'
+import { api } from '../api/client'
 import {
   useBOM,
   useClassify,
@@ -29,19 +28,18 @@ import {
   useDescendants,
   useDesignActivity,
   useDrawings,
-  useGroupMembers,
   useRollupActivity,
   useItemDetails,
-  useProjectGroups,
   useProperties,
   useThumbnail,
   useUses,
   useWhereUsed,
 } from '../api/queries'
-import type { ComponentRef, Details, DrawingRef, Item, Measure, ProjectGroup } from '../api/types'
+import type { ComponentRef, Details, DrawingRef, Item, Measure } from '../api/types'
 import { useNav } from '../state/nav'
 import { iconForItem } from './icons'
 import ActivityHeatmap from './ActivityHeatmap'
+import PermissionsExplorer from './PermissionsExplorer'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
@@ -188,7 +186,7 @@ function SelectedDetails({ hubId, item }: { hubId: string | null; item: Item }) 
         )}
         {tab === 'whereUsed' && <WhereUsedTab cvId={cvId} active />}
         {tab === 'drawings' && <DrawingsTab hubId={hubId} designItemId={item.id} active />}
-        {tab === 'permissions' && <PermissionsTab hubId={hubId} />}
+        {tab === 'permissions' && <PermissionsExplorer hubId={hubId} item={item} />}
       </Box>
     </>
   )
@@ -623,89 +621,6 @@ function DrawingsTab({
   )
 }
 
-// PermissionsTab lists the groups (and roles) with access to the item's
-// project. Access in the Manufacturing Data Model is per-project and
-// group-based; each group expands to its member users — but listing members
-// needs hub-admin rights, so for ordinary users that shows a "no permission"
-// note instead.
-function PermissionsTab({ hubId }: { hubId: string | null }) {
-  const nav = useNav()
-  const projectId = nav.project?.id
-  const q = useProjectGroups(projectId)
-
-  if (!projectId) return <TabEmpty text="Select a document within a project to see access" />
-  if (q.isLoading) return <TabSpinner />
-  if (q.error) return <TabError error={q.error as Error} />
-  const groups = q.data ?? []
-  if (groups.length === 0) return <TabEmpty text="No groups have access to this project" />
-
-  return (
-    <List dense disablePadding>
-      {groups.map((g) => (
-        <GroupRow key={g.id} hubId={hubId} group={g} />
-      ))}
-    </List>
-  )
-}
-
-// roleLabel turns an APS role enum ("ADMINISTRATOR") into a display string
-// ("Administrator").
-function roleLabel(role: string): string {
-  return role ? role.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : ''
-}
-
-function GroupRow({ hubId, group }: { hubId: string | null; group: ProjectGroup }) {
-  const [open, setOpen] = useState(false)
-  const membersQ = useGroupMembers(hubId, group.id, open)
-  const members = membersQ.data ?? []
-  const status = membersQ.error instanceof ApiError ? membersQ.error.status : 0
-
-  return (
-    <>
-      <ListItemButton onClick={() => setOpen((o) => !o)} sx={{ py: 0.5 }}>
-        <Box
-          component="span"
-          sx={{ color: 'text.secondary', mr: 1, width: 14, display: 'inline-flex', justifyContent: 'center' }}
-        >
-          <FontAwesomeIcon icon={open ? faChevronDown : faChevronRight} style={{ fontSize: 11 }} />
-        </Box>
-        <ListItemText
-          primary={group.name}
-          secondary={roleLabel(group.role)}
-          primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
-          secondaryTypographyProps={{ variant: 'caption' }}
-        />
-      </ListItemButton>
-      {open && (
-        <Box sx={{ pl: 4, pb: 1 }}>
-          {membersQ.isLoading && (
-            <Typography variant="caption" color="text.secondary">
-              Loading members…
-            </Typography>
-          )}
-          {membersQ.error && (
-            <Typography variant="caption" color="text.secondary">
-              {status === 403
-                ? "You don't have permission to list this group's members."
-                : (membersQ.error as Error).message}
-            </Typography>
-          )}
-          {!membersQ.isLoading && !membersQ.error && members.length === 0 && (
-            <Typography variant="caption" color="text.secondary">
-              No members
-            </Typography>
-          )}
-          {members.map((m) => (
-            <Typography key={m.userId} variant="body2">
-              {m.name}
-              {m.email ? ` · ${m.email}` : ''}
-            </Typography>
-          ))}
-        </Box>
-      )}
-    </>
-  )
-}
 
 function RefList({
   loading,
