@@ -47,6 +47,10 @@ export interface NavState {
   project: Item | null
   folderStack: Item[]
   selected: Item | null
+  // The Details tab to open on the next selection (consumed at mount). Set by
+  // navigate() so a cross-document jump can land on the same tab it came from;
+  // cleared by plain selection so ordinary clicks default to History.
+  selectedTab: string | null
 }
 
 const initialState: NavState = {
@@ -55,6 +59,7 @@ const initialState: NavState = {
   project: null,
   folderStack: [],
   selected: null,
+  selectedTab: null,
 }
 
 type Action =
@@ -69,6 +74,7 @@ type Action =
       project: Item
       folderStack: Item[]
       selected: Item | null
+      tab?: string
     }
 
 function reducer(state: NavState, action: Action): NavState {
@@ -77,22 +83,24 @@ function reducer(state: NavState, action: Action): NavState {
       if (action.id === state.hubId) return state
       return { ...initialState, hubId: action.id, hubName: action.name }
     case 'selectProject':
-      return { ...state, project: action.project, folderStack: [], selected: null }
+      return { ...state, project: action.project, folderStack: [], selected: null, selectedTab: null }
     case 'enterFolder':
       return {
         ...state,
         folderStack: [...state.folderStack, action.folder],
         selected: null,
+        selectedTab: null,
       }
     case 'selectItem':
-      return { ...state, selected: action.item }
+      return { ...state, selected: action.item, selectedTab: null }
     case 'gotoProjectRoot':
-      return { ...state, folderStack: [], selected: null }
+      return { ...state, folderStack: [], selected: null, selectedTab: null }
     case 'gotoFolder':
       return {
         ...state,
         folderStack: state.folderStack.slice(0, action.index + 1),
         selected: null,
+        selectedTab: null,
       }
     case 'navigate':
       return {
@@ -100,6 +108,7 @@ function reducer(state: NavState, action: Action): NavState {
         project: action.project,
         folderStack: action.folderStack,
         selected: action.selected,
+        selectedTab: action.tab ?? null,
       }
     default:
       return state
@@ -113,7 +122,7 @@ interface NavCtx extends NavState {
   selectItem: (item: Item) => void
   gotoProjectRoot: () => void
   gotoFolder: (index: number) => void
-  navigate: (project: Item, folderStack: Item[], selected: Item | null) => void
+  navigate: (project: Item, folderStack: Item[], selected: Item | null, tab?: string) => void
   /** id of the folder whose contents the Contents column currently shows, or null at project root */
   currentFolderId: string | null
 }
@@ -137,8 +146,8 @@ export function NavProvider({ children }: { children: ReactNode }) {
       selectItem: (item) => dispatch({ type: 'selectItem', item }),
       gotoProjectRoot: () => dispatch({ type: 'gotoProjectRoot' }),
       gotoFolder: (index) => dispatch({ type: 'gotoFolder', index }),
-      navigate: (project, folderStack, selected) =>
-        dispatch({ type: 'navigate', project, folderStack, selected }),
+      navigate: (project, folderStack, selected, tab) =>
+        dispatch({ type: 'navigate', project, folderStack, selected, tab }),
     }
   }, [state])
 

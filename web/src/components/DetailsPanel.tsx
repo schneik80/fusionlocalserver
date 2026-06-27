@@ -1,6 +1,8 @@
 import {
   Box,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   List,
   ListItem,
   ListItemButton,
@@ -18,9 +20,7 @@ import {
   Typography,
 } from '@mui/material'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api } from '../api/client'
 import {
   useBOM,
   useClassify,
@@ -36,10 +36,13 @@ import {
   useWhereUsed,
 } from '../api/queries'
 import type { ComponentRef, Details, DrawingRef, Item, Measure } from '../api/types'
+import { thumbnailSrc } from '../api/thumbnails'
 import { useNav } from '../state/nav'
+import { useGoToDocument } from '../state/goto'
 import { iconForItem } from './icons'
 import ActivityHeatmap from './ActivityHeatmap'
 import PermissionsExplorer from './PermissionsExplorer'
+import RelationGraph, { type GraphNode } from './RelationGraph'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
@@ -129,8 +132,14 @@ function SelectedDetails({
   item: Item
   projectAltId?: string
 }) {
+  const nav = useNav()
   const available = useMemo(() => tabsFor(item.kind), [item.kind])
-  const [tab, setTab] = useState<TabKey>('history')
+  // Open the tab a cross-document jump requested (nav.selectedTab), if valid for
+  // this item; else default to History. Read once at mount — this component
+  // remounts (key={item.id}) on every selection change.
+  const [tab, setTab] = useState<TabKey>(
+    nav.selectedTab && available.includes(nav.selectedTab as TabKey) ? (nav.selectedTab as TabKey) : 'history',
+  )
 
   // Reset to a valid tab whenever the selected item (and thus its tab set)
   // changes. key={item.id} already remounts this, but guard anyway.
@@ -168,7 +177,6 @@ function SelectedDetails({
             itemId={item.id}
             cvId={cvId}
             name={item.name}
-            hubId={hubId}
             projectAltId={projectAltId}
           />
         </Box>
@@ -201,10 +209,8 @@ function SelectedDetails({
         )}
         {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
         {tab === 'bom' && <BOMTab cvId={cvId} active />}
-        {tab === 'uses' && (
-          <UsesTab kind={item.kind} hubId={hubId} itemId={item.id} cvId={cvId} active />
-        )}
-        {tab === 'whereUsed' && <WhereUsedTab cvId={cvId} active />}
+        {tab === 'uses' && <UsesTab item={item} hubId={hubId} cvId={cvId} active />}
+        {tab === 'whereUsed' && <WhereUsedTab item={item} hubId={hubId} cvId={cvId} active />}
         {tab === 'drawings' && <DrawingsTab hubId={hubId} designItemId={item.id} active />}
         {tab === 'permissions' && <PermissionsExplorer hubId={hubId} item={item} />}
       </Box>
@@ -220,21 +226,19 @@ const THUMBNAIL_POLL_TIMEOUT_MS = 30_000
 
 // Thumbnail renders the component's preview image, sitting to the right of the
 // details metadata. Designs and configured designs carry a componentVersionId
-// for the MFGDM thumbnail. Drawings load a high-res preview extracted from
-// the .f2d file. For everything else, nothing is shown.
+// for the MFGDM thumbnail. Drawings load a Model Derivative preview keyed by
+// item id + project altId. For everything else, nothing is shown.
 function Thumbnail({
   kind,
   itemId,
   cvId,
   name,
-  hubId,
   projectAltId,
 }: {
   kind: string
   itemId: string
   cvId?: string
   name: string
-  hubId: string | null
   projectAltId?: string
 }) {
   const isDrawing = kind === 'drawing'
@@ -242,6 +246,11 @@ function Thumbnail({
 
   // For designs: poll MFGDM thumbnail via cvId.
   const [gaveUp, setGaveUp] = useState(false)
+  // For drawings: the .f2d preview can 404 (no native file / extraction failed).
+  // Track that declaratively so a failed <img> renders nothing instead of
+  // imperatively swapping src — mutating a React-controlled src fights
+  // reconciliation and loops into a flicker.
+  const [drawingFailed, setDrawingFailed] = useState(false)
   const q = useThumbnail(isDesign ? cvId : undefined, isDesign && !!cvId && !gaveUp)
   const status = q.data?.status
 
@@ -256,14 +265,13 @@ function Thumbnail({
 
   // For designs: no image if hard error, failed thumbnail, or we gave up waiting.
   if (isDesign && (q.isError || status === 'FAILED' || gaveUp)) return null
+  // For drawings: no image once the preview request has failed. A drawing's
+  // item id is not a componentVersionId, so there's no MFGDM thumbnail to fall
+  // back to — show nothing, mirroring the design failure path above.
+  if (isDrawing && drawingFailed) return null
 
   const designReady = isDesign && status === 'SUCCESS'
-  const drawingImageUrl =
-    isDrawing && hubId && projectAltId
-      ? `/api/items/drawing/preview?hubId=${encodeURIComponent(hubId)}&itemId=${encodeURIComponent(
-          itemId
-        )}&dmProjectId=${encodeURIComponent(projectAltId)}`
-      : undefined
+  const drawingImageUrl = isDrawing ? thumbnailSrc({ kind, itemId, projectAltId }) : null
 
   const showLoading = isDrawing && !!projectAltId && !drawingImageUrl
   const showContent = designReady || (isDrawing && !!drawingImageUrl)
@@ -286,19 +294,11 @@ function Thumbnail({
       {showContent ? (
         <Box
           component="img"
-          src={
-            isDesign
-              ? `/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId!)}`
-              : drawingImageUrl!
-          }
+          src={isDesign ? thumbnailSrc({ kind, cvId })! : drawingImageUrl!}
           alt={`${name} preview`}
           sx={{ width: '100%', height: '100%', objectFit: 'contain' }}
-          onError={(e) => {
-            if (isDrawing) {
-              // Fall back to MFGDM thumbnail on drawing preview failure
-              const img = e.currentTarget as HTMLImageElement
-              img.src = `/api/items/thumbnail/image?cvId=${encodeURIComponent(itemId)}`
-            }
+          onError={() => {
+            if (isDrawing) setDrawingFailed(true)
           }}
         />
       ) : showLoading ? (
@@ -545,45 +545,129 @@ function HistoryTab({
   )
 }
 
-function UsesTab({
-  kind,
-  hubId,
-  itemId,
-  cvId,
-  active,
-}: {
-  kind: string
-  hubId: string | null
-  itemId: string
-  cvId?: string
-  active: boolean
-}) {
-  const isDrawing = kind === 'drawing'
-  const q = useUses({
-    cvId: isDrawing ? undefined : cvId,
-    hubId: isDrawing ? hubId ?? undefined : undefined,
-    drawingItemId: isDrawing ? itemId : undefined,
-    enabled: active && (isDrawing ? !!hubId : !!cvId),
-  })
+// componentRefsToNodes maps Uses/Where-Used refs to graph nodes, deduped by the
+// related document's lineage id (repeated occurrences collapse to one node).
+function componentRefsToNodes(refs: ComponentRef[]): GraphNode[] {
+  const seen = new Set<string>()
+  const out: GraphNode[] = []
+  for (const r of refs) {
+    if (!r.designItemId || seen.has(r.designItemId)) continue
+    seen.add(r.designItemId)
+    out.push({
+      key: r.designItemId,
+      navId: r.designItemId,
+      cvId: r.id,
+      name: r.designItemName || r.name,
+      kind: 'design',
+      secondary: [r.partNumber, r.material].filter(Boolean).join(' · ') || undefined,
+    })
+  }
+  return out
+}
+
+function RelationStats({ text }: { text: ReactNode }) {
   return (
-    <RefList
-      loading={q.isLoading}
-      error={q.error as Error | null}
-      refs={q.data}
-      emptyText={isDrawing ? 'No source design' : 'No sub-components'}
-    />
+    <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1 }}>
+      <Typography variant="caption" color="text.secondary">
+        {text}
+      </Typography>
+    </Box>
   )
 }
 
-function WhereUsedTab({ cvId, active }: { cvId?: string; active: boolean }) {
-  const q = useWhereUsed(cvId, active)
+// UsesTab shows a design's sub-components (or a drawing's source design) as an
+// interactive relationship graph; clicking a node jumps to that document's Uses tab.
+function UsesTab({ item, hubId, cvId, active }: { item: Item; hubId: string | null; cvId?: string; active: boolean }) {
+  const isDrawing = item.kind === 'drawing'
+  const goTo = useGoToDocument()
+  const q = useUses({
+    cvId: isDrawing ? undefined : cvId,
+    hubId: isDrawing ? hubId ?? undefined : undefined,
+    drawingItemId: isDrawing ? item.id : undefined,
+    enabled: active && (isDrawing ? !!hubId : !!cvId),
+  })
+  if (q.isLoading) return <TabSpinner />
+  if (q.error) return <TabError error={q.error as Error} />
+  const nodes = componentRefsToNodes(q.data ?? [])
+  const noun = isDrawing ? 'source design' : 'sub-component'
   return (
-    <RefList
-      loading={q.isLoading}
-      error={q.error as Error | null}
-      refs={q.data}
-      emptyText="Not used by any design"
-    />
+    <Stack spacing={1.5}>
+      {nodes.length === 0 ? (
+        <TabEmpty text={isDrawing ? 'No source design' : 'No sub-components'} />
+      ) : (
+        <RelationGraph
+          focus={{ name: item.name, kind: item.kind, cvId, itemId: item.id }}
+          relations={nodes}
+          direction="down"
+          onNavigate={(n) => goTo({ itemId: n.navId!, name: n.name, kind: n.kind, componentVersionId: n.cvId }, { tab: 'uses' })}
+        />
+      )}
+      <RelationStats
+        text={
+          <>
+            <b>{nodes.length}</b> first-level {noun}
+            {nodes.length === 1 ? '' : 's'} · {item.name} · {typeLabel(item.kind, undefined, item.subtype)}
+          </>
+        }
+      />
+    </Stack>
+  )
+}
+
+// WhereUsedTab shows the parent designs (and optionally drawings) that use this
+// document; clicking a node jumps to that document's Where Used tab.
+function WhereUsedTab({ item, hubId, cvId, active }: { item: Item; hubId: string | null; cvId?: string; active: boolean }) {
+  const goTo = useGoToDocument()
+  const [showDrawings, setShowDrawings] = useState(true)
+  const wuQ = useWhereUsed(cvId, active)
+  const dwgQ = useDrawings(hubId, item.id, active && showDrawings)
+  if (wuQ.isLoading) return <TabSpinner />
+  if (wuQ.error) return <TabError error={wuQ.error as Error} />
+
+  const parents = componentRefsToNodes(wuQ.data ?? [])
+  const drawings: GraphNode[] = showDrawings
+    ? (dwgQ.data ?? []).map((d) => ({
+        key: 'dwg:' + d.drawingItemId,
+        navId: d.drawingItemId,
+        name: d.name,
+        kind: 'drawing',
+        secondary: d.modifiedBy || undefined,
+      }))
+    : []
+  const relations = [...parents, ...drawings]
+  return (
+    <Stack spacing={1}>
+      <FormControlLabel
+        sx={{ m: 0 }}
+        control={<Checkbox size="small" checked={showDrawings} onChange={(e) => setShowDrawings(e.target.checked)} />}
+        label={<Typography variant="body2">Show drawings</Typography>}
+      />
+      {relations.length === 0 ? (
+        <TabEmpty text="Not used by any design" />
+      ) : (
+        <RelationGraph
+          focus={{ name: item.name, kind: item.kind, cvId, itemId: item.id }}
+          relations={relations}
+          direction="up"
+          onNavigate={(n) => goTo({ itemId: n.navId!, name: n.name, kind: n.kind, componentVersionId: n.cvId }, { tab: 'whereUsed' })}
+        />
+      )}
+      <RelationStats
+        text={
+          <>
+            <b>{parents.length}</b> parent{parents.length === 1 ? '' : 's'}
+            {showDrawings && drawings.length > 0 ? (
+              <>
+                {' · '}
+                {drawings.length} drawing{drawings.length === 1 ? '' : 's'}
+              </>
+            ) : null}
+            {' · '}
+            {item.name} · {typeLabel(item.kind, undefined, item.subtype)}
+          </>
+        }
+      />
+    </Stack>
   )
 }
 
@@ -674,48 +758,28 @@ function DrawingsTab({
   )
 }
 
-
-function RefList({
-  loading,
-  error,
-  refs,
-  emptyText,
+// NavRowIcon shows a document's preview (the server-cached image proxy) —
+// designs via their component-version thumbnail, drawings via the Model
+// Derivative preview — falling back to the kind icon on a miss.
+function NavRowIcon({
+  cvId,
+  itemId,
+  kind,
+  projectAltId,
 }: {
-  loading: boolean
-  error: Error | null
-  refs?: ComponentRef[]
-  emptyText: string
+  cvId?: string
+  itemId?: string
+  kind: string
+  projectAltId?: string
 }) {
-  if (loading) return <TabSpinner />
-  if (error) return <TabError error={error} />
-  const list = refs ?? []
-  if (list.length === 0) return <TabEmpty text={emptyText} />
-  return (
-    <List dense disablePadding>
-      {list.map((r) => (
-        <NavRow
-          key={r.id || r.designItemId || r.name}
-          itemId={r.designItemId}
-          name={r.designItemName || r.name}
-          kind="design"
-          componentVersionId={r.id}
-          secondary={[r.partNumber, r.material].filter(Boolean).join(' · ') || undefined}
-        />
-      ))}
-    </List>
-  )
-}
-
-// NavRowIcon shows a design's thumbnail (the server-cached image proxy) when a
-// componentVersionId is available, falling back to the kind icon on a miss.
-function NavRowIcon({ cvId, kind }: { cvId?: string; kind: string }) {
   const [failed, setFailed] = useState(false)
-  if (cvId && !failed) {
+  const src = thumbnailSrc({ kind, cvId, itemId, projectAltId })
+  if (src && !failed) {
     return (
       <ListItemIcon sx={{ minWidth: 36 }}>
         <Box
           component="img"
-          src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(cvId)}`}
+          src={src}
           alt=""
           onError={() => setFailed(true)}
           sx={{ width: 26, height: 26, objectFit: 'contain', borderRadius: 0.5, display: 'block' }}
@@ -748,7 +812,7 @@ function NavRow({
   secondary?: string
 }) {
   const nav = useNav()
-  const qc = useQueryClient()
+  const goToDocument = useGoToDocument()
   const [busy, setBusy] = useState(false)
   const canNav = !!itemId && !!nav.hubId
   const selected = !!itemId && nav.selected?.id === itemId
@@ -757,31 +821,7 @@ function NavRow({
     if (!canNav || busy) return
     setBusy(true)
     try {
-      const loc = await qc.fetchQuery({
-        queryKey: ['location', nav.hubId, itemId],
-        queryFn: () => api.itemLocation(nav.hubId!, itemId!),
-        staleTime: 5 * 60 * 1000,
-      })
-      const project: Item = {
-        id: loc.projectId,
-        name: loc.projectName,
-        kind: 'project',
-        altId: loc.projectAltId,
-        isContainer: true,
-      }
-      const folderStack: Item[] = loc.folderPath.map((f) => ({
-        id: f.id,
-        name: f.name,
-        kind: 'folder',
-        isContainer: true,
-      }))
-      nav.navigate(project, folderStack, {
-        id: itemId!,
-        name,
-        kind,
-        componentVersionId,
-        isContainer: false,
-      })
+      await goToDocument({ itemId: itemId!, name, kind, componentVersionId })
     } catch {
       /* couldn't resolve the location — leave the user where they are */
     } finally {
@@ -795,7 +835,7 @@ function NavRow({
       secondaryAction={busy ? <CircularProgress size={14} sx={{ mr: 1 }} /> : undefined}
     >
       <ListItemButton selected={selected} onClick={goTo} disabled={!canNav} sx={{ py: 0.5 }}>
-        <NavRowIcon cvId={componentVersionId} kind={kind} />
+        <NavRowIcon cvId={componentVersionId} itemId={itemId} kind={kind} projectAltId={nav.project?.altId} />
         <ListItemText
           primary={name}
           secondary={secondary}

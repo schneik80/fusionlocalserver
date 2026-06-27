@@ -10,12 +10,14 @@ import (
 	"strings"
 )
 
-// The Data Management API (data/v1 + oss/v2) is how the native .f3d/.f3z bytes
-// are actually fetched — MFGDM exposes only a version URN, no download URL. The
-// chain: version URN -> the version's OSS storage object -> an OSS signed S3
-// download URL -> the bytes. All calls use the same bearer token and the
-// data:read scope the app already holds. Same host as MFGDM, different paths,
-// so we reuse httpClient.
+// The Data Management API (data/v1) resolves an item's tip *version* URN, which
+// the Model Derivative API then renders into a preview thumbnail. Fusion Team
+// hubs expose no MFGDM `binary` field and Fusion composite docs (e.g. .f2d
+// drawings) have no downloadable OSS storage, so DM is only used to map an item
+// lineage id -> its current version URN. All calls use the same bearer token and
+// the data:read scope the app already holds, on the same host as MFGDM, so we
+// reuse httpClient.
+//
 // dmBaseURL is a var (not const) only so tests can point it at an httptest
 // server; production never reassigns it.
 var dmBaseURL = "https://developer.api.autodesk.com"
@@ -54,107 +56,30 @@ func dmGet(ctx context.Context, token, fullURL string) ([]byte, error) {
 	return body, nil
 }
 
-// VersionDownload describes a resolved native-file download.
-type VersionDownload struct {
-	StorageURN string // urn:adsk.objects:os.object:<bucket>/<object>
-	FileName   string // e.g. "Cylinder Cap.f3d"
-}
-
-// GetVersionDownload looks up a Data Management version and returns its OSS
-// storage object URN and filename. dmProjectID is the Data Management project
-// id (the "b.…" id; the app holds it as the project's altId). versionURN is the
-// MFGDM binary id (a "…fs.file:vf.…?version=N" URN).
-func GetVersionDownload(ctx context.Context, token, dmProjectID, versionURN string) (*VersionDownload, error) {
-	if dmProjectID == "" || versionURN == "" {
-		return nil, fmt.Errorf("version download: empty project or version")
+// GetItemTipVersion returns the Data Management tip *version* URN for an item
+// lineage id (urn:adsk.wipprod:dm.lineage:…). This is exactly what the Model
+// Derivative API needs to render a thumbnail (see GetVersionThumbnail).
+func GetItemTipVersion(ctx context.Context, token, dmProjectID, itemID string) (string, error) {
+	if dmProjectID == "" || itemID == "" {
+		return "", fmt.Errorf("item tip: empty project or item")
 	}
-	u := fmt.Sprintf("%s/data/v1/projects/%s/versions/%s", dmBaseURL, dmEscape(dmProjectID), dmEscape(versionURN))
+	u := fmt.Sprintf("%s/data/v1/projects/%s/items/%s/tip", dmBaseURL, dmEscape(dmProjectID), dmEscape(itemID))
 	body, err := dmGet(ctx, token, u)
 	if err != nil {
-		return nil, fmt.Errorf("version lookup: %w", err)
+		return "", fmt.Errorf("item tip: %w", err)
 	}
 	var doc struct {
 		Data struct {
-			Attributes struct {
-				Name        string `json:"name"`
-				DisplayName string `json:"displayName"`
-			} `json:"attributes"`
-			Relationships struct {
-				Storage struct {
-					Data struct {
-						ID string `json:"id"`
-					} `json:"data"`
-				} `json:"storage"`
-			} `json:"relationships"`
+			ID string `json:"id"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("version decode: %w", err)
+		return "", fmt.Errorf("item tip decode: %w", err)
 	}
-	storage := doc.Data.Relationships.Storage.Data.ID
-	if storage == "" {
-		return nil, fmt.Errorf("version has no storage object (no downloadable native file)")
+	if doc.Data.ID == "" {
+		return "", fmt.Errorf("item tip: no version id in response")
 	}
-	name := doc.Data.Attributes.Name
-	if name == "" {
-		name = doc.Data.Attributes.DisplayName
-	}
-	return &VersionDownload{StorageURN: storage, FileName: name}, nil
-}
-
-// OSSSignedDownloadURL returns a presigned S3 GET URL for an OSS storage object
-// URN (urn:adsk.objects:os.object:<bucket>/<object>). The returned URL is
-// self-authenticated — download it with no bearer token (see DownloadFileToPath).
-func OSSSignedDownloadURL(ctx context.Context, token, storageURN string) (string, error) {
-	const prefix = "urn:adsk.objects:os.object:"
-	rest := strings.TrimPrefix(storageURN, prefix)
-	if rest == storageURN {
-		return "", fmt.Errorf("unexpected storage URN %q", storageURN)
-	}
-	slash := strings.IndexByte(rest, '/')
-	if slash < 0 {
-		return "", fmt.Errorf("storage URN missing object key: %q", storageURN)
-	}
-	bucket, object := rest[:slash], rest[slash+1:]
-	u := fmt.Sprintf("%s/oss/v2/buckets/%s/objects/%s/signeds3download",
-		dmBaseURL, dmEscape(bucket), dmEscape(object))
-	body, err := dmGet(ctx, token, u)
-	if err != nil {
-		return "", fmt.Errorf("signed download: %w", err)
-	}
-	var doc struct {
-		URL    string   `json:"url"`
-		URLs   []string `json:"urls"`
-		Status string   `json:"status"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("signed download decode: %w", err)
-	}
-	if doc.URL != "" {
-		return doc.URL, nil
-	}
-	if len(doc.URLs) > 0 {
-		// Multipart (large object). For now we only support single-part objects;
-		// most .f3d/.f3z are well under the chunking threshold. Surface a clear
-		// error rather than silently downloading one chunk.
-		return "", fmt.Errorf("object is chunked into %d parts (multipart download not yet supported)", len(doc.URLs))
-	}
-	return "", fmt.Errorf("signed download returned no URL (status %q)", doc.Status)
-}
-
-// ResolveDesignDownloadURL is the full chain: MFGDM version URN -> DM version ->
-// OSS storage object -> signed S3 URL. Returns the signed URL plus the native
-// filename (carrying the real .f3d/.f3z extension).
-func ResolveDesignDownloadURL(ctx context.Context, token, dmProjectID, versionURN string) (signedURL, fileName string, err error) {
-	vd, err := GetVersionDownload(ctx, token, dmProjectID, versionURN)
-	if err != nil {
-		return "", "", err
-	}
-	signed, err := OSSSignedDownloadURL(ctx, token, vd.StorageURN)
-	if err != nil {
-		return "", "", err
-	}
-	return signed, vd.FileName, nil
+	return doc.Data.ID, nil
 }
 
 // trimURL strips the query string from a URL for error messages (signed URLs

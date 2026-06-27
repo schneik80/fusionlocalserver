@@ -11,7 +11,9 @@ import {
 } from '@mui/material'
 import { useState } from 'react'
 import { useClassify } from '../api/queries'
+import { thumbnailSrc } from '../api/thumbnails'
 import type { Item } from '../api/types'
+import { useNav } from '../state/nav'
 import { isPinnable } from '../state/pins'
 import { iconForItem, typeTag } from './icons'
 
@@ -48,10 +50,16 @@ export function ItemRow({
   const tag = typeTag(display)
   const showStar = !!onTogglePin && isPinnable(item.kind)
 
-  // Designs carry a componentVersionId, so show their thumbnail in place of the
-  // icon (same-origin proxy, server-cached + classify-warmed). On a miss/404
-  // (not yet generated, or no thumbnail) fall back to the kind icon.
-  const thumbCvId = display.componentVersionId
+  // Show the document's preview in place of the icon: designs via their MFGDM
+  // thumbnail, drawings via the Model Derivative preview (keyed by item id + the
+  // current project's altId). On a miss/404 fall back to the kind icon.
+  const nav = useNav()
+  const thumbSrc = thumbnailSrc({
+    kind: display.kind,
+    cvId: display.componentVersionId,
+    itemId: item.id,
+    projectAltId: nav.project?.altId,
+  })
   const [thumbFailed, setThumbFailed] = useState(false)
 
   return (
@@ -77,10 +85,10 @@ export function ItemRow({
     >
       <ListItemButton selected={selected} onClick={onClick} sx={{ pr: showStar ? 5 : 1.5 }}>
         <ListItemIcon sx={{ minWidth: 30, color: selected ? 'primary.main' : 'text.secondary' }}>
-          {thumbCvId && !thumbFailed ? (
+          {thumbSrc && !thumbFailed ? (
             <Box
               component="img"
-              src={`/api/items/thumbnail/image?cvId=${encodeURIComponent(thumbCvId)}`}
+              src={thumbSrc}
               alt=""
               onError={() => setThumbFailed(true)}
               sx={{ width: 22, height: 22, objectFit: 'contain', borderRadius: 0.5, display: 'block' }}
