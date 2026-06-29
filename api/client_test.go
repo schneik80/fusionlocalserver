@@ -274,6 +274,42 @@ func TestGqlQuery_NoRetryOnConcreteError(t *testing.T) {
 	}
 }
 
+// TestGqlQuery_429_FailsFast_NoRetry verifies a rate-limit (429) is NOT retried:
+// the per-minute query-point quota can't replenish inside the flakiness window,
+// so a retry only spends more of it. The call must hit the server exactly once
+// and surface a distinct, mappable error.
+func TestGqlQuery_429_FailsFast_NoRetry(t *testing.T) {
+	prev := retryBackoffs
+	retryBackoffs = []time.Duration{0, 1 * time.Millisecond, 1 * time.Millisecond}
+	t.Cleanup(func() { retryBackoffs = prev })
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"errors":[{"message":"Query point value per minute quota exceeded","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	swapEndpoint(t, srv.URL)
+
+	_, err := gqlQuery(context.Background(), "tok", "query Q {}", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("call count = %d, want 1 (429 must not be retried)", got)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "429") || !strings.Contains(strings.ToLower(msg), "rate limited") {
+		t.Errorf("error = %q, want it to mention 429 and rate limiting", msg)
+	}
+	if !strings.Contains(msg, "Retry-After: 42") {
+		t.Errorf("error = %q, want it to surface Retry-After", msg)
+	}
+}
+
 func TestGqlQuery_RegionHeader(t *testing.T) {
 	// Region is shared global state — back up & restore around the whole test.
 	origRegion := region

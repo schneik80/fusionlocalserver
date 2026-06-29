@@ -4,6 +4,7 @@ import '@fontsource/montserrat/600.css'
 import '@fontsource/montserrat/700.css'
 
 import { QueryClient } from '@tanstack/react-query'
+import { ApiError } from './api/client'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { StrictMode } from 'react'
@@ -17,7 +18,15 @@ const DAY = 24 * 60 * 60 * 1000
 // gcTime must outlive maxAge so inactive queries survive long enough to persist.
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: false, retry: 1, gcTime: DAY },
+    queries: {
+      refetchOnWindowFocus: false,
+      gcTime: DAY,
+      // One retry for transient failures, but NEVER retry a 429: the server is
+      // rate-limited (APS's per-minute query-point quota) and a retry just
+      // spends more of the quota. The backend already fails these fast.
+      retry: (failureCount, error) =>
+        error instanceof ApiError && error.status === 429 ? false : failureCount < 1,
+    },
   },
 })
 
@@ -36,7 +45,7 @@ createRoot(document.getElementById('root')!).render(
         persister,
         maxAge: DAY,
         // Bump when query shapes change to invalidate stale persisted caches.
-        buster: 'fls-2',
+        buster: 'fls-4',
         dehydrateOptions: {
           // Persist only successful, non-volatile queries. Auth state must stay
           // fresh (and persisting it could briefly show a prior user's state).

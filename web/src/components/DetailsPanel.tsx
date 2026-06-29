@@ -3,6 +3,7 @@ import {
   Checkbox,
   CircularProgress,
   FormControlLabel,
+  IconButton,
   List,
   ListItem,
   ListItemButton,
@@ -17,9 +18,12 @@ import {
   TableHead,
   TableRow,
   Tabs,
+  Tooltip,
   Typography,
 } from '@mui/material'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faArrowsRotate, faBug } from '@fortawesome/free-solid-svg-icons'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   useBOM,
@@ -28,6 +32,7 @@ import {
   useDescendants,
   useDesignActivity,
   useDrawings,
+  useMeta,
   useRollupActivity,
   useItemDetails,
   useProperties,
@@ -41,6 +46,7 @@ import { useNav } from '../state/nav'
 import { useGoToDocument } from '../state/goto'
 import { iconForItem } from './icons'
 import ActivityHeatmap from './ActivityHeatmap'
+import HistoryGraph from './HistoryGraph'
 import PermissionsExplorer from './PermissionsExplorer'
 import RelationGraph, { type GraphNode } from './RelationGraph'
 
@@ -154,14 +160,66 @@ function SelectedDetails({
   const classifyQ = useClassify(cvId)
   const subtype = classifyQ.data?.subtype || item.subtype
 
+  // Force-refresh every query belonging to this document. The document's data
+  // is spread across keys identified by either its item id (details, drawings,
+  // activity, location) or its component-version id (thumbnail, classify,
+  // properties, BOM, uses, where-used, descendants); invalidating by a predicate
+  // that matches either id refetches the visible queries (details, thumbnail,
+  // active tab) immediately and marks the rest stale so they reload fresh when
+  // next viewed.
+  const qc = useQueryClient()
+  const refresh = () => {
+    void qc.invalidateQueries({
+      predicate: (q) =>
+        Array.isArray(q.queryKey) &&
+        q.queryKey.some((part) => part === item.id || (!!cvId && part === cvId)),
+    })
+  }
+
+  // Developer-only: when the server runs with -v, expose a probe button that
+  // opens the version/milestone field-discovery endpoint for THIS document in a
+  // new tab (the same session cookie authorizes it), so we never hand-build URLs.
+  const debug = useMeta().data?.debug ?? false
+  const openVersionProbe = () => {
+    if (!hubId) return
+    const q = new URLSearchParams({ hubId, itemId: item.id }).toString()
+    window.open(`/api/debug/version-probe?${q}`, '_blank', 'noopener')
+  }
+
   return (
     <>
       {/* Header: name, then the always-visible details metadata (left) beside
           the thumbnail (right). The metadata shows regardless of active tab. */}
       <Box sx={{ px: 2, pt: 1.5, pb: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="h6" noWrap title={item.name} gutterBottom>
-          {item.name}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+          <Typography variant="h6" noWrap title={item.name} sx={{ flex: 1, minWidth: 0 }}>
+            {item.name}
+          </Typography>
+          {debug && (
+            <Tooltip title="Probe version/milestone fields (dev)">
+              <IconButton
+                size="small"
+                onClick={openVersionProbe}
+                disabled={!hubId}
+                aria-label="Probe version fields"
+                sx={{ flexShrink: 0, color: 'warning.main' }}
+              >
+                <FontAwesomeIcon icon={faBug} style={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          <Tooltip title="Refresh document data">
+            <IconButton
+              size="small"
+              onClick={refresh}
+              disabled={detailsQ.isFetching}
+              aria-label="Refresh document data"
+              sx={{ flexShrink: 0 }}
+            >
+              <FontAwesomeIcon icon={faArrowsRotate} spin={detailsQ.isFetching} style={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+        </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <DetailsSummary
@@ -196,7 +254,12 @@ function SelectedDetails({
 
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 2 }}>
         {tab === 'history' && (
-          <HistoryTab query={detailsQ.data} loading={detailsQ.isLoading} error={detailsQ.error as Error | null} />
+          <HistoryTab
+            query={detailsQ.data}
+            loading={detailsQ.isLoading}
+            error={detailsQ.error as Error | null}
+            projectAltId={projectAltId}
+          />
         )}
         {tab === 'activity' && (
           <ActivityTab
@@ -514,35 +577,26 @@ function BOMTab({ cvId, active }: { cvId?: string; active: boolean }) {
   )
 }
 
-// HistoryTab lists the item's version history (most recent first).
+// HistoryTab renders the item's version history as a horizontal git-branch
+// graph: saves on the dev lane, milestones merged up to the release lane, and
+// releases (reserved) to the main lane.
 function HistoryTab({
   query,
   loading,
   error,
+  projectAltId,
 }: {
   query?: Details
   loading: boolean
   error: Error | null
+  projectAltId?: string
 }) {
   if (loading) return <TabSpinner />
   if (error) return <TabError error={error} />
   const versions = query?.versions ?? []
   if (versions.length === 0) return <TabEmpty text="No version history" />
 
-  return (
-    <List dense disablePadding>
-      {versions.map((v) => (
-        <ListItem key={v.number} disablePadding sx={{ py: 0.25 }}>
-          <ListItemText
-            primary={`v${v.number}${v.comment ? ` — ${v.comment}` : ''}`}
-            secondary={`${fmtDate(v.createdOn)}${v.createdBy ? ` · ${v.createdBy}` : ''}`}
-            primaryTypographyProps={{ variant: 'body2' }}
-            secondaryTypographyProps={{ variant: 'caption' }}
-          />
-        </ListItem>
-      ))}
-    </List>
-  )
+  return <HistoryGraph versions={versions} projectAltId={projectAltId} />
 }
 
 // componentRefsToNodes maps Uses/Where-Used refs to graph nodes, deduped by the

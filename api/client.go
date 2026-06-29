@@ -180,7 +180,21 @@ func gqlQueryOnce(ctx context.Context, token string, body []byte, vars map[strin
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("unauthorized (HTTP 401) — token may be expired or lacks scope/entitlement; body: %s", raw), false
 	}
-	if resp.StatusCode >= 500 || resp.StatusCode == 408 || resp.StatusCode == 429 {
+	// 429 = rate limited (APS's per-minute, cost-based query-point quota).
+	// Retrying inside the flakiness window cannot replenish a per-minute quota
+	// and only spends more of it — so fail fast (non-retriable) with a distinct
+	// error the handler maps to a 429. Surface Retry-After when present so the
+	// client can back off intelligently.
+	if resp.StatusCode == 429 {
+		retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
+		suffix := ""
+		if retryAfter != "" {
+			suffix = fmt.Sprintf(" (Retry-After: %s)", retryAfter)
+		}
+		return nil, fmt.Errorf("HTTP 429 rate limited%s: %s", suffix, raw), false
+	}
+	// 5xx/408 are transient gateway hiccups — worth a quick retry.
+	if resp.StatusCode >= 500 || resp.StatusCode == 408 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw), true
 	}
 

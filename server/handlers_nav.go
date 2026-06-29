@@ -15,6 +15,7 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		Region:           regionLabel(s.region),
 		Port:             s.currentPort(),
 		PortConfigurable: s.portConfigurable,
+		Debug:            api.DebugEnabled(),
 	})
 }
 

@@ -22,9 +22,9 @@
   },
   "itemVersions": {
     "results": [
-      {"versionNumber": 1, "name": "first", "createdOn": "2024-01-15T10:30:45Z", "createdBy": {"firstName": "Ada", "lastName": "Lovelace"}},
-      {"versionNumber": 2, "name": "second save", "createdOn": "2024-01-20T11:00:00Z", "createdBy": {"firstName": "Ada", "lastName": "Lovelace"}},
-      {"versionNumber": 3, "name": "third edit", "createdOn": "2024-02-20T14:00:00Z", "createdBy": {"firstName": "Grace", "lastName": "Hopper"}}
+      {"versionNumber": 1, "name": "first", "createdOn": "2024-01-15T10:30:45Z", "createdBy": {"firstName": "Ada", "lastName": "Lovelace"}, "rootComponentVersion": null},
+      {"versionNumber": 2, "name": "second save", "createdOn": "2024-01-20T11:00:00Z", "createdBy": {"firstName": "Ada", "lastName": "Lovelace"}, "rootComponentVersion": {"id": "urn:cv:v2", "isMilestone": true}},
+      {"versionNumber": 3, "name": "third edit", "createdOn": "2024-02-20T14:00:00Z", "createdBy": {"firstName": "Grace", "lastName": "Hopper"}, "rootComponentVersion": {"id": "urn:cv:v3", "isMilestone": false}}
     ]
   }
 }

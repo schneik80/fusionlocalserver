@@ -178,6 +178,30 @@ func TestGetItemDetails_AllFields(t *testing.T) {
 	if got.Versions[0].CreatedBy != "Grace Hopper" {
 		t.Errorf("Versions[0].CreatedBy = %q, want %q", got.Versions[0].CreatedBy, "Grace Hopper")
 	}
+
+	// Per-version milestone + cvId. Reversed order: [0]=v3, [1]=v2, [2]=v1.
+	// v3 has a non-milestone root component version.
+	if got.Versions[0].RootComponentVersionID != "urn:cv:v3" {
+		t.Errorf("Versions[0].RootComponentVersionID = %q, want %q", got.Versions[0].RootComponentVersionID, "urn:cv:v3")
+	}
+	if got.Versions[0].IsMilestone {
+		t.Errorf("Versions[0].IsMilestone = true, want false")
+	}
+	// v2 is a milestone.
+	if got.Versions[1].RootComponentVersionID != "urn:cv:v2" {
+		t.Errorf("Versions[1].RootComponentVersionID = %q, want %q", got.Versions[1].RootComponentVersionID, "urn:cv:v2")
+	}
+	if !got.Versions[1].IsMilestone {
+		t.Errorf("Versions[1].IsMilestone = false, want true")
+	}
+	// v1's rootComponentVersion is null (unmigrated / partial) — degrade to
+	// empty id and not-a-milestone rather than erroring.
+	if got.Versions[2].RootComponentVersionID != "" {
+		t.Errorf("Versions[2].RootComponentVersionID = %q, want empty", got.Versions[2].RootComponentVersionID)
+	}
+	if got.Versions[2].IsMilestone {
+		t.Errorf("Versions[2].IsMilestone = true, want false")
+	}
 }
 
 func TestGetItemDetails_DrawingItem_NoComponentVersion(t *testing.T) {

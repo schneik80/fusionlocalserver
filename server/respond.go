@@ -42,6 +42,10 @@ func statusForError(err error) int {
 		return http.StatusGatewayTimeout
 	case strings.Contains(err.Error(), "HTTP 401"), strings.Contains(err.Error(), "unauthorized"):
 		return http.StatusUnauthorized
+	case strings.Contains(err.Error(), "HTTP 429"),
+		strings.Contains(err.Error(), "rate limited"),
+		strings.Contains(err.Error(), "quota exceeded"):
+		return http.StatusTooManyRequests
 	case strings.Contains(err.Error(), "Access Denied"),
 		strings.Contains(err.Error(), "does not have permission"),
 		strings.Contains(err.Error(), "Forbidden"):

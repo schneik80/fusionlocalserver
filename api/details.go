@@ -39,6 +39,17 @@ type VersionSummary struct {
 	CreatedOn time.Time
 	CreatedBy string
 	Comment   string // version save comment (may be empty)
+	// RootComponentVersionID is this version's root component version id — the
+	// cvId used to fetch a per-version thumbnail. Empty when the field could not
+	// be resolved (unmigrated design / partial GraphQL response).
+	RootComponentVersionID string
+	// IsMilestone marks this version as a milestone (the "release" lane in the
+	// history graph). Defaults to false when the per-version field could not be
+	// resolved.
+	IsMilestone bool
+	// Revision is the formal release revision (the "main" lane). RESERVED — no
+	// API source exists today, so this is always empty.
+	Revision string
 }
 
 // GetItemDetails fetches rich metadata for a single item plus its version list.
@@ -82,6 +93,17 @@ func GetItemDetails(ctx context.Context, token, hubID, itemID string) (*ItemDeta
 					name
 					createdOn
 					createdBy { firstName lastName }
+					# itemVersions.results is typed ItemVersion (an interface); the
+					# per-version root component version (carrying isMilestone + the
+					# cvId for that version's thumbnail) lives on the concrete
+					# DesignItemVersion. Type-conditional, so non-design versions
+					# (drawings, etc.) simply omit it rather than erroring.
+					... on DesignItemVersion {
+						rootComponentVersion {
+							id
+							isMilestone
+						}
+					}
 				}
 			}
 		}`
@@ -117,10 +139,14 @@ func GetItemDetails(ctx context.Context, token, hubID, itemID string) (*ItemDeta
 		} `json:"item"`
 		ItemVersions struct {
 			Results []struct {
-				VersionNumber int     `json:"versionNumber"`
-				Name          string  `json:"name"`
-				CreatedOn     string  `json:"createdOn"`
-				CreatedBy     apiUser `json:"createdBy"`
+				VersionNumber        int     `json:"versionNumber"`
+				Name                 string  `json:"name"`
+				CreatedOn            string  `json:"createdOn"`
+				CreatedBy            apiUser `json:"createdBy"`
+				RootComponentVersion struct {
+					ID          string `json:"id"`
+					IsMilestone bool   `json:"isMilestone"`
+				} `json:"rootComponentVersion"`
 			} `json:"results"`
 		} `json:"itemVersions"`
 	}
@@ -149,14 +175,19 @@ func GetItemDetails(ctx context.Context, token, hubID, itemID string) (*ItemDeta
 		RootComponentVersionID: raw.Item.TipRootComponentVersion.ID,
 	}
 
-	// Versions — most recent first.
+	// Versions — most recent first. Each design version's rootComponentVersion
+	// carries the per-version cvId (for that version's thumbnail) and its
+	// milestone flag; non-design versions leave these empty/false.
 	for i := len(raw.ItemVersions.Results) - 1; i >= 0; i-- {
 		v := raw.ItemVersions.Results[i]
 		d.Versions = append(d.Versions, VersionSummary{
-			Number:    v.VersionNumber,
-			Comment:   v.Name,
-			CreatedOn: parseTime(v.CreatedOn),
-			CreatedBy: v.CreatedBy.fullName(),
+			Number:                 v.VersionNumber,
+			Comment:                v.Name,
+			CreatedOn:              parseTime(v.CreatedOn),
+			CreatedBy:              v.CreatedBy.fullName(),
+			RootComponentVersionID: v.RootComponentVersion.ID,
+			IsMilestone:            v.RootComponentVersion.IsMilestone,
+			// Revision: reserved, no API source today.
 		})
 	}
 

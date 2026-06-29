@@ -21,6 +21,9 @@ type MetaDTO struct {
 	// mode).
 	Port             int  `json:"port"`
 	PortConfigurable bool `json:"portConfigurable"`
+	// Debug is true when the server runs with -v (request tracing on). The web
+	// UI uses it to reveal developer-only affordances (e.g. the version probe).
+	Debug bool `json:"debug"`
 }
 
 // SetPortRequest is the POST /api/settings/port body.
@@ -58,10 +61,13 @@ type ContentsDTO struct {
 
 // VersionDTO mirrors api.VersionSummary — one row of an item's version history.
 type VersionDTO struct {
-	Number    int    `json:"number"`
-	CreatedOn string `json:"createdOn,omitempty"`
-	CreatedBy string `json:"createdBy,omitempty"`
-	Comment   string `json:"comment,omitempty"`
+	Number                 int    `json:"number"`
+	CreatedOn              string `json:"createdOn,omitempty"`
+	CreatedBy              string `json:"createdBy,omitempty"`
+	Comment                string `json:"comment,omitempty"`
+	RootComponentVersionID string `json:"rootComponentVersionId,omitempty"`
+	IsMilestone            bool   `json:"isMilestone"`
+	Revision               string `json:"revision,omitempty"`
 }
 
 // DetailsDTO mirrors api.ItemDetails — the rich metadata for one item.
@@ -269,10 +275,13 @@ func detailsDTO(d *api.ItemDetails) DetailsDTO {
 	}
 	for _, v := range d.Versions {
 		dto.Versions = append(dto.Versions, VersionDTO{
-			Number:    v.Number,
-			CreatedOn: fmtTime(v.CreatedOn),
-			CreatedBy: v.CreatedBy,
-			Comment:   v.Comment,
+			Number:                 v.Number,
+			CreatedOn:              fmtTime(v.CreatedOn),
+			CreatedBy:              v.CreatedBy,
+			Comment:                v.Comment,
+			RootComponentVersionID: v.RootComponentVersionID,
+			IsMilestone:            v.IsMilestone,
+			Revision:               v.Revision,
 		})
 	}
 	return dto

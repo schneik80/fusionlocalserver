@@ -6,6 +6,7 @@ export interface Meta {
   region: string
   port: number
   portConfigurable: boolean
+  debug?: boolean // server running with -v: reveal developer-only UI affordances
 }
 
 // AuthMe mirrors server.AuthMeDTO (GET /api/auth/me): the login-state probe.
@@ -58,6 +59,9 @@ export interface VersionSummary {
   createdOn?: string
   createdBy?: string
   comment?: string
+  rootComponentVersionId?: string // per-version cvId for the thumbnail
+  isMilestone?: boolean // marks the "release" lane + a dev→release merge edge
+  revision?: string // reserved: the "main"/release lane; no API source yet
 }
 
 export interface Details {
