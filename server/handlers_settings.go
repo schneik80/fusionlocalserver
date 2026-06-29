@@ -27,7 +27,7 @@ func (s *Server) handleSetPort(w http.ResponseWriter, r *http.Request) {
 
 	var req SetPortRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Port < minConfigurablePort || req.Port > maxConfigurablePort {

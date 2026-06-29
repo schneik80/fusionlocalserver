@@ -59,6 +59,10 @@ func (s *Server) routes() http.Handler {
 	// Settings.
 	mux.HandleFunc("POST /api/settings/port", prot(s.handleSetPort))
 
+	// Debug (only live when launched with -v; otherwise 404s). A live, real-doc
+	// probe for discovering how a version exposes its root component version.
+	mux.HandleFunc("GET /api/debug/version-probe", prot(s.handleDebugVersionProbe))
+
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))
@@ -67,7 +71,7 @@ func (s *Server) routes() http.Handler {
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())
 
-	// Middleware chain (outermost first): recover -> log -> canonical-host
-	// redirect -> dev CORS.
-	return s.recoverPanic(s.logRequest(s.canonicalRedirect(s.devCORS(mux))))
+	// Middleware chain (outermost first): recover -> log -> security headers ->
+	// canonical-host redirect -> dev CORS.
+	return s.recoverPanic(s.logRequest(s.securityHeaders(s.canonicalRedirect(s.devCORS(mux)))))
 }

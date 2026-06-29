@@ -88,6 +88,40 @@ func (s *Server) recoverPanic(next http.Handler) http.Handler {
 	})
 }
 
+// securityHeaders sets defense-in-depth response headers on every reply. The
+// CSP is tuned to the SPA's actual needs: same-origin scripts/connections,
+// images from self plus data:/blob: (thumbnails and canvas-rendered previews),
+// and inline <style> (MUI/emotion injects it). frame-ancestors 'none' is the
+// clickjacking backstop; HSTS is emitted only when the request is already TLS,
+// so the plain-HTTP LAN mode isn't pinned to https.
+//
+// Disabled in -dev mode: the Vite dev server's HMR (inline preamble + a
+// websocket to its own origin) is incompatible with this CSP, and dev never
+// faces the network anyway.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	if s.opts.Dev {
+		return next
+	}
+	const csp = "default-src 'self'; " +
+		"img-src 'self' data: blob:; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", csp)
+		if isSecure(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // canonicalRedirect bounces any request that arrived via a host other than the
 // configured public URL to that canonical origin, so the SPA load and the whole
 // OAuth round-trip stay same-origin — which is what lets a single redirect_uri

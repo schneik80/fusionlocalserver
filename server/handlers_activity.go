@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -67,6 +68,11 @@ func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, activityReportDTO(rep))
 }
 
+// maxRollupChildren bounds the child fan-out of a single rollup request. Real
+// assemblies are far smaller; the cap exists only to keep one authenticated
+// request from amplifying into an unbounded number of APS GraphQL calls.
+const maxRollupChildren = 2000
+
 // handleActivityRollup merges a design's activity with all of its child
 // documents' activity, server-side. Body: { hubId, itemId, childItemIds[] } —
 // the caller enumerates descendants (GET /api/items/descendants) and passes the
@@ -78,12 +84,21 @@ func (s *Server) handleActivityRollup(w http.ResponseWriter, r *http.Request) {
 		ItemID       string   `json:"itemId"`
 		ChildItemIDs []string `json:"childItemIds"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// Cap the body and the child fan-out: each child id becomes a GraphQL call to
+	// APS under the user's token (5-min timeout below), so an unbounded list is an
+	// authenticated amplifier. The ceilings are well above any real assembly.
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	if body.HubID == "" || body.ItemID == "" {
 		writeError(w, http.StatusBadRequest, "hubId and itemId are required")
+		return
+	}
+	if len(body.ChildItemIDs) > maxRollupChildren {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("too many child items: %d (max %d)", len(body.ChildItemIDs), maxRollupChildren))
 		return
 	}
 

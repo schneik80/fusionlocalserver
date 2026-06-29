@@ -43,8 +43,8 @@ func (s *Server) handlePinsAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pin pins.Pin
-	if err := json.NewDecoder(r.Body).Decode(&pin); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid pin body: "+err.Error())
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&pin); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid pin body")
 		return
 	}
 	if pin.ID == "" {

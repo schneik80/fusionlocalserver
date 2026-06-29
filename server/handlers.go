@@ -41,11 +41,38 @@ func reqParam(w http.ResponseWriter, r *http.Request, name string) (string, bool
 	return v, true
 }
 
-// fail logs an upstream/handler error and writes the mapped status envelope.
+// fail logs the full upstream/handler error internally and writes a safe,
+// status-keyed envelope to the client. The raw error chain can carry APS
+// GraphQL response bodies, internal URLs, and other upstream detail, so by
+// default only the category (auth, forbidden, rate-limit, timeout, upstream)
+// crosses the wire. Under -v (Verbose), the detailed error is appended to the
+// client message too — a deliberate diagnostic affordance for a developer run,
+// never the production default. The full err is logged regardless.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	status := statusForError(err)
 	s.logger.Error("handler error", "path", r.URL.Path, "query", r.URL.RawQuery, "status", status, "err", err)
-	writeError(w, status, err.Error())
+	msg := safeErrorMessage(status)
+	if s.opts.Verbose {
+		msg += ": " + err.Error()
+	}
+	writeError(w, status, msg)
+}
+
+// safeErrorMessage maps an HTTP status to a generic, client-safe message. It
+// conveys the failure category without echoing any internal error text.
+func safeErrorMessage(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "authentication required"
+	case http.StatusForbidden:
+		return "you do not have access to this resource"
+	case http.StatusTooManyRequests:
+		return "rate limited; please retry shortly"
+	case http.StatusGatewayTimeout:
+		return "upstream request timed out"
+	default:
+		return "upstream service error"
+	}
 }
 
 // handleAPINotFound returns a JSON 404 for unmatched /api/* paths so API
