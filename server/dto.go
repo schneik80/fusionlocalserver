@@ -88,6 +88,7 @@ type DetailsDTO struct {
 	PartDesc               string       `json:"partDesc,omitempty"`
 	Material               string       `json:"material,omitempty"`
 	IsMilestone            bool         `json:"isMilestone"`
+	Revision               string       `json:"revision,omitempty"`
 	RootComponentVersionID string       `json:"rootComponentVersionId,omitempty"`
 	Versions               []VersionDTO `json:"versions"`
 }
@@ -270,6 +271,7 @@ func detailsDTO(d *api.ItemDetails) DetailsDTO {
 		PartDesc:               d.PartDesc,
 		Material:               d.Material,
 		IsMilestone:            d.IsMilestone,
+		Revision:               d.Revision,
 		RootComponentVersionID: d.RootComponentVersionID,
 		Versions:               make([]VersionDTO, 0, len(d.Versions)),
 	}

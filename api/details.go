@@ -26,6 +26,10 @@ type ItemDetails struct {
 	PartDesc    string
 	Material    string
 	IsMilestone bool
+	// Revision is the formal release revision of the tip (e.g. "B" for Rev B).
+	// RESERVED — no API source today; populate it when release data becomes
+	// available so the UI's document-state badge can show "Released - Rev X".
+	Revision string
 	// RootComponentVersionID is the id of tipRootComponentVersion — required
 	// as the componentVersionId argument when requesting a STEP derivative.
 	RootComponentVersionID string

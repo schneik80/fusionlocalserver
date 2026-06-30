@@ -81,6 +81,7 @@ export interface Details {
   partDesc?: string
   material?: string
   isMilestone: boolean
+  revision?: string // formal release revision of the tip ("Released - Rev X"); reserved, no API source yet
   rootComponentVersionId?: string
   versions: VersionSummary[]
 }

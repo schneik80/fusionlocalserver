@@ -21,8 +21,9 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowsRotate, faBug } from '@fortawesome/free-solid-svg-icons'
+import { faArrowsRotate, faBug, faCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
@@ -41,6 +42,7 @@ import {
   useWhereUsed,
 } from '../api/queries'
 import type { ComponentRef, Details, DrawingRef, Item, Measure } from '../api/types'
+import { documentState, documentStateLabel, type DocumentState } from '../api/documentState'
 import { thumbnailSrc } from '../api/thumbnails'
 import { useNav } from '../state/nav'
 import { useGoToDocument } from '../state/goto'
@@ -186,42 +188,62 @@ function SelectedDetails({
     window.open(`/api/debug/version-probe?${q}`, '_blank', 'noopener')
   }
 
+  // Lifecycle state badge (WIP / Version / Released - Rev X), derived once from
+  // the details payload; see ../api/documentState.
+  const docState = detailsQ.data ? documentState(detailsQ.data) : null
+
   return (
     <>
-      {/* Header: name, then the always-visible details metadata (left) beside
-          the thumbnail (right). The metadata shows regardless of active tab. */}
+      {/* Header: a compact top bar — a small rounded thumbnail on the far left,
+          then the document name + lifecycle-state badge + actions, with the
+          always-visible metadata below. */}
       <Box sx={{ px: 2, pt: 1.5, pb: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-          <Typography variant="h6" noWrap title={item.name} sx={{ flex: 1, minWidth: 0 }}>
-            {item.name}
-          </Typography>
-          {debug && (
-            <Tooltip title="Probe version/milestone fields (dev)">
-              <IconButton
-                size="small"
-                onClick={openVersionProbe}
-                disabled={!hubId}
-                aria-label="Probe version fields"
-                sx={{ flexShrink: 0, color: 'warning.main' }}
-              >
-                <FontAwesomeIcon icon={faBug} style={{ fontSize: 14 }} />
-              </IconButton>
-            </Tooltip>
-          )}
-          <Tooltip title="Refresh document data">
-            <IconButton
-              size="small"
-              onClick={refresh}
-              disabled={detailsQ.isFetching}
-              aria-label="Refresh document data"
-              sx={{ flexShrink: 0 }}
-            >
-              <FontAwesomeIcon icon={faArrowsRotate} spin={detailsQ.isFetching} style={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+          <Thumbnail
+            kind={item.kind}
+            itemId={item.id}
+            cvId={cvId}
+            name={item.name}
+            projectAltId={projectAltId}
+            size={80}
+          />
           <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+              <Typography
+                variant="h6"
+                noWrap
+                title={item.name}
+                sx={{ flex: '0 1 auto', minWidth: 0, lineHeight: 1.2 }}
+              >
+                {item.name}
+              </Typography>
+              {docState && <StateBadge state={docState} />}
+              <Box sx={{ flex: 1 }} />
+              {debug && (
+                <Tooltip title="Probe version/milestone fields (dev)">
+                  <IconButton
+                    size="small"
+                    onClick={openVersionProbe}
+                    disabled={!hubId}
+                    aria-label="Probe version fields"
+                    sx={{ flexShrink: 0, color: 'warning.main' }}
+                  >
+                    <FontAwesomeIcon icon={faBug} style={{ fontSize: 14 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              <Tooltip title="Refresh document data">
+                <IconButton
+                  size="small"
+                  onClick={refresh}
+                  disabled={detailsQ.isFetching}
+                  aria-label="Refresh document data"
+                  sx={{ flexShrink: 0 }}
+                >
+                  <FontAwesomeIcon icon={faArrowsRotate} spin={detailsQ.isFetching} style={{ fontSize: 14 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
             <DetailsSummary
               query={detailsQ.data}
               kind={item.kind}
@@ -230,13 +252,6 @@ function SelectedDetails({
               error={detailsQ.error as Error | null}
             />
           </Box>
-          <Thumbnail
-            kind={item.kind}
-            itemId={item.id}
-            cvId={cvId}
-            name={item.name}
-            projectAltId={projectAltId}
-          />
         </Box>
       </Box>
 
@@ -297,12 +312,14 @@ function Thumbnail({
   cvId,
   name,
   projectAltId,
+  size = 200,
 }: {
   kind: string
   itemId: string
   cvId?: string
   name: string
   projectAltId?: string
+  size?: number
 }) {
   const isDrawing = kind === 'drawing'
   const isDesign = kind === 'design' || kind === 'configured'
@@ -343,14 +360,15 @@ function Thumbnail({
     <Box
       sx={{
         flexShrink: 0,
-        width: 200,
-        maxWidth: 200,
+        width: size,
+        maxWidth: size,
         aspectRatio: '1 / 1',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         bgcolor: 'action.hover',
-        borderRadius: 1,
+        // Rounded container with clipping so the preview presents cleanly.
+        borderRadius: 1.5,
         overflow: 'hidden',
       }}
     >
@@ -365,8 +383,46 @@ function Thumbnail({
           }}
         />
       ) : showLoading ? (
-        <CircularProgress size={28} />
+        <CircularProgress size={Math.max(16, Math.round(size * 0.3))} />
       ) : null}
+    </Box>
+  )
+}
+
+// StateBadge renders a small pill showing the document's lifecycle state
+// (WIP / Version / Released - Rev X). Colors key off the theme: neutral for WIP,
+// the brand accent for a milestone version, success for a release.
+function StateBadge({ state }: { state: DocumentState }) {
+  const theme = useTheme()
+  const color =
+    state.kind === 'released'
+      ? theme.palette.success.main
+      : state.kind === 'version'
+        ? theme.palette.primary.main
+        : theme.palette.text.secondary
+  return (
+    <Box
+      component="span"
+      sx={{
+        flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.5,
+        height: 20,
+        px: 0.75,
+        borderRadius: 1,
+        bgcolor: alpha(color, 0.16),
+        color,
+        fontSize: 10.5,
+        fontWeight: 700,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+        lineHeight: 1,
+      }}
+    >
+      {state.kind === 'released' && <FontAwesomeIcon icon={faCircleCheck} style={{ fontSize: 10 }} />}
+      {documentStateLabel(state)}
     </Box>
   )
 }
@@ -450,11 +506,9 @@ function DetailsSummary({
     ['Description', query.partDesc],
     ['Material', query.material],
     ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
-    ['Size', query.size],
     ['Extension', FUSION_NATIVE_KINDS.has(kind) ? undefined : query.extensionType],
     ['Created', query.createdOn ? `${fmtDate(query.createdOn)} · ${query.createdBy ?? ''}` : undefined],
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
-    ['Milestone', query.isMilestone ? 'Yes' : undefined],
   ]
   return <LabelGrid rows={rows} />
 }
