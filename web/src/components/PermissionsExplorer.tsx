@@ -145,7 +145,15 @@ export default function PermissionsExplorer({ hubId, item }: { hubId: string | n
   if (q.error) return <Empty text={(q.error as Error).message} />
   if (layers.length === 0) return <Empty text="No access information for this document" />
 
-  const layerName = (i: number) => layers[i]?.name || (layers[i]?.type === 'project' ? 'project' : 'folder')
+  // Name a path layer by its object type *and* name, e.g. "Project (Stream
+  // Cheap)" / "Folder (Manufacturing)", so a row reads "Directly applied to
+  // Project (…)" rather than a bare name that hides whether it's a project or
+  // folder. Falls back to just the type word when the name is unavailable.
+  const layerName = (i: number) => {
+    const l = layers[i]
+    const kind = l?.type === 'project' ? 'Project' : 'Folder'
+    return l?.name ? `${kind} (${l.name})` : kind
+  }
   const fAccess = access.filter(matches)
   const fDenied = denied.filter(matches)
   const groups = fAccess.filter((p) => p.kind === 'group')
@@ -222,7 +230,7 @@ function calloutText(p: Principal, layerName: (i: number) => string, itemKind: s
   if (p.leafRole == null) return `${p.name}: No role — denied on ${layerName(p.denyIdx)}.`
   const k = p.kinds[p.originIdx]
   const where = layerName(p.originIdx)
-  const verb = k === 'raised' ? 'raised on' : k === 'lowered' ? 'lowered on' : p.originIdx === p.seq.length - 1 ? 'directly applied on' : 'inherited from'
+  const verb = k === 'raised' ? 'raised on' : k === 'lowered' ? 'lowered on' : p.originIdx === p.seq.length - 1 ? 'directly applied to' : 'inherited from'
   return `${p.name}: ${p.eff.label}, ${verb} ${where}${p.originIdx === p.seq.length - 1 ? '' : ` → this ${itemKind}`}.`
 }
 
@@ -416,7 +424,7 @@ function Row({
           ? `Raised on ${where}`
           : k === 'lowered'
             ? `Lowered on ${where}`
-            : `Directly applied on ${where}`
+            : `Directly applied to ${where}`
         : `Inherited from ${where}`
   }
 
