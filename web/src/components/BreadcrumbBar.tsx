@@ -13,7 +13,10 @@ export function BreadcrumbBar({ onOpenHubs }: { onOpenHubs: () => void }) {
   const nav = useNav()
 
   const crumbs: Crumb[] = []
-  if (nav.hubName) crumbs.push({ label: nav.hubName, onClick: onOpenHubs, icon: true })
+  // Inside a project the hub crumb navigates back to the hub's projects list
+  // (clearProject); at the hub level it opens the hub switcher instead.
+  if (nav.hubName)
+    crumbs.push({ label: nav.hubName, onClick: nav.project ? nav.clearProject : onOpenHubs, icon: true })
   if (nav.project) crumbs.push({ label: nav.project.name, onClick: nav.gotoProjectRoot })
   nav.folderStack.forEach((f, i) =>
     crumbs.push({ label: f.name, onClick: () => nav.gotoFolder(i) }),

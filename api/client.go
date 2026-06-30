@@ -83,6 +83,12 @@ type NavItem struct {
 	// pick the icon; an unclassified design falls back to the generic
 	// design icon until the refinement message lands.
 	Subtype string
+
+	// ModifiedOn is the item's last-modified time, captured at items-list time so
+	// the Project Dashboard can list recently-modified items without a per-row
+	// fetch. Populated for items (itemsByProject / itemsByFolder); zero for
+	// folders (the Folder type's modified timestamp isn't surfaced).
+	ModifiedOn time.Time
 }
 
 type gqlRequest struct {

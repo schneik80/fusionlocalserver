@@ -67,6 +67,7 @@ type Action =
   | { type: 'selectProject'; project: Item }
   | { type: 'enterFolder'; folder: Item }
   | { type: 'selectItem'; item: Item }
+  | { type: 'clearProject' }
   | { type: 'gotoProjectRoot' }
   | { type: 'gotoFolder'; index: number }
   | {
@@ -93,6 +94,9 @@ function reducer(state: NavState, action: Action): NavState {
       }
     case 'selectItem':
       return { ...state, selected: action.item, selectedTab: null }
+    case 'clearProject':
+      // Back to the hub level (projects list); keep the hub, drop everything below it.
+      return { ...state, project: null, folderStack: [], selected: null, selectedTab: null }
     case 'gotoProjectRoot':
       return { ...state, folderStack: [], selected: null, selectedTab: null }
     case 'gotoFolder':
@@ -120,6 +124,7 @@ interface NavCtx extends NavState {
   selectProject: (project: Item) => void
   enterFolder: (folder: Item) => void
   selectItem: (item: Item) => void
+  clearProject: () => void
   gotoProjectRoot: () => void
   gotoFolder: (index: number) => void
   navigate: (project: Item, folderStack: Item[], selected: Item | null, tab?: string) => void
@@ -144,6 +149,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
       selectProject: (project) => dispatch({ type: 'selectProject', project }),
       enterFolder: (folder) => dispatch({ type: 'enterFolder', folder }),
       selectItem: (item) => dispatch({ type: 'selectItem', item }),
+      clearProject: () => dispatch({ type: 'clearProject' }),
       gotoProjectRoot: () => dispatch({ type: 'gotoProjectRoot' }),
       gotoFolder: (index) => dispatch({ type: 'gotoFolder', index }),
       navigate: (project, folderStack, selected, tab) =>

@@ -15,6 +15,8 @@ interface ColumnProps {
   error?: Error | null
   empty?: boolean
   emptyText?: string
+  // Optional control rendered at the right of the header row (e.g. a sort menu).
+  action?: ReactNode
   children?: ReactNode
 }
 
@@ -29,6 +31,7 @@ export function Column({
   error,
   empty,
   emptyText = 'Nothing here',
+  action,
   children,
 }: ColumnProps) {
   return (
@@ -47,22 +50,33 @@ export function Column({
         overflow: 'hidden',
       }}
     >
-      <Typography
-        variant="subtitle2"
+      <Box
         sx={{
-          px: 1.5,
-          py: 1,
-          color: 'text.secondary',
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          fontSize: 11,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1,
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
+          pr: action ? 0.5 : 0,
         }}
       >
-        {title}
-      </Typography>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            px: 1.5,
+            py: 1,
+            color: 'text.secondary',
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            fontSize: 11,
+          }}
+        >
+          {title}
+        </Typography>
+        {action}
+      </Box>
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {loading ? (
           <Centered>

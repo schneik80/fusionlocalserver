@@ -178,12 +178,16 @@ export default function ActivityHeatmap({
   report,
   childCount,
   rollup,
+  scale = 1,
 }: {
   report: ActivityReport
   childCount?: number
   // When the design has children, the tab passes a roll-up control. `loading`
   // shows a spinner over the chart while child activity is being merged in.
   rollup?: { checked: boolean; loading: boolean; onChange: (next: boolean) => void }
+  // Uniformly scales the rendered isometric grid (viewBox unchanged, so the
+  // aspect ratio is preserved). The dashboard passes <1 for a shorter chart.
+  scale?: number
 }) {
   const theme = useTheme()
   const [gran, setGran] = useState<Gran>('year')
@@ -340,18 +344,15 @@ export default function ActivityHeatmap({
   }, [cells, gran, ramp, maxCount, theme.palette.background.paper, theme.palette.text.secondary])
 
   return (
-    <Stack spacing={1.5}>
-      {/* Summary (all-time) + granularity toggle */}
+    <Stack spacing={1}>
+      {/* Current window + its change count (left) beside the granularity toggle. */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-        <Typography variant="body2" color="text.secondary">
-          <b>{report.versionCount}</b> versions · <b>{report.contributorCount}</b>{' '}
-          {report.contributorCount === 1 ? 'contributor' : 'contributors'} · {report.totalEvents} changes
-          {childCount ? (
-            <>
-              {' '}
-              · <b>{childCount}</b> child {childCount === 1 ? 'document' : 'documents'}
-            </>
-          ) : null}
+        <Typography variant="body2">
+          <b>{windowLabel(gran, winStart)}</b>
+          <Box component="span" sx={{ color: 'text.secondary' }}>
+            {' · '}
+            {total} {total === 1 ? 'change' : 'changes'} in this {gran}
+          </Box>
         </Typography>
         <ToggleButtonGroup size="small" exclusive value={gran} onChange={(_, v: Gran | null) => v && setGran(v)}>
           <ToggleButton value="day">Day</ToggleButton>
@@ -360,6 +361,17 @@ export default function ActivityHeatmap({
           <ToggleButton value="year">Year</ToggleButton>
         </ToggleButtonGroup>
       </Stack>
+
+      {/* All-time totals as a compact caption. */}
+      <Typography variant="caption" color="text.secondary">
+        <b>{report.versionCount}</b> versions · <b>{report.contributorCount}</b>{' '}
+        {report.contributorCount === 1 ? 'contributor' : 'contributors'} · {report.totalEvents} total changes
+        {childCount ? (
+          <>
+            {' '}· <b>{childCount}</b> child {childCount === 1 ? 'document' : 'documents'}
+          </>
+        ) : null}
+      </Typography>
 
       {/* Roll-up toggle (only when the design has children). */}
       {rollup && (
@@ -440,23 +452,15 @@ export default function ActivityHeatmap({
           })}
         </Stack>
       </Box>
-      <Stack alignItems="center" spacing={0}>
-        <Typography variant="body2" fontWeight={600}>
-          {windowLabel(gran, winStart)}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {total} {total === 1 ? 'change' : 'changes'} in this {gran}
-        </Typography>
-      </Stack>
 
       {/* Isometric grid (scrolls horizontally if wide) */}
       <Box sx={{ overflowX: 'auto', overflowY: 'hidden', py: 1 }}>
         {svg && (
           <svg
             viewBox={svg.viewBox}
-            width={svg.w}
-            height={svg.hgt}
-            style={{ maxWidth: 'none', display: 'block', shapeRendering: 'geometricPrecision' }}
+            width={svg.w * scale}
+            height={svg.hgt * scale}
+            style={{ maxWidth: 'none', display: 'block', margin: '0 auto', shapeRendering: 'geometricPrecision' }}
           >
             {svg.faces}
             {svg.labels}

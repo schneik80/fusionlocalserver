@@ -48,6 +48,9 @@ type ItemDTO struct {
 	IsContainer        bool   `json:"isContainer"`
 	ComponentVersionID string `json:"componentVersionId,omitempty"`
 	Subtype            string `json:"subtype,omitempty"`
+	// ModifiedOn is the item's last-modified time (RFC3339); set for items, empty
+	// for folders. Drives the Project Dashboard's recently-modified list.
+	ModifiedOn string `json:"modifiedOn,omitempty"`
 	// Slug is the short hub identifier (e.g. "imallc") used by the activity feed
 	// endpoint. Populated for hubs only; derived from AltID / WebURL.
 	Slug string `json:"slug,omitempty"`
@@ -238,6 +241,7 @@ func itemDTO(n api.NavItem) ItemDTO {
 		IsContainer:        n.IsContainer,
 		ComponentVersionID: n.ComponentVersionID,
 		Subtype:            n.Subtype,
+		ModifiedOn:         fmtTime(n.ModifiedOn),
 	}
 	if n.Kind == "hub" {
 		d.Slug = api.HubSlug(n.AltID, n.WebURL)

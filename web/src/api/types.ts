@@ -46,6 +46,7 @@ export interface Item {
   isContainer: boolean
   componentVersionId?: string
   subtype?: string // "assembly" | "part" | "dwg" | "template" | ""
+  modifiedOn?: string // last-modified time; set for items, empty for folders
   slug?: string // hub slug (e.g. "imallc"), populated for hubs only
 }
 

@@ -274,7 +274,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 			itemsByProject(projectId: $projectId, pagination: { limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootComponentVersion { id } }
 				}
 			}
@@ -284,7 +284,7 @@ func GetProjectItems(ctx context.Context, token, projectID string) ([]NavItem, e
 			itemsByProject(projectId: $projectId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootComponentVersion { id } }
 				}
 			}
@@ -325,7 +325,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootComponentVersion { id } }
 				}
 			}
@@ -335,7 +335,7 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 			itemsByFolder(hubId: $hubId, folderId: $folderId, pagination: { cursor: $cursor, limit: 50 }) {
 				pagination { cursor }
 				results {
-					__typename id name
+					__typename id name lastModifiedOn
 					... on DesignItem { tipRootComponentVersion { id } }
 				}
 			}
@@ -370,10 +370,11 @@ func GetItems(ctx context.Context, token, hubID, folderID string) ([]NavItem, er
 // itemsByProject. The DesignItem inline fragment fills in TipRoot;
 // drawings, configured designs, and folders leave it nil.
 type itemResult struct {
-	Typename string `json:"__typename"`
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	TipRoot  *struct {
+	Typename   string `json:"__typename"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ModifiedOn string `json:"lastModifiedOn"`
+	TipRoot    *struct {
 		ID string `json:"id"`
 	} `json:"tipRootComponentVersion,omitempty"`
 }
@@ -415,6 +416,7 @@ func navItemFromResult(it itemResult) NavItem {
 	if n.Kind == "design" && it.TipRoot != nil {
 		n.ComponentVersionID = it.TipRoot.ID
 	}
+	n.ModifiedOn = parseTime(it.ModifiedOn)
 	return n
 }
 

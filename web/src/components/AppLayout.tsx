@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faCubes,
+  faChevronDown,
   faMoon,
   faRightFromBracket,
   faSun,
@@ -8,12 +8,12 @@ import {
 import {
   AppBar,
   Box,
-  Chip,
   IconButton,
   Toolbar,
   Tooltip,
   Typography,
 } from '@mui/material'
+import { FusionLogo } from './FusionLogo'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
@@ -22,7 +22,7 @@ import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { loadLastHub, useNav } from '../state/nav'
 import { BreadcrumbBar } from './BreadcrumbBar'
-import { BrowserColumns } from './BrowserColumns'
+import { BrowserStage } from './BrowserStage'
 import { HubSwitcher } from './HubSwitcher'
 import { NavRail } from './NavRail'
 import { PinsDialog } from './PinsDialog'
@@ -70,26 +70,42 @@ export function AppLayout() {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <AppBar position="static">
-        <Toolbar variant="dense" sx={{ gap: 1.5 }}>
-          <FontAwesomeIcon icon={faCubes} style={{ fontSize: 18, color: '#0696d7' }} />
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            fusionlocalserver
-          </Typography>
+        <Toolbar variant="dense" disableGutters sx={{ gap: 1.5, pr: 1 }}>
+          {/* Logo sits in a NavRail-width slot so it centers over the rail icons. */}
+          <Box sx={{ width: 60, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
+            <FusionLogo size={24} />
+          </Box>
+          {/* Active hub name; clicking opens the hub switcher. */}
+          <Tooltip title="Change hub">
+            <Box
+              component="button"
+              onClick={() => setDialog('hubs')}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                minWidth: 0,
+                p: 0,
+                border: 0,
+                background: 'none',
+                color: 'inherit',
+                font: 'inherit',
+                cursor: 'pointer',
+                '&:hover .hubName': { textDecoration: 'underline' },
+              }}
+            >
+              <Typography className="hubName" variant="h6" noWrap sx={{ fontWeight: 600 }}>
+                {nav.hubName ?? 'Select a hub'}
+              </Typography>
+              <FontAwesomeIcon icon={faChevronDown} style={{ fontSize: 11, opacity: 0.55 }} />
+            </Box>
+          </Tooltip>
           {metaQ.data && (
             <Typography variant="caption" color="text.secondary">
               {metaQ.data.version}
             </Typography>
           )}
           <Box sx={{ flex: 1 }} />
-          {nav.hubName && (
-            <Chip
-              size="small"
-              icon={<FontAwesomeIcon icon={faCubes} style={{ fontSize: 11 }} />}
-              label={nav.hubName}
-              onClick={() => setDialog('hubs')}
-              variant="outlined"
-            />
-          )}
           <Tooltip title={mode === 'dark' ? 'Switch to light' : 'Switch to dark'}>
             <IconButton aria-label="Toggle theme" onClick={toggle} sx={{ color: 'text.secondary' }}>
               <FontAwesomeIcon icon={mode === 'dark' ? faSun : faMoon} style={{ fontSize: 16 }} />
@@ -116,7 +132,7 @@ export function AppLayout() {
         />
         <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
           <BreadcrumbBar onOpenHubs={() => setDialog('hubs')} />
-          <BrowserColumns />
+          <BrowserStage />
         </Box>
       </Box>
 

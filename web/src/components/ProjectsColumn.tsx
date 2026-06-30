@@ -14,7 +14,7 @@ export function ProjectsColumn() {
   return (
     <Column
       title="Projects"
-      width={280}
+      flex={1}
       loading={projectsQ.isLoading}
       error={projectsQ.error as Error | null}
       empty={!projectsQ.isLoading && projects.length === 0}

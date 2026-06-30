@@ -1,0 +1,504 @@
+import {
+  Avatar,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  List,
+  ListItemButton,
+  Paper,
+  Stack,
+  Typography,
+} from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faUsers } from '@fortawesome/free-solid-svg-icons'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useQueries } from '@tanstack/react-query'
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts'
+import { api } from '../api/client'
+import {
+  useFolderContents,
+  useProjectContents,
+  useProjects,
+  usePermissionsPath,
+  usePins,
+  useRollupActivity,
+} from '../api/queries'
+import type { Item, PermMember, Pin, ProjectGroup } from '../api/types'
+import { useGoToDocument } from '../state/goto'
+import { useNav } from '../state/nav'
+import { usePinToggle } from '../state/pins'
+import ActivityHeatmap from './ActivityHeatmap'
+import { iconForItem } from './icons'
+
+// The hub- and project-level landing panes that fill the right slot of the
+// browser when no document is selected. The project pane carries real widgets
+// (type breakdown, people & groups, recently-modified); the hub pane is still a
+// lightweight placeholder. Both share a frame matching the DetailsPanel chrome
+// so the slide swap between dashboard and document details is seamless.
+
+// ── shared shell ───────────────────────────────────────────────────
+interface Stat {
+  label: string
+  value: ReactNode
+}
+
+function DashboardShell({
+  title,
+  subtitle,
+  stats,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  stats?: Stat[]
+  children?: ReactNode
+}) {
+  return (
+    <Paper
+      square
+      variant="outlined"
+      sx={{
+        flex: 1,
+        minWidth: 320,
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        borderTop: 0,
+        borderBottom: 0,
+        borderRight: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+        <Typography variant="h6" noWrap title={title} sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+          {title}
+        </Typography>
+        {subtitle && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {subtitle}
+          </Typography>
+        )}
+        {stats && stats.length > 0 && (
+          <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap', rowGap: 1.5, mt: 1.5 }}>
+            {stats.map((s) => (
+              <StatCard key={s.label} label={s.label} value={s.value} />
+            ))}
+          </Stack>
+        )}
+        {children && <Box sx={{ mt: 1.5 }}>{children}</Box>}
+      </Box>
+    </Paper>
+  )
+}
+
+function StatCard({ label, value }: Stat) {
+  const theme = useTheme()
+  return (
+    <Box
+      sx={{
+        minWidth: 110,
+        px: 2,
+        py: 1.25,
+        borderRadius: 1.5,
+        border: 1,
+        borderColor: 'divider',
+        bgcolor: alpha(theme.palette.primary.main, 0.08),
+      }}
+    >
+      <Typography variant="h5" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
+        {value}
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}
+      >
+        {label}
+      </Typography>
+    </Box>
+  )
+}
+
+function WidgetCard({ title, span, children }: { title: string; span?: boolean; children: ReactNode }) {
+  return (
+    <Box
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1.5,
+        p: 1.5,
+        gridColumn: span ? '1 / -1' : undefined,
+      }}
+    >
+      <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1, lineHeight: 1.4 }}>
+        {title}
+      </Typography>
+      {children}
+    </Box>
+  )
+}
+
+function Hint({ children }: { children: ReactNode }) {
+  return (
+    <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+      {children}
+    </Typography>
+  )
+}
+
+const spinner = <CircularProgress size={18} />
+
+// ── hub dashboard (placeholder) ────────────────────────────────────
+export function HubDashboard() {
+  const nav = useNav()
+  const projectsQ = useProjects(nav.hubId)
+  const { pinnedIds } = usePinToggle()
+  return (
+    <DashboardShell
+      title={nav.hubName ?? 'Hub'}
+      subtitle="Select a project to browse its contents."
+      stats={[
+        { label: 'Projects', value: projectsQ.isLoading ? spinner : (projectsQ.data?.length ?? 0) },
+        { label: 'Pinned', value: pinnedIds.size },
+      ]}
+    >
+      <Box sx={{ border: 1, borderStyle: 'dashed', borderColor: 'divider', borderRadius: 1.5, p: 4, textAlign: 'center' }}>
+        <Typography variant="body2" color="text.secondary">
+          Hub dashboard widgets coming soon
+        </Typography>
+      </Box>
+    </DashboardShell>
+  )
+}
+
+// ── project dashboard ──────────────────────────────────────────────
+export function ProjectDashboard() {
+  const nav = useNav()
+  const project = nav.project
+  const goTo = useGoToDocument()
+
+  // The dashboard reflects the current CONTAINER: the project root, or — once you
+  // drill in — the selected folder. Contents come from the project-contents
+  // endpoint at root and the folder-contents endpoint inside a folder.
+  const atRoot = nav.folderStack.length === 0
+  const rootQ = useProjectContents(atRoot ? (project?.id ?? null) : null)
+  const folderQ = useFolderContents(nav.hubId, atRoot ? null : nav.currentFolderId)
+  const contentsLoading = atRoot ? rootQ.isLoading : folderQ.isLoading
+  const items = atRoot ? (rootQ.data?.items ?? []) : (folderQ.data ?? []).filter((i) => !i.isContainer)
+
+  const folder = nav.folderStack[nav.folderStack.length - 1]
+  const title = folder?.name ?? project?.name ?? 'Project'
+
+  // People & groups: effective access at the current container — the deepest
+  // layer of the permissions path (the project at root, the folder once inside).
+  const folderPath = nav.folderStack.map((f) => ({ id: f.id, name: f.name }))
+  const permQ = usePermissionsPath(nav.hubId, project?.id, project?.name, folderPath, !!project?.id)
+  const currentLayer = permQ.data?.[permQ.data.length - 1]
+
+  // Pins: all of the project's pins at the root, narrowed to the current folder
+  // once you drill in.
+  const pinsQ = usePins(nav.hubId)
+  const containerPins = (pinsQ.data ?? []).filter(
+    (p) => p.project_id === project?.id && (atRoot || pinContainerId(p) === nav.currentFolderId),
+  )
+
+  // Classify the container's designs so the donut can split them into assemblies
+  // vs parts. useQueries shares the ['classify', cvId] cache the Contents column
+  // already fills, so this adds no fetches — and updates as classification lands.
+  const designs = items.filter((i) => (i.kind === 'design' || i.kind === 'configured') && i.componentVersionId)
+  const classifyQs = useQueries({
+    queries: designs.map((d) => ({
+      queryKey: ['classify', d.componentVersionId],
+      queryFn: () => api.classify(d.componentVersionId!),
+      staleTime: Infinity,
+    })),
+  })
+  const subtypeByCv = new Map<string, string>()
+  designs.forEach((d, i) => {
+    const sub = classifyQs[i]?.data?.subtype
+    if (sub) subtypeByCv.set(d.componentVersionId!, sub)
+  })
+
+  // Document-type breakdown for the donut: assemblies/parts (classified),
+  // drawings, and uploaded files by extension (PDF / Text / Images / Video / …).
+  const typeCounts = (() => {
+    const map = new Map<string, number>()
+    for (const it of items) {
+      const t = docTypeOf(it, it.componentVersionId ? subtypeByCv.get(it.componentVersionId) : undefined)
+      map.set(t, (map.get(t) ?? 0) + 1)
+    }
+    return [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
+  })()
+
+  // Aggregate activity across the project's root design documents, merged
+  // server-side via the roll-up endpoint (one request). Capped by default so a
+  // large project doesn't fan out hundreds of GraphQL activity queries (and brush
+  // the APS per-minute quota); "Load all" lifts the cap on demand.
+  const designIds = designs.map((d) => d.id)
+  const [loadAll, setLoadAll] = useState(false)
+  // Reset the cap when the container changes (this pane stays mounted across them).
+  useEffect(() => setLoadAll(false), [project?.id, nav.currentFolderId])
+  const capped = !loadAll && designIds.length > ACTIVITY_CAP
+  const activityIds = capped ? designIds.slice(0, ACTIVITY_CAP) : designIds
+  const rollupQ = useRollupActivity(
+    nav.hubId,
+    activityIds[0] ?? null,
+    activityIds.slice(1),
+    activityIds.length > 0,
+  )
+
+  return (
+    <DashboardShell title={title} subtitle="Select a document to view its details.">
+      <Stack spacing={1.5}>
+        {/* The three small widgets get their own grid (no full-width siblings)
+            so auto-fit collapses any empty track and they fill the row evenly
+            (≈33% each) when they share it, wrapping to 2 / 1 as it narrows. */}
+        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          <WidgetCard title="Document types">
+            {contentsLoading ? <Hint>Loading…</Hint> : <TypeDonut data={typeCounts} />}
+          </WidgetCard>
+          <WidgetCard title="People & groups">
+            <PeopleGroups
+              members={currentLayer?.members ?? []}
+              groups={currentLayer?.groups ?? []}
+              loading={permQ.isLoading}
+              error={!!permQ.error}
+            />
+          </WidgetCard>
+          <WidgetCard title={`Pins${containerPins.length ? ` · ${containerPins.length}` : ''}`}>
+            <PinsList pins={containerPins} loading={pinsQ.isLoading} onOpen={(p) => goTo({ itemId: p.id, name: p.name, kind: p.kind })} />
+          </WidgetCard>
+        </Box>
+        <WidgetCard title="Project activity">
+          {designIds.length === 0 ? (
+            <Hint>No design documents to chart activity for</Hint>
+          ) : (
+            <>
+              {capped && (
+                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Aggregating the first {ACTIVITY_CAP} of {designIds.length} designs.
+                  </Typography>
+                  <Button size="small" onClick={() => setLoadAll(true)} disabled={rollupQ.isFetching}>
+                    {rollupQ.isFetching ? 'Loading…' : 'Load all'}
+                  </Button>
+                </Stack>
+              )}
+              {rollupQ.isFetching && !rollupQ.data ? (
+                <Hint>Aggregating activity…</Hint>
+              ) : rollupQ.error ? (
+                <Hint>Activity unavailable</Hint>
+              ) : rollupQ.data ? (
+                <ActivityHeatmap report={rollupQ.data} scale={0.75} />
+              ) : (
+                <Hint>No activity recorded</Hint>
+              )}
+            </>
+          )}
+        </WidgetCard>
+      </Stack>
+    </DashboardShell>
+  )
+}
+
+// ── widgets ────────────────────────────────────────────────────────
+// Max root designs aggregated into the project activity chart before "Load all".
+const ACTIVITY_CAP = 50
+
+const DONUT_PALETTE = ['#0696d7', '#36b37e', '#ff8b00', '#6554c0', '#ff5630', '#00b8d9', '#8993a4', '#e91e63']
+
+function extOf(name: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(name)
+  return m ? m[1].toLowerCase() : ''
+}
+
+// docTypeOf maps an item to a document-type bucket for the donut: designs split
+// into Assemblies/Parts (from the classify subtype, "Designs" until known),
+// drawings, electronics, and uploaded files by extension.
+function docTypeOf(item: Item, subtype: string | undefined): string {
+  if (item.kind === 'folder') return 'Folders'
+  if (item.kind === 'design' || item.kind === 'configured') {
+    const st = subtype || item.subtype
+    return st === 'assembly' ? 'Assemblies' : st === 'part' ? 'Parts' : 'Designs'
+  }
+  if (item.kind === 'drawing') return item.subtype === 'template' ? 'Templates' : 'Drawings'
+  if (item.kind === 'schematic') return 'Schematics'
+  if (item.kind === 'pcb') return 'PCB'
+  if (item.kind === 'ecad') return 'ECAD'
+  const ext = extOf(item.name)
+  if (ext === 'pdf') return 'PDF'
+  if (['txt', 'md', 'csv', 'json', 'xml', 'log', 'rtf'].includes(ext)) return 'Text'
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'tif', 'tiff', 'heic'].includes(ext)) return 'Images'
+  if (['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v'].includes(ext)) return 'Video'
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'Archives'
+  return ext ? ext.toUpperCase() : 'Other'
+}
+
+function TypeDonut({ data }: { data: Array<{ label: string; value: number }> }) {
+  const theme = useTheme()
+  const total = data.reduce((s, d) => s + d.value, 0)
+  if (total === 0) return <Hint>Empty project</Hint>
+  return (
+    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Box sx={{ position: 'relative', width: 150, height: 150, flexShrink: 0 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="label" innerRadius={48} outerRadius={72} paddingAngle={2} stroke="none">
+              {data.map((d, i) => (
+                <Cell key={d.label} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+              ))}
+            </Pie>
+            <RechartsTooltip
+              contentStyle={{
+                background: theme.palette.background.paper,
+                border: `1px solid ${theme.palette.divider}`,
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          <Typography variant="h5" fontWeight={700} lineHeight={1}>
+            {total}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            items
+          </Typography>
+        </Box>
+      </Box>
+      <Stack spacing={0.5} sx={{ flex: 1, minWidth: 140 }}>
+        {data.map((d, i) => (
+          <Box key={d.label} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '2px', bgcolor: DONUT_PALETTE[i % DONUT_PALETTE.length], flexShrink: 0 }} />
+            <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+              {d.label}
+            </Typography>
+            <Typography variant="body2" fontWeight={600}>
+              {d.value}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ width: 38, textAlign: 'right' }}>
+              {Math.round((d.value / total) * 100)}%
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
+    </Box>
+  )
+}
+
+function RoleChip({ role }: { role: string }) {
+  if (!role) return null
+  return (
+    <Chip
+      size="small"
+      label={role.toLowerCase()}
+      sx={{ height: 18, fontSize: 10, textTransform: 'capitalize', flexShrink: 0 }}
+    />
+  )
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts[parts.length - 1][0] ?? '') : '')).toUpperCase()
+}
+
+function PeopleGroups({
+  members,
+  groups,
+  loading,
+  error,
+}: {
+  members: PermMember[]
+  groups: ProjectGroup[]
+  loading: boolean
+  error: boolean
+}) {
+  if (loading) return <Hint>Loading…</Hint>
+  if (error) return <Hint>Access info unavailable</Hint>
+  if (members.length === 0 && groups.length === 0) return <Hint>No people or groups</Hint>
+  const shownMembers = members.slice(0, 8)
+  return (
+    <Stack spacing={1.5}>
+      {groups.length > 0 && (
+        <Box>
+          <Typography variant="caption" color="text.secondary">
+            {groups.length} group{groups.length === 1 ? '' : 's'}
+          </Typography>
+          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            {groups.map((g) => (
+              <Box key={g.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FontAwesomeIcon icon={faUsers} style={{ fontSize: 12, opacity: 0.7, width: 22 }} />
+                <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                  {g.name}
+                </Typography>
+                <RoleChip role={g.role} />
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {members.length > 0 && (
+        <Box>
+          <Typography variant="caption" color="text.secondary">
+            {members.length} member{members.length === 1 ? '' : 's'}
+          </Typography>
+          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            {shownMembers.map((m) => (
+              <Box key={m.userId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Avatar sx={{ width: 22, height: 22, fontSize: 10 }}>{initials(m.name)}</Avatar>
+                <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }} title={m.email}>
+                  {m.name}
+                </Typography>
+                <RoleChip role={m.role} />
+              </Box>
+            ))}
+            {members.length > shownMembers.length && (
+              <Typography variant="caption" color="text.secondary" sx={{ pl: 3.5 }}>
+                +{members.length - shownMembers.length} more
+              </Typography>
+            )}
+          </Stack>
+        </Box>
+      )}
+    </Stack>
+  )
+}
+
+// pinContainerId is the id of the folder a pin lives directly in (null at the
+// project root). Document pins store their parent path in folder_path; folder
+// pins append themselves, so drop the last entry for those.
+function pinContainerId(p: Pin): string | null {
+  const fp = p.folder_path ?? []
+  const parent = p.kind === 'folder' ? fp.slice(0, -1) : fp
+  return parent.length ? parent[parent.length - 1].id : null
+}
+
+function PinsList({ pins, loading, onOpen }: { pins: Pin[]; loading: boolean; onOpen: (p: Pin) => void }) {
+  if (loading) return <Hint>Loading…</Hint>
+  if (pins.length === 0) return <Hint>No pins here</Hint>
+  return (
+    <List dense disablePadding>
+      {pins.map((p) => (
+        <ListItemButton key={p.id} onClick={() => onOpen(p)} sx={{ borderRadius: 1, py: 0.25, gap: 1 }}>
+          <FontAwesomeIcon icon={iconForItem({ kind: p.kind })} style={{ fontSize: 13, width: 18, opacity: 0.7, flexShrink: 0 }} />
+          <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+            {p.name}
+          </Typography>
+        </ListItemButton>
+      ))}
+    </List>
+  )
+}

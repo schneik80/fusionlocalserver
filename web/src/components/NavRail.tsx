@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { faBuilding, faFolderTree, faGear, faStar } from '@fortawesome/free-solid-svg-icons'
 import { Divider, IconButton, Paper, Stack, Tooltip } from '@mui/material'
+import { useNav } from '../state/nav'
 
 interface NavRailProps {
   onOpenHubs: () => void
@@ -10,6 +11,7 @@ interface NavRailProps {
 }
 
 export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps) {
+  const nav = useNav()
   return (
     <Paper
       square
@@ -29,7 +31,7 @@ export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps
       <Stack spacing={1.5}>
         <RailButton icon={faBuilding} label="Hubs" onClick={onOpenHubs} />
         <Divider flexItem sx={{ mx: 1 }} />
-        <RailButton icon={faFolderTree} label="Browser" active onClick={() => {}} />
+        <RailButton icon={faFolderTree} label="Browser" active onClick={nav.clearProject} />
         <Divider flexItem sx={{ mx: 1 }} />
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />
