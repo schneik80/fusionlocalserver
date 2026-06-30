@@ -186,7 +186,7 @@ export default function ActivityHeatmap({
   rollup?: { checked: boolean; loading: boolean; onChange: (next: boolean) => void }
 }) {
   const theme = useTheme()
-  const [gran, setGran] = useState<Gran>('week')
+  const [gran, setGran] = useState<Gran>('year')
 
   const createdMs = report.createdOn ? Date.parse(report.createdOn) : Date.now()
   const lastMs = report.lastChange ? Date.parse(report.lastChange) : Date.now()
