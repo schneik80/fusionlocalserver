@@ -207,7 +207,9 @@ function SelectedDetails({
             projectAltId={projectAltId}
             size={80}
           />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
+          {/* containerType makes this column a query container so the metadata
+              grid below can switch to two columns based on THIS panel's width. */}
+          <Box sx={{ flex: 1, minWidth: 0, containerType: 'inline-size' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
               <Typography
                 variant="h6"
@@ -500,17 +502,38 @@ function DetailsSummary({
   if (error) return <TabError error={error} />
   if (!query) return <TabEmpty text="No details" />
 
-  const rows: Array<[string, ReactNode]> = [
+  // Identity / spec fields stay in the first column; the version + authorship
+  // fields move into a second column once the details panel is wide enough,
+  // compacting the header height. See the container query below.
+  const primaryRows: Array<[string, ReactNode]> = [
     ['Type', typeLabel(kind, query.typename, subtype)],
     ['Part number', query.partNumber],
     ['Description', query.partDesc],
     ['Material', query.material],
-    ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
     ['Extension', FUSION_NATIVE_KINDS.has(kind) ? undefined : query.extensionType],
+  ]
+  const secondaryRows: Array<[string, ReactNode]> = [
+    ['Version', query.versionNumber ? `v${query.versionNumber}` : undefined],
     ['Created', query.createdOn ? `${fmtDate(query.createdOn)} · ${query.createdBy ?? ''}` : undefined],
     ['Modified', query.modifiedOn ? `${fmtDate(query.modifiedOn)} · ${query.modifiedBy ?? ''}` : undefined],
   ]
-  return <LabelGrid rows={rows} />
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: '1fr',
+        columnGap: 3,
+        rowGap: 0.75,
+        // Two side-by-side columns once the header's detail column is wide
+        // enough (container query on the header right column). Below the
+        // threshold the two groups simply stack.
+        '@container (min-width: 480px)': { gridTemplateColumns: '1fr 1fr', alignItems: 'start' },
+      }}
+    >
+      <LabelGrid rows={primaryRows} />
+      <LabelGrid rows={secondaryRows} />
+    </Box>
+  )
 }
 
 // PropertiesTab shows the component version's physical (mass) properties from
