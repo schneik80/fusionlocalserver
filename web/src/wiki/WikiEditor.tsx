@@ -23,8 +23,10 @@ import {
 import { useTheme } from '@mui/material/styles'
 import { basicSetup } from 'codemirror'
 import { markdown } from '@codemirror/lang-markdown'
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { tags as t } from '@lezer/highlight'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WikiDraft } from './draftStore'
 import { Markdown } from './Markdown'
@@ -144,6 +146,33 @@ export function WikiEditor({
     [theme],
   )
 
+  // Markdown token colors. CodeMirror's default highlight style is light-mode
+  // oriented — it paints link/url tokens near-black navy, unreadable on the dark
+  // slate theme — so derive the readable tags from the MUI palette. This is added
+  // after basicSetup (whose default style is a fallback), so it wins for these tags.
+  const cmHighlight = useMemo(() => {
+    const p = theme.palette
+    return syntaxHighlighting(
+      HighlightStyle.define([
+        // Prose content stays at the full text color and only carries weight /
+        // style — so headings, bold, italic, lists and inline code all read
+        // crisply; earlier they inherited grey from the list/marker rules.
+        { tag: t.heading, color: p.text.primary, fontWeight: '700' },
+        { tag: t.strong, color: p.text.primary, fontWeight: '700' },
+        { tag: t.emphasis, color: p.text.primary, fontStyle: 'italic' },
+        { tag: t.strikethrough, color: p.text.primary, textDecoration: 'line-through' },
+        { tag: t.list, color: p.text.primary },
+        { tag: t.monospace, color: p.text.primary },
+        // Links use the accent.
+        { tag: [t.link, t.url, t.labelName], color: p.primary.main, textDecoration: 'underline' },
+        // Blockquotes and the syntax punctuation (**, _, -, #, >, `) get one
+        // readable muted tone — dim enough to distinguish, not washed out.
+        { tag: t.quote, color: p.text.secondary },
+        { tag: [t.processingInstruction, t.meta], color: p.text.secondary },
+      ]),
+    )
+  }, [theme])
+
   // (Re)create the editor when the document changes (switching pages) or the
   // theme flips. Not on every keystroke — the editor owns the live doc.
   useEffect(() => {
@@ -157,6 +186,7 @@ export function WikiEditor({
           markdown(),
           EditorView.lineWrapping,
           cmTheme,
+          cmHighlight,
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onChangeRef.current(u.state.doc.toString())
           }),
@@ -171,7 +201,7 @@ export function WikiEditor({
     // markdownValue is intentionally excluded: seeding once per document avoids
     // clobbering the cursor on each keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.key, cmTheme])
+  }, [draft.key, cmTheme, cmHighlight])
 
   const act = (fn: (v: EditorView) => void) => () => {
     if (viewRef.current) fn(viewRef.current)
