@@ -340,7 +340,12 @@ export const useWikiPages = (
     queryKey: ['wikiPages', hubId, dmProjectId],
     queryFn: () => api.wikiPages(hubId!, dmProjectId!),
     enabled: enabled && !!hubId && !!dmProjectId,
-    staleTime: STALE,
+    // Shorter stale window + refetch on focus so returning to the app surfaces
+    // pages another device published; explicit refetches (tab open, page select)
+    // cover the rest. There's no push channel (a localhost BFF can't take APS
+    // webhooks), so freshness is on-demand.
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: true,
   })
 
 // useWikiPage fetches one published page's markdown body. Used when opening a

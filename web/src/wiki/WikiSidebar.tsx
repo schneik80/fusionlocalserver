@@ -15,7 +15,9 @@ import type { DraftStatus } from './draftStore'
 
 // A sidebar entry is either a published page (remote), or a local draft — which
 // may itself be linked to a published page (baseItemId) or purely local.
-export type WikiEntryStatus = DraftStatus | 'remote'
+// 'behind' (remote moved ahead, local clean) and 'conflict' (both changed) are
+// reconciled at merge time by comparing the draft's base against the live tip.
+export type WikiEntryStatus = DraftStatus | 'remote' | 'behind' | 'conflict'
 
 export interface WikiEntry {
   /** selection id: the draft key, or the page's item lineage urn */
@@ -28,10 +30,15 @@ export interface WikiEntry {
   modifiedOn?: string
 }
 
-const STATUS_META: Record<WikiEntryStatus, { label: string; color: 'default' | 'warning' | 'success' | 'info' }> = {
+const STATUS_META: Record<
+  WikiEntryStatus,
+  { label: string; color: 'default' | 'warning' | 'success' | 'info' | 'error' }
+> = {
   draft: { label: 'Draft', color: 'default' },
   modified: { label: 'Edited', color: 'warning' },
   published: { label: 'Synced', color: 'success' },
+  behind: { label: 'Update', color: 'info' },
+  conflict: { label: 'Conflict', color: 'error' },
   remote: { label: 'Published', color: 'info' },
 }
 

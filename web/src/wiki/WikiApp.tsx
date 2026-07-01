@@ -16,11 +16,22 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '../api/client'
 import { useWikiPage, useWikiPages, useWikiPublish, useWikiRename } from '../api/queries'
 import { useNav } from '../state/nav'
-import { slugify, type DraftStatus, type WikiDraft } from './draftStore'
+import { slugify, type WikiDraft } from './draftStore'
 import { Markdown } from './Markdown'
 import { useWikiDrafts } from './useDrafts'
 import { WikiEditor } from './WikiEditor'
-import { WikiSidebar, type WikiEntry } from './WikiSidebar'
+import { WikiSidebar, type WikiEntry, type WikiEntryStatus } from './WikiSidebar'
+
+// reconcileStatus derives a linked draft's shown status by comparing what it was
+// based on against the page's live tip: the remote moving ahead is 'behind' when
+// the local copy is clean, or 'conflict' when the local copy also has edits.
+function reconcileStatus(d: WikiDraft, tipVersion?: string): WikiEntryStatus {
+  const localEdited = d.status === 'modified'
+  const remoteAdvanced = !!tipVersion && !!d.baseVersion && tipVersion !== d.baseVersion
+  if (remoteAdvanced && localEdited) return 'conflict'
+  if (remoteAdvanced) return 'behind'
+  return d.status
+}
 
 // Autosave debounce: how long after the last keystroke the working copy is
 // flushed to IndexedDB.
@@ -75,6 +86,13 @@ export function WikiApp({ active = true }: { active?: boolean }) {
     setEditingKey(null)
   }, [projectId])
 
+  // Freshen the published-pages list when the tab is opened, so a page another
+  // device published surfaces as behind/updated rather than staying "synced".
+  useEffect(() => {
+    if (active) void pagesQ.refetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
+
   // Merge published pages and local drafts into one flat, searchable list. A
   // draft linked to a published page (baseItemId) supersedes the remote row.
   const entries = useMemo<WikiEntry[]>(() => {
@@ -89,7 +107,7 @@ export function WikiApp({ active = true }: { active?: boolean }) {
     for (const p of pages) {
       const d = linked.get(p.itemId)
       if (d) {
-        out.push({ id: d.key, kind: 'draft', title: d.title, status: d.status, draftKey: d.key, itemId: p.itemId, modifiedOn: p.modifiedOn })
+        out.push({ id: d.key, kind: 'draft', title: d.title, status: reconcileStatus(d, p.tipVersion), draftKey: d.key, itemId: p.itemId, modifiedOn: p.modifiedOn })
       } else {
         out.push({ id: p.itemId, kind: 'page', title: p.title, status: 'remote', itemId: p.itemId, modifiedOn: p.modifiedOn })
       }
@@ -255,6 +273,34 @@ export function WikiApp({ active = true }: { active?: boolean }) {
     }
   }
 
+  // handleRefresh pulls the latest published markdown into the linked draft,
+  // adopting the live tip as the new base. For a 'behind' page this is a safe
+  // update (nothing local to lose); for a 'conflict' it's the "take theirs"
+  // choice (local edits are discarded).
+  async function handleRefresh(entry: WikiEntry) {
+    if (!entry.draftKey || !dmProjectId || !entry.itemId) return
+    const draft = drafts.find((d) => d.key === entry.draftKey)
+    if (!draft) return
+    try {
+      const content = await api.wikiPage(dmProjectId, entry.itemId)
+      const page = pagesQ.data?.find((p) => p.itemId === entry.itemId)
+      await save({
+        ...draft,
+        markdown: content.markdown,
+        baseVersion: page?.tipVersion ?? draft.baseVersion,
+        status: 'published',
+        updatedAt: Date.now(),
+      })
+      if (editingKey === draft.key) {
+        setWorkingMd(content.markdown)
+        setSaved(true)
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Refresh failed.')
+    }
+  }
+
   return (
     <Box sx={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0 }}>
       <WikiSidebar
@@ -263,6 +309,9 @@ export function WikiApp({ active = true }: { active?: boolean }) {
         onSelect={(e) => {
           setSelectedId(e.id)
           setEditingKey(null)
+          // Background lookup: re-check the live tips so the just-selected page's
+          // status reflects any version published elsewhere.
+          void pagesQ.refetch()
         }}
         onNew={handleNew}
         loading={draftsLoading || pagesQ.isLoading}
@@ -293,9 +342,11 @@ export function WikiApp({ active = true }: { active?: boolean }) {
         ) : selectedEntry?.kind === 'draft' ? (
           <DraftReader
             draft={drafts.find((d) => d.key === selectedEntry.draftKey) ?? null}
+            status={selectedEntry.status}
             onEdit={beginEdit}
             onDelete={handleDelete}
             onRename={() => selectedEntry && openRename(selectedEntry)}
+            onRefresh={() => selectedEntry && handleRefresh(selectedEntry)}
           />
         ) : selectedEntry?.kind === 'page' ? (
           <PublishedReader
@@ -381,19 +432,26 @@ function EmptyState({ onNew }: { onNew: () => void }) {
   )
 }
 
-// DraftReader shows a local draft's rendered markdown with edit/rename/delete.
+// DraftReader shows a local draft's rendered markdown with edit/rename/delete,
+// plus a banner + refresh action when the published page has moved ahead.
 function DraftReader({
   draft,
+  status,
   onEdit,
   onDelete,
   onRename,
+  onRefresh,
 }: {
   draft: WikiDraft | null
+  status: WikiEntryStatus
   onEdit: (d: WikiDraft) => void
   onDelete: (key: string) => void
   onRename: () => void
+  onRefresh: () => void
 }) {
   if (!draft) return <EmptyState onNew={() => {}} />
+  const behind = status === 'behind'
+  const conflict = status === 'conflict'
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <Stack
@@ -405,7 +463,7 @@ function DraftReader({
         <Typography variant="h6" noWrap sx={{ flex: 1, minWidth: 0, fontWeight: 600 }}>
           {draft.title}
         </Typography>
-        <StatusChip status={draft.status} />
+        <StatusChip status={status} />
         <Button size="small" variant="contained" onClick={() => onEdit(draft)}>
           Edit
         </Button>
@@ -416,6 +474,22 @@ function DraftReader({
           Delete
         </Button>
       </Stack>
+      {(behind || conflict) && (
+        <Alert
+          severity={conflict ? 'warning' : 'info'}
+          square
+          sx={{ borderRadius: 0 }}
+          action={
+            <Button color="inherit" size="small" onClick={onRefresh}>
+              {conflict ? 'Take latest' : 'Update'}
+            </Button>
+          }
+        >
+          {conflict
+            ? 'A newer version was published on another device, and you have unpublished local edits. Take latest discards your edits; Edit → Publish keeps yours.'
+            : 'A newer version was published on another device.'}
+        </Alert>
+      )}
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
         <Markdown>{draft.markdown}</Markdown>
       </Box>
@@ -490,14 +564,18 @@ function PublishedReader({
   )
 }
 
-function StatusChip({ status }: { status: DraftStatus | 'remote' }) {
+function StatusChip({ status }: { status: WikiEntryStatus }) {
   const meta =
     status === 'draft'
       ? { label: 'Local draft', color: 'default' as const }
       : status === 'modified'
         ? { label: 'Unpublished changes', color: 'warning' as const }
-        : status === 'published'
-          ? { label: 'Synced', color: 'success' as const }
-          : { label: 'Published', color: 'info' as const }
+        : status === 'behind'
+          ? { label: 'Update available', color: 'info' as const }
+          : status === 'conflict'
+            ? { label: 'Conflict', color: 'error' as const }
+            : status === 'published'
+              ? { label: 'Synced', color: 'success' as const }
+              : { label: 'Published', color: 'info' as const }
   return <Chip size="small" label={meta.label} color={meta.color} variant="outlined" sx={{ height: 20 }} />
 }
