@@ -23,6 +23,8 @@ import type {
   ProjectGroup,
   SetPortResponse,
   Thumbnail,
+  WikiPage,
+  WikiPageContent,
 } from './types'
 
 export class ApiError extends Error {
@@ -178,6 +180,15 @@ export const api = {
     }
     return request<PermLayer[]>(`/api/permissions/path?${p.toString()}`)
   },
+
+  // Wiki: published markdown pages in a project's root "Wiki" folder. hubId is
+  // the GraphQL hub id (the server resolves it to the DM hub id); dmProjectId is
+  // the project's altId. itemId is a page's lineage urn.
+  wikiPages: (hubId: string, dmProjectId: string) =>
+    request<WikiPage[]>(`/api/wiki/pages${qs({ hubId, dmProjectId })}`),
+
+  wikiPage: (dmProjectId: string, itemId: string) =>
+    request<WikiPageContent>(`/api/wiki/page${qs({ dmProjectId, itemId })}`),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

@@ -24,6 +24,8 @@ import type {
   Pin,
   ProjectGroup,
   Thumbnail,
+  WikiPage,
+  WikiPageContent,
 } from './types'
 
 // Data fetched here is effectively static for a browsing session, so cache
@@ -325,3 +327,32 @@ export function usePinMutations(hubId: string | null) {
   })
   return { add, remove }
 }
+
+// useWikiPages lists a project's published wiki pages. Gated on the hub id and
+// the project's data-management id (altId) both being present; the Wiki tab only
+// mounts at the project level, but a project may have no Wiki folder yet (→ []).
+export const useWikiPages = (
+  hubId: string | null,
+  dmProjectId: string | null | undefined,
+  enabled = true,
+): UseQueryResult<WikiPage[]> =>
+  useQuery({
+    queryKey: ['wikiPages', hubId, dmProjectId],
+    queryFn: () => api.wikiPages(hubId!, dmProjectId!),
+    enabled: enabled && !!hubId && !!dmProjectId,
+    staleTime: STALE,
+  })
+
+// useWikiPage fetches one published page's markdown body. Used when opening a
+// published page for reading or pulling it down as a draft.
+export const useWikiPage = (
+  dmProjectId: string | null | undefined,
+  itemId: string | null,
+  enabled = true,
+): UseQueryResult<WikiPageContent> =>
+  useQuery({
+    queryKey: ['wikiPage', dmProjectId, itemId],
+    queryFn: () => api.wikiPage(dmProjectId!, itemId!),
+    enabled: enabled && !!dmProjectId && !!itemId,
+    staleTime: STALE,
+  })

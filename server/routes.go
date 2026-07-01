@@ -68,6 +68,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))
 	mux.HandleFunc("DELETE /api/pins", prot(s.handlePinsRemove))
 
+	// Wiki (project-scoped markdown pages in a project-root "Wiki" folder).
+	mux.HandleFunc("GET /api/wiki/pages", prot(s.handleWikiPages))
+	mux.HandleFunc("GET /api/wiki/page", prot(s.handleWikiPage))
+
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())
 

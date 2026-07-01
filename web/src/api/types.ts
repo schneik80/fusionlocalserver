@@ -278,6 +278,26 @@ export interface ActivityReport {
   eventsTruncated: boolean
 }
 
+// --- Wiki (mirror server/dto_wiki.go) ---
+
+// WikiPage is one published markdown page in a project's Wiki folder. title is
+// the file name without its .md extension; tipVersion is the current version urn
+// (also the base-version token a draft records for stale-publish detection).
+export interface WikiPage {
+  itemId: string
+  name: string
+  title: string
+  tipVersion?: string
+  modifiedOn?: string
+  modifiedBy?: string
+}
+
+// WikiPageContent is the markdown body of a single published page.
+export interface WikiPageContent {
+  itemId: string
+  markdown: string
+}
+
 // Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
 export interface Pin {
   id: string

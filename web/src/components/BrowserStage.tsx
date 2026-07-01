@@ -4,7 +4,8 @@ import { useNav } from '../state/nav'
 import { ContentsColumn } from './ContentsColumn'
 import { DetailsPanel } from './DetailsPanel'
 import { ProjectsColumn } from './ProjectsColumn'
-import { HubDashboard, ProjectDashboard } from './Dashboards'
+import { HubDashboard } from './Dashboards'
+import { ProjectPanel } from './ProjectPanel'
 
 // BrowserStage is the progressive drill-down browser. The level is derived
 // purely from nav state, and two clipped "slots" cross-slide their panes:
@@ -65,7 +66,7 @@ export function BrowserStage() {
       </Box>
       <Box ref={setSlotB} sx={{ position: 'relative', overflow: 'hidden', flex: 1, minWidth: 0 }}>
         {pane(level === 'hub', slotB, <HubDashboard />)}
-        {pane(level === 'project', slotB, <ProjectDashboard />)}
+        {pane(level === 'project', slotB, <ProjectPanel />)}
         {pane(level === 'document', slotB, <DetailsPanel />)}
       </Box>
     </Box>
