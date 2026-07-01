@@ -12,6 +12,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   Divider,
   IconButton,
   Stack,
@@ -24,7 +25,7 @@ import { basicSetup } from 'codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WikiDraft } from './draftStore'
 import { Markdown } from './Markdown'
 
@@ -35,7 +36,11 @@ interface WikiEditorProps {
   onChangeMarkdown: (md: string) => void
   onChangeTitle: (title: string) => void
   onDiscard: () => void
-  onPublish?: () => void // undefined until publishing lands (Phase 2)
+  onPublish?: () => void
+  publishing?: boolean
+  // Uploads an image and resolves to the markdown src + alt to embed. Undefined
+  // falls back to inserting an `![alt](url)` placeholder for a manual URL.
+  onUploadImage?: (file: File) => Promise<{ src: string; alt: string }>
   saved: boolean // true when the working copy is flushed to IndexedDB
 }
 
@@ -95,11 +100,15 @@ export function WikiEditor({
   onChangeTitle,
   onDiscard,
   onPublish,
+  publishing,
+  onUploadImage,
   saved,
 }: WikiEditorProps) {
   const theme = useTheme()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
   // Hold the latest onChange in a ref so the update listener (installed once per
   // document) always calls the current callback without re-creating the editor.
   const onChangeRef = useRef(onChangeMarkdown)
@@ -168,6 +177,31 @@ export function WikiEditor({
     if (viewRef.current) fn(viewRef.current)
   }
 
+  // Image button: with an uploader, pick a file, upload it, and insert the
+  // resulting reference at the cursor; otherwise fall back to a URL placeholder.
+  const onImageClick = onUploadImage
+    ? () => fileInputRef.current?.click()
+    : act(insertImage)
+
+  async function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file || !onUploadImage || !viewRef.current) return
+    setUploadingImage(true)
+    try {
+      const { src, alt } = await onUploadImage(file)
+      const v = viewRef.current
+      const { from, to } = v.state.selection.main
+      v.dispatch({ changes: { from, to, insert: `![${alt}](${src})` } })
+      v.focus()
+    } catch {
+      // eslint-disable-next-line no-alert
+      alert('Image upload failed.')
+    } finally {
+      setUploadingImage(false)
+    }
+  }
+
   const status = saved ? 'Saved locally' : 'Saving…'
 
   return (
@@ -190,12 +224,15 @@ export function WikiEditor({
         <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
           {status}
         </Typography>
-        <Tooltip
-          title={onPublish ? 'Publish to the project Wiki folder' : 'Publishing coming soon'}
-        >
+        <Tooltip title={onPublish ? 'Publish to the project Wiki folder' : 'Publishing unavailable'}>
           <span>
-            <Button size="small" variant="contained" disabled={!onPublish} onClick={onPublish}>
-              Publish
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!onPublish || publishing}
+              onClick={onPublish}
+            >
+              {publishing ? 'Publishing…' : 'Publish'}
             </Button>
           </span>
         </Tooltip>
@@ -222,7 +259,19 @@ export function WikiEditor({
         <ToolBtn title="Bulleted list" icon={faListUl} onClick={act((v) => prefixLine(v, '- '))} />
         <ToolBtn title="Quote" icon={faQuoteRight} onClick={act((v) => prefixLine(v, '> '))} />
         <ToolBtn title="Link" icon={faLink} onClick={act(insertLink)} />
-        <ToolBtn title="Image" icon={faImage} onClick={act(insertImage)} />
+        <ToolBtn
+          title={onUploadImage ? 'Insert image (uploads to the page)' : 'Insert image URL'}
+          icon={faImage}
+          busy={uploadingImage}
+          onClick={onImageClick}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={handleImageFile}
+        />
       </Stack>
 
       {/* Split pane: source (left) + live preview (right) */}
@@ -252,17 +301,26 @@ function ToolBtn({
   title,
   icon,
   label,
+  busy,
   onClick,
 }: {
   title: string
   icon?: typeof faBold
   label?: string
+  busy?: boolean
   onClick: () => void
 }) {
   return (
     <Tooltip title={title}>
-      <IconButton size="small" onClick={onClick} sx={{ color: 'text.secondary', width: 30, height: 30 }}>
-        {icon ? (
+      <IconButton
+        size="small"
+        disabled={busy}
+        onClick={onClick}
+        sx={{ color: 'text.secondary', width: 30, height: 30 }}
+      >
+        {busy ? (
+          <CircularProgress size={13} />
+        ) : icon ? (
           <FontAwesomeIcon icon={icon} style={{ fontSize: 13 }} />
         ) : (
           <Typography variant="caption" sx={{ fontWeight: 700, fontSize: 12 }}>

@@ -4,11 +4,17 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useWikiPage, useWikiPages } from '../api/queries'
+import { api, ApiError } from '../api/client'
+import { useWikiPage, useWikiPages, useWikiPublish, useWikiRename } from '../api/queries'
 import { useNav } from '../state/nav'
 import { slugify, type DraftStatus, type WikiDraft } from './draftStore'
 import { Markdown } from './Markdown'
@@ -38,6 +44,11 @@ export function WikiApp({ active = true }: { active?: boolean }) {
   // users who never visit it (mirrors DetailsPanel's per-tab query gating).
   const pagesQ = useWikiPages(hubId, dmProjectId, active)
   const { drafts, loading: draftsLoading, save, remove, create, importPage } = useWikiDrafts(projectId)
+  const publishMut = useWikiPublish(hubId, dmProjectId)
+  const renameMut = useWikiRename(hubId, dmProjectId)
+
+  // Writes (publish, image upload, rename) need the project's data-management id.
+  const canWrite = !!hubId && !!dmProjectId
 
   // Keep a ref to the latest drafts so effects/handlers can read them without
   // taking `drafts` as a dependency (which would retrigger on every save).
@@ -52,6 +63,10 @@ export function WikiApp({ active = true }: { active?: boolean }) {
   const [workingMd, setWorkingMd] = useState('')
   const [workingTitle, setWorkingTitle] = useState('')
   const [saved, setSaved] = useState(true)
+
+  // Rename dialog: the entry being renamed and the working title text.
+  const [renameTarget, setRenameTarget] = useState<WikiEntry | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   // This pane stays mounted across project switches (BrowserStage keeps slot B
   // panes alive), so clear any selection/edit that belongs to the prior project.
@@ -113,7 +128,9 @@ export function WikiApp({ active = true }: { active?: boolean }) {
       void save({
         ...base,
         title: workingTitle || 'Untitled',
-        slug: slugify(workingTitle || 'untitled'),
+        // Once linked to a published page, the slug (filename) is frozen — only
+        // an explicit Rename changes it, so title edits don't silently refile.
+        slug: base.baseItemId ? base.slug : slugify(workingTitle || 'untitled'),
         markdown: workingMd,
         status: base.baseItemId ? 'modified' : 'draft',
         updatedAt: Date.now(),
@@ -129,7 +146,7 @@ export function WikiApp({ active = true }: { active?: boolean }) {
       await save({
         ...base,
         title: workingTitle || 'Untitled',
-        slug: slugify(workingTitle || 'untitled'),
+        slug: base.baseItemId ? base.slug : slugify(workingTitle || 'untitled'),
         markdown: workingMd,
         status: base.baseItemId ? 'modified' : 'draft',
         updatedAt: Date.now(),
@@ -152,6 +169,90 @@ export function WikiApp({ active = true }: { active?: boolean }) {
   async function handleEditAsDraft(payload: { itemId: string; title: string; tipVersion?: string; markdown: string }) {
     const d = await importPage(payload)
     beginEdit(d)
+  }
+
+  // handlePublish uploads the working copy to the project's Wiki folder, then
+  // relinks the draft to the returned page/version and marks it published. On a
+  // 409 (the page moved upstream) it offers to overwrite.
+  async function handlePublish(force = false): Promise<void> {
+    if (!editingDraft || !canWrite) return
+    const title = workingTitle || editingDraft.title || 'Untitled'
+    // A linked page keeps its published filename; a new page derives it from the
+    // title. Renaming a published page is a separate, explicit action.
+    const slug = editingDraft.baseItemId ? editingDraft.slug : slugify(title || 'untitled')
+    try {
+      const page = await publishMut.mutateAsync({
+        itemId: editingDraft.baseItemId ?? '',
+        slug,
+        markdown: workingMd,
+        baseVersion: editingDraft.baseVersion ?? '',
+        force,
+      })
+      await save({
+        ...editingDraft,
+        title,
+        slug,
+        markdown: workingMd,
+        baseItemId: page.itemId,
+        baseVersion: page.tipVersion,
+        status: 'published',
+        updatedAt: Date.now(),
+      })
+      setSaved(true)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // eslint-disable-next-line no-alert
+        if (window.confirm('This page changed since you opened it. Overwrite the published version?')) {
+          await handlePublish(true)
+        }
+        return
+      }
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Publish failed.')
+    }
+  }
+
+  function openRename(entry: WikiEntry) {
+    setRenameTarget(entry)
+    setRenameValue(entry.title)
+  }
+
+  // doRename renames the page: for a published page (or linked draft) it renames
+  // the APS file + images folder; for any draft it also updates the local title
+  // and (frozen) slug so they stay in sync.
+  async function doRename() {
+    const entry = renameTarget
+    const newTitle = renameValue.trim()
+    if (!entry || !newTitle) return
+    const newSlug = slugify(newTitle)
+    const draft = entry.draftKey ? drafts.find((d) => d.key === entry.draftKey) ?? null : null
+    const publishedItemId = draft?.baseItemId ?? entry.itemId
+    const oldSlug = draft?.slug ?? entry.title
+    try {
+      if (publishedItemId && canWrite) {
+        await renameMut.mutateAsync({ itemId: publishedItemId, oldSlug, newSlug })
+      }
+      if (draft) {
+        await save({ ...draft, title: newTitle, slug: newSlug, updatedAt: Date.now() })
+      }
+      if (editingKey && editingKey === draft?.key) setWorkingTitle(newTitle)
+      setRenameTarget(null)
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Rename failed.')
+    }
+  }
+
+  // uploadImage stores an image under Wiki/<slug>/images/ and resolves to the
+  // markdown src + alt the editor embeds. The slug matches the page being edited.
+  async function uploadImage(file: File): Promise<{ src: string; alt: string }> {
+    if (!editingDraft || !hubId || !dmProjectId) throw new Error('cannot upload image')
+    const slug = slugify(workingTitle || editingDraft.title || 'untitled')
+    const res = await api.wikiUploadImage({ hubId, dmProjectId, slug }, file)
+    return {
+      src: api.wikiImageUrl(dmProjectId, res.itemId),
+      alt: res.name.replace(/\.[^./\\]+$/, ''),
+    }
   }
 
   return (
@@ -185,25 +286,81 @@ export function WikiApp({ active = true }: { active?: boolean }) {
             onChangeTitle={setWorkingTitle}
             onDiscard={closeEditor}
             saved={saved}
-            // onPublish is intentionally omitted until Phase 2 (upload to APS).
+            onPublish={canWrite ? () => void handlePublish() : undefined}
+            publishing={publishMut.isPending}
+            onUploadImage={canWrite ? uploadImage : undefined}
           />
         ) : selectedEntry?.kind === 'draft' ? (
           <DraftReader
             draft={drafts.find((d) => d.key === selectedEntry.draftKey) ?? null}
             onEdit={beginEdit}
             onDelete={handleDelete}
+            onRename={() => selectedEntry && openRename(selectedEntry)}
           />
         ) : selectedEntry?.kind === 'page' ? (
           <PublishedReader
             dmProjectId={dmProjectId}
             page={pagesQ.data?.find((p) => p.itemId === selectedEntry.itemId) ?? null}
             onEditAsDraft={handleEditAsDraft}
+            onRename={canWrite ? () => selectedEntry && openRename(selectedEntry) : undefined}
           />
         ) : (
           <EmptyState onNew={handleNew} />
         )}
       </Box>
+
+      <RenameDialog
+        open={!!renameTarget}
+        value={renameValue}
+        busy={renameMut.isPending}
+        onChange={setRenameValue}
+        onCancel={() => setRenameTarget(null)}
+        onSave={doRename}
+      />
     </Box>
+  )
+}
+
+function RenameDialog({
+  open,
+  value,
+  busy,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  open: boolean
+  value: string
+  busy: boolean
+  onChange: (v: string) => void
+  onCancel: () => void
+  onSave: () => void
+}) {
+  return (
+    <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth>
+      <DialogTitle>Rename page</DialogTitle>
+      <DialogContent>
+        <TextField
+          autoFocus
+          fullWidth
+          variant="standard"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onSave()
+          }}
+          sx={{ mt: 1 }}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onCancel} color="inherit">
+          Cancel
+        </Button>
+        <Button onClick={onSave} variant="contained" disabled={busy || !value.trim()}>
+          {busy ? 'Renaming…' : 'Rename'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
 
@@ -224,15 +381,17 @@ function EmptyState({ onNew }: { onNew: () => void }) {
   )
 }
 
-// DraftReader shows a local draft's rendered markdown with edit/delete actions.
+// DraftReader shows a local draft's rendered markdown with edit/rename/delete.
 function DraftReader({
   draft,
   onEdit,
   onDelete,
+  onRename,
 }: {
   draft: WikiDraft | null
   onEdit: (d: WikiDraft) => void
   onDelete: (key: string) => void
+  onRename: () => void
 }) {
   if (!draft) return <EmptyState onNew={() => {}} />
   return (
@@ -249,6 +408,9 @@ function DraftReader({
         <StatusChip status={draft.status} />
         <Button size="small" variant="contained" onClick={() => onEdit(draft)}>
           Edit
+        </Button>
+        <Button size="small" color="inherit" onClick={onRename}>
+          Rename
         </Button>
         <Button size="small" color="error" onClick={() => onDelete(draft.key)}>
           Delete
@@ -267,10 +429,12 @@ function PublishedReader({
   dmProjectId,
   page,
   onEditAsDraft,
+  onRename,
 }: {
   dmProjectId: string | null
   page: { itemId: string; title: string; tipVersion?: string } | null
   onEditAsDraft: (payload: { itemId: string; title: string; tipVersion?: string; markdown: string }) => void
+  onRename?: () => void
 }) {
   const contentQ = useWikiPage(dmProjectId, page?.itemId ?? null, !!page)
 
@@ -303,6 +467,11 @@ function PublishedReader({
         >
           Edit as draft
         </Button>
+        {onRename && (
+          <Button size="small" color="inherit" onClick={onRename}>
+            Rename
+          </Button>
+        )}
       </Stack>
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
         {contentQ.isLoading ? (

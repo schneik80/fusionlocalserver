@@ -356,3 +356,35 @@ export const useWikiPage = (
     enabled: enabled && !!dmProjectId && !!itemId,
     staleTime: STALE,
   })
+
+// useWikiPublish uploads the working copy of a page to the project's Wiki folder
+// and refreshes the published-pages list on success. A 409 ApiError means the
+// page changed upstream — the caller can retry with force to overwrite.
+export function useWikiPublish(hubId: string | null, dmProjectId: string | null | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      itemId?: string
+      slug: string
+      markdown: string
+      baseVersion?: string
+      force?: boolean
+    }) => api.wikiPublish({ hubId: hubId!, dmProjectId: dmProjectId!, ...body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['wikiPages', hubId, dmProjectId] })
+    },
+  })
+}
+
+// useWikiRename renames a published page's file (and images subfolder) and
+// refreshes the published-pages list.
+export function useWikiRename(hubId: string | null, dmProjectId: string | null | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { itemId: string; oldSlug: string; newSlug: string }) =>
+      api.wikiRename({ hubId: hubId!, dmProjectId: dmProjectId!, ...body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['wikiPages', hubId, dmProjectId] })
+    },
+  })
+}

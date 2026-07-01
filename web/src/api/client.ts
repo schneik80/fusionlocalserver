@@ -23,6 +23,7 @@ import type {
   ProjectGroup,
   SetPortResponse,
   Thumbnail,
+  WikiImageResult,
   WikiPage,
   WikiPageContent,
 } from './types'
@@ -48,8 +49,11 @@ function redirectToLogin() {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Let the browser set the multipart boundary for FormData bodies (image
+  // uploads); JSON calls get the explicit content-type.
+  const isForm = init?.body instanceof FormData
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: isForm ? undefined : { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     ...init,
   })
@@ -189,6 +193,44 @@ export const api = {
 
   wikiPage: (dmProjectId: string, itemId: string) =>
     request<WikiPageContent>(`/api/wiki/page${qs({ dmProjectId, itemId })}`),
+
+  // wikiPublish uploads a page's markdown to the project's Wiki folder. itemId
+  // links to an already-published page (empty for a new one); baseVersion + force
+  // drive stale-overwrite detection. Returns the resulting page (new tip version).
+  wikiPublish: (body: {
+    hubId: string
+    dmProjectId: string
+    itemId?: string
+    slug: string
+    markdown: string
+    baseVersion?: string
+    force?: boolean
+  }) => request<WikiPage>('/api/wiki/publish', { method: 'POST', body: JSON.stringify(body) }),
+
+  // wikiUploadImage stores an image under Wiki/<slug>/images/ and returns its
+  // item id, which wikiImageUrl turns into a same-origin <img> src.
+  wikiUploadImage: (fields: { hubId: string; dmProjectId: string; slug: string }, file: File) => {
+    const fd = new FormData()
+    fd.set('hubId', fields.hubId)
+    fd.set('dmProjectId', fields.dmProjectId)
+    fd.set('slug', fields.slug)
+    fd.set('file', file)
+    return request<WikiImageResult>('/api/wiki/image', { method: 'POST', body: fd })
+  },
+
+  // wikiRename renames a published page's file (and its images subfolder) to
+  // "<newSlug>.md". oldSlug locates the images subfolder; the lineage id is
+  // unchanged, so a linked draft keeps its base version.
+  wikiRename: (body: {
+    hubId: string
+    dmProjectId: string
+    itemId: string
+    oldSlug: string
+    newSlug: string
+  }) => request<WikiPage>('/api/wiki/rename', { method: 'POST', body: JSON.stringify(body) }),
+
+  wikiImageUrl: (dmProjectId: string, itemId: string) =>
+    `/api/wiki/image${qs({ dmProjectId, itemId })}`,
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

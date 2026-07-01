@@ -71,6 +71,10 @@ func (s *Server) routes() http.Handler {
 	// Wiki (project-scoped markdown pages in a project-root "Wiki" folder).
 	mux.HandleFunc("GET /api/wiki/pages", prot(s.handleWikiPages))
 	mux.HandleFunc("GET /api/wiki/page", prot(s.handleWikiPage))
+	mux.HandleFunc("POST /api/wiki/publish", prot(s.handleWikiPublish))
+	mux.HandleFunc("POST /api/wiki/rename", prot(s.handleWikiRename))
+	mux.HandleFunc("POST /api/wiki/image", prot(s.handleWikiImageUpload))
+	mux.HandleFunc("GET /api/wiki/image", prot(s.handleWikiImage))
 
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())

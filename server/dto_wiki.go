@@ -24,6 +24,37 @@ type WikiPageContentDTO struct {
 	Markdown string `json:"markdown"`
 }
 
+// WikiPublishRequest is the POST /api/wiki/publish body. itemId is the known
+// lineage urn of a linked draft (empty for a page never published from here);
+// baseVersion is the tip the draft was based on, for stale-overwrite detection;
+// force overrides a detected conflict.
+type WikiPublishRequest struct {
+	HubID       string `json:"hubId"`
+	DMProjectID string `json:"dmProjectId"`
+	ItemID      string `json:"itemId"`
+	Slug        string `json:"slug"`
+	Markdown    string `json:"markdown"`
+	BaseVersion string `json:"baseVersion"`
+	Force       bool   `json:"force"`
+}
+
+// WikiImageResult is returned by POST /api/wiki/image after an upload — the
+// stored image's lineage urn (referenced via GET /api/wiki/image) and file name.
+type WikiImageResult struct {
+	ItemID string `json:"itemId"`
+	Name   string `json:"name"`
+}
+
+// WikiRenameRequest is the POST /api/wiki/rename body. itemId is the published
+// page's lineage urn; oldSlug locates its images subfolder to rename alongside.
+type WikiRenameRequest struct {
+	HubID       string `json:"hubId"`
+	DMProjectID string `json:"dmProjectId"`
+	ItemID      string `json:"itemId"`
+	OldSlug     string `json:"oldSlug"`
+	NewSlug     string `json:"newSlug"`
+}
+
 // wikiTitle drops a trailing .md (any case) so the sidebar shows a clean title.
 func wikiTitle(name string) string {
 	if strings.HasSuffix(strings.ToLower(name), ".md") {

@@ -298,6 +298,13 @@ export interface WikiPageContent {
   markdown: string
 }
 
+// WikiImageResult is returned after uploading an image into a page's images
+// folder — the stored item's lineage urn and file name.
+export interface WikiImageResult {
+  itemId: string
+  name: string
+}
+
 // Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
 export interface Pin {
   id: string

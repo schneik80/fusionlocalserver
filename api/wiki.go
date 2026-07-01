@@ -268,43 +268,52 @@ func parseOSSObjectURN(urn string) (bucket, object string, ok bool) {
 	return bucket, object, bucket != "" && object != ""
 }
 
-// downloadOSSObject fetches an OSS object's bytes via a signed S3 download URL
-// and returns them as a string. Downloading an object we can read requires only
-// data:read.
+// downloadOSSObject fetches an OSS object's bytes as a string (used for markdown
+// pages). Downloading an object we can read requires only data:read.
 func downloadOSSObject(ctx context.Context, token, storageURN string) (string, error) {
+	data, _, err := downloadOSSObjectBytes(ctx, token, storageURN)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// downloadOSSObjectBytes fetches an OSS object via a signed S3 download URL and
+// returns its bytes and the content type S3 reports (set at upload time). Capped
+// at 32 MiB so a wiki image can't blow up the handler.
+func downloadOSSObjectBytes(ctx context.Context, token, storageURN string) ([]byte, string, error) {
 	bucket, object, ok := parseOSSObjectURN(storageURN)
 	if !ok {
-		return "", fmt.Errorf("unrecognised storage urn")
+		return nil, "", fmt.Errorf("unrecognised storage urn")
 	}
 	// Ask OSS for a signed S3 GET URL, then fetch the bytes from S3 directly.
 	signURL := fmt.Sprintf("%s/oss/v2/buckets/%s/objects/%s/signeds3download",
 		dmBaseURL, dmEscape(bucket), dmEscape(object))
 	body, err := dmGet(ctx, token, signURL)
 	if err != nil {
-		return "", fmt.Errorf("sign download: %w", err)
+		return nil, "", fmt.Errorf("sign download: %w", err)
 	}
 	var doc struct {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("sign download decode: %w", err)
+		return nil, "", fmt.Errorf("sign download decode: %w", err)
 	}
 	if doc.URL == "" {
-		return "", fmt.Errorf("sign download: no url in response")
+		return nil, "", fmt.Errorf("sign download: no url in response")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, doc.URL, nil)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	resp, err := httpClient.Do(req) // signed URL carries its own auth; no Bearer header
 	if err != nil {
-		return "", fmt.Errorf("download object: %w", err)
+		return nil, "", fmt.Errorf("download object: %w", err)
 	}
 	defer resp.Body.Close()
-	// Cap at 8 MiB — a wiki page is text, not a payload dump.
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download object -> HTTP %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("download object -> HTTP %d", resp.StatusCode)
 	}
-	return string(data), nil
+	return data, resp.Header.Get("Content-Type"), nil
 }

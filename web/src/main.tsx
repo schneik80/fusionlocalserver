@@ -45,7 +45,7 @@ createRoot(document.getElementById('root')!).render(
         persister,
         maxAge: DAY,
         // Bump when query shapes change to invalidate stale persisted caches.
-        buster: 'fls-7',
+        buster: 'fls-8',
         dehydrateOptions: {
           // Persist only successful, non-volatile queries. Auth state must stay
           // fresh (and persisting it could briefly show a prior user's state).
