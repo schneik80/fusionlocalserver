@@ -466,7 +466,11 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-// contentTypeForName maps a filename to a content type for upload/serving.
+// contentTypeForName maps a filename to a content type for upload/serving. It
+// covers the extensions the wiki uploads (markdown, images) plus the file types
+// the preview viewers serve (pdf, video, text, NC g-code), so the file handler
+// can label streamed bytes correctly regardless of what OSS stored — the
+// mime.TypeByExtension fallback is unreliable across platforms for these.
 func contentTypeForName(name string) string {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".md":
@@ -485,6 +489,36 @@ func contentTypeForName(name string) string {
 		return "image/bmp"
 	case ".ico":
 		return "image/x-icon"
+	case ".tif", ".tiff":
+		return "image/tiff"
+	case ".heic", ".heif":
+		return "image/heic"
+	case ".pdf":
+		return "application/pdf"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".ogv", ".ogg":
+		return "video/ogg"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".txt", ".log", ".ini", ".cfg":
+		return "text/plain; charset=utf-8"
+	case ".csv":
+		return "text/csv; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".xml":
+		return "application/xml; charset=utf-8"
+	// NC g-code and CNC program dialects — serve as plain text so the browser
+	// (and our text viewer) treats them as readable source, not a download.
+	case ".nc", ".cnc", ".ngc", ".gc", ".gcode", ".tap", ".ncp", ".mpf", ".spf", ".eia", ".min", ".h":
+		return "text/plain; charset=utf-8"
 	default:
 		if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 			return ct

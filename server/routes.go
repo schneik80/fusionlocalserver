@@ -33,6 +33,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
 	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
 	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))
+	// Raw bytes of an uploaded (non-native) file's tip, for the preview viewers.
+	mux.HandleFunc("GET /api/items/file", prot(s.handleFile))
 
 	// References.
 	mux.HandleFunc("GET /api/items/uses", prot(s.handleUses))

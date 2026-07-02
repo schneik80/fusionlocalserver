@@ -2,6 +2,7 @@ import { Box } from '@mui/material'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import rehypeSlug from 'rehype-slug'
 // highlight.js token theme for fenced code blocks. Light-mode palette for now;
 // swapping to a dark variant under the app's dark theme is a follow-up polish
 // item (the plan defers markdown-rendering refinements to a later iteration).
@@ -59,7 +60,7 @@ export function Markdown({ children }: { children: string }) {
         '& img': { maxWidth: '100%' },
       }}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug, rehypeHighlight]}>
         {children}
       </ReactMarkdown>
     </Box>

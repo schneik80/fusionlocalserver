@@ -17,7 +17,7 @@ import { api, ApiError } from '../api/client'
 import { useWikiPage, useWikiPages, useWikiPublish, useWikiRename } from '../api/queries'
 import { useNav } from '../state/nav'
 import { slugify, type WikiDraft } from './draftStore'
-import { Markdown } from './Markdown'
+import { MarkdownView } from './MarkdownView'
 import { useWikiDrafts } from './useDrafts'
 import { WikiEditor } from './WikiEditor'
 import { WikiSidebar, type WikiEntry, type WikiEntryStatus } from './WikiSidebar'
@@ -490,9 +490,7 @@ function DraftReader({
             : 'A newer version was published on another device.'}
         </Alert>
       )}
-      <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-        <Markdown>{draft.markdown}</Markdown>
-      </Box>
+      <MarkdownView>{draft.markdown}</MarkdownView>
     </Box>
   )
 }
@@ -547,19 +545,19 @@ function PublishedReader({
           </Button>
         )}
       </Stack>
-      <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-        {contentQ.isLoading ? (
-          <Box sx={{ p: 2, textAlign: 'center' }}>
-            <CircularProgress size={18} />
-          </Box>
-        ) : contentQ.error ? (
+      {contentQ.isLoading ? (
+        <Box sx={{ flex: 1, p: 2, textAlign: 'center' }}>
+          <CircularProgress size={18} />
+        </Box>
+      ) : contentQ.error ? (
+        <Box sx={{ flex: 1, p: 2 }}>
           <Alert severity="error" variant="outlined">
             Couldn't download this page.
           </Alert>
-        ) : (
-          <Markdown>{contentQ.data?.markdown ?? ''}</Markdown>
-        )}
-      </Box>
+        </Box>
+      ) : (
+        <MarkdownView>{contentQ.data?.markdown ?? ''}</MarkdownView>
+      )}
     </Box>
   )
 }

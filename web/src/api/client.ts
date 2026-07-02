@@ -114,6 +114,38 @@ export const api = {
   itemLocation: (hubId: string, itemId: string) =>
     request<Location>(`/api/items/location${qs({ hubId, itemId })}`),
 
+  // fileUrl is the same-origin URL streaming an uploaded (non-native) file's tip
+  // bytes, used directly as the src for <img>/<video> and by the PDF viewer. It
+  // carries the session cookie as a subresource; the server forwards Range so
+  // video/PDF can seek. dmProjectId is the project's altId, itemId its lineage
+  // urn. name is the file name *with extension* — the server derives the
+  // Content-Type from it, which the response's X-Content-Type-Options: nosniff
+  // makes mandatory for <img>/<video> to render (the stored version name can
+  // lack the extension).
+  fileUrl: (dmProjectId: string, itemId: string, name?: string) =>
+    `/api/items/file${qs({ dmProjectId, itemId, name })}`,
+
+  // fileText fetches an uploaded file's bytes as text for the source/code viewer.
+  // It returns tooLarge=true — without downloading the body — when the server
+  // caps the file (413) or it exceeds maxBytes, so the UI can offer a plain
+  // download instead of choking the editor on a huge blob.
+  fileText: async (
+    dmProjectId: string,
+    itemId: string,
+    maxBytes = 8 << 20,
+  ): Promise<{ text: string; tooLarge: boolean }> => {
+    const res = await fetch(api.fileUrl(dmProjectId, itemId), { credentials: 'same-origin' })
+    if (res.status === 401) {
+      redirectToLogin()
+      throw new ApiError(401, 'not authenticated')
+    }
+    if (res.status === 413) return { text: '', tooLarge: true }
+    if (!res.ok) throw new ApiError(res.status, `request failed (HTTP ${res.status})`)
+    const len = Number(res.headers.get('Content-Length') || '0')
+    if (len && len > maxBytes) return { text: '', tooLarge: true }
+    return { text: await res.text(), tooLarge: false }
+  },
+
   uses: (args: { cvId?: string; hubId?: string; drawingItemId?: string }) =>
     request<ComponentRef[]>(`/api/items/uses${qs(args)}`),
 

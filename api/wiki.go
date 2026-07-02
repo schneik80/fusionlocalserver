@@ -219,33 +219,12 @@ func DownloadWikiPage(ctx context.Context, token, dmProjectID, itemID string) (s
 }
 
 // versionStorageURN reads a version's OSS storage object urn
-// (urn:adsk.objects:os.object:<bucket>/<object>) from data/v1.
+// (urn:adsk.objects:os.object:<bucket>/<object>) from data/v1. The stored file
+// name is read too (see versionStorage in files.go); wiki callers only need the
+// urn.
 func versionStorageURN(ctx context.Context, token, dmProjectID, versionURN string) (string, error) {
-	u := fmt.Sprintf("%s/data/v1/projects/%s/versions/%s",
-		dmBaseURL, dmEscape(dmProjectID), dmEscape(versionURN))
-	body, err := dmGet(ctx, token, u)
-	if err != nil {
-		return "", fmt.Errorf("version storage: %w", err)
-	}
-	var doc struct {
-		Data struct {
-			Relationships struct {
-				Storage struct {
-					Data struct {
-						ID string `json:"id"`
-					} `json:"data"`
-				} `json:"storage"`
-			} `json:"relationships"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("version storage decode: %w", err)
-	}
-	id := doc.Data.Relationships.Storage.Data.ID
-	if id == "" {
-		return "", fmt.Errorf("version %s has no storage object", trimURL(versionURN))
-	}
-	return id, nil
+	urn, _, err := versionStorage(ctx, token, dmProjectID, versionURN)
+	return urn, err
 }
 
 // parseOSSObjectURN splits an OSS object urn
@@ -280,29 +259,14 @@ func downloadOSSObject(ctx context.Context, token, storageURN string) (string, e
 
 // downloadOSSObjectBytes fetches an OSS object via a signed S3 download URL and
 // returns its bytes and the content type S3 reports (set at upload time). Capped
-// at 32 MiB so a wiki image can't blow up the handler.
+// at 32 MiB so a wiki image can't blow up the handler. For streaming a file of
+// arbitrary size to the browser (with Range support), see OpenFile.
 func downloadOSSObjectBytes(ctx context.Context, token, storageURN string) ([]byte, string, error) {
-	bucket, object, ok := parseOSSObjectURN(storageURN)
-	if !ok {
-		return nil, "", fmt.Errorf("unrecognised storage urn")
-	}
-	// Ask OSS for a signed S3 GET URL, then fetch the bytes from S3 directly.
-	signURL := fmt.Sprintf("%s/oss/v2/buckets/%s/objects/%s/signeds3download",
-		dmBaseURL, dmEscape(bucket), dmEscape(object))
-	body, err := dmGet(ctx, token, signURL)
+	signedURL, err := signedS3DownloadURL(ctx, token, storageURN)
 	if err != nil {
-		return nil, "", fmt.Errorf("sign download: %w", err)
+		return nil, "", err
 	}
-	var doc struct {
-		URL string `json:"url"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, "", fmt.Errorf("sign download decode: %w", err)
-	}
-	if doc.URL == "" {
-		return nil, "", fmt.Errorf("sign download: no url in response")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, doc.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signedURL, nil)
 	if err != nil {
 		return nil, "", err
 	}

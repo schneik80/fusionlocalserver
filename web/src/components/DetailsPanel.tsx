@@ -51,10 +51,12 @@ import ActivityHeatmap from './ActivityHeatmap'
 import HistoryGraph from './HistoryGraph'
 import PermissionsExplorer from './PermissionsExplorer'
 import RelationGraph, { type GraphNode } from './RelationGraph'
+import { ViewerTab } from './viewers/ViewerTab'
 
 // The Details metadata is now always shown (in the header, beside the
 // thumbnail), so it is no longer a tab. The remaining tabs:
 type TabKey =
+  | 'preview'
   | 'history'
   | 'activity'
   | 'properties'
@@ -65,6 +67,7 @@ type TabKey =
   | 'permissions'
 
 const TAB_LABEL: Record<TabKey, string> = {
+  preview: 'Preview',
   history: 'History',
   activity: 'Activity',
   properties: 'Properties',
@@ -77,12 +80,15 @@ const TAB_LABEL: Record<TabKey, string> = {
 
 // Designs get the full set; configured designs add Properties + BOM; drawings
 // get Uses (the source design). Permissions (the project's groups + roles)
-// applies to any document; everything else is History only.
+// applies to any document. Uploaded (non-native) files lead with a Preview tab —
+// image/pdf/video/text viewers, or a download fallback — since they have no
+// design data; everything else is History only.
 function tabsFor(kind: string): TabKey[] {
   if (kind === 'design')
     return ['history', 'activity', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
   if (kind === 'configured') return ['history', 'activity', 'properties', 'bom', 'permissions']
   if (kind === 'drawing') return ['history', 'activity', 'uses', 'permissions']
+  if (kind === 'unknown') return ['preview', 'history']
   return ['history']
 }
 
@@ -146,13 +152,16 @@ function SelectedDetails({
   // this item; else default to History. Read once at mount — this component
   // remounts (key={item.id}) on every selection change.
   const [tab, setTab] = useState<TabKey>(
-    nav.selectedTab && available.includes(nav.selectedTab as TabKey) ? (nav.selectedTab as TabKey) : 'history',
+    nav.selectedTab && available.includes(nav.selectedTab as TabKey)
+      ? (nav.selectedTab as TabKey)
+      : available[0],
   )
 
   // Reset to a valid tab whenever the selected item (and thus its tab set)
-  // changes. key={item.id} already remounts this, but guard anyway.
+  // changes. key={item.id} already remounts this, but guard anyway. Falls back
+  // to the first available tab (Preview for uploaded files, else History).
   useEffect(() => {
-    if (!available.includes(tab)) setTab('history')
+    if (!available.includes(tab)) setTab(available[0])
   }, [available, tab])
 
   const detailsQ = useItemDetails(hubId, item.id)
@@ -270,6 +279,9 @@ function SelectedDetails({
       </Tabs>
 
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 2 }}>
+        {tab === 'preview' && (
+          <ViewerTab item={item} details={detailsQ.data} dmProjectId={projectAltId} />
+        )}
         {tab === 'history' && (
           <HistoryTab
             query={detailsQ.data}
