@@ -48,9 +48,12 @@ createRoot(document.getElementById('root')!).render(
         buster: 'fls-8',
         dehydrateOptions: {
           // Persist only successful, non-volatile queries. Auth state must stay
-          // fresh (and persisting it could briefly show a prior user's state).
+          // fresh (and persisting it could briefly show a prior user's state);
+          // upload jobs are live server state and are re-polled on load.
           shouldDehydrateQuery: (q) =>
-            q.state.status === 'success' && q.queryKey[0] !== 'authMe',
+            q.state.status === 'success' &&
+            q.queryKey[0] !== 'authMe' &&
+            q.queryKey[0] !== 'uploads',
         },
       }}
     >

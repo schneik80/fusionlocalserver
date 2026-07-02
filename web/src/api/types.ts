@@ -305,6 +305,30 @@ export interface WikiImageResult {
   name: string
 }
 
+// --- Uploads (mirror server/dto_upload.go) ---
+
+export type UploadStatus = 'queued' | 'uploading' | 'done' | 'error' | 'canceled'
+
+// UploadJob is one background file-upload job. bytesSent tracks the server→APS
+// transfer (the browser→server spool finished before the job existed).
+// hubId/projectId/folderId are the GraphQL ids echoed back from submission so
+// the client can invalidate the matching contents queries when the job lands.
+export interface UploadJob {
+  id: string
+  fileName: string
+  size: number
+  bytesSent: number
+  status: UploadStatus | string
+  error?: string
+  hubId?: string
+  projectId?: string
+  folderId?: string
+  dmProjectId?: string
+  folderPath: string[]
+  itemId?: string
+  createdOn?: string
+}
+
 // Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
 export interface Pin {
   id: string

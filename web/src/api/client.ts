@@ -23,6 +23,7 @@ import type {
   ProjectGroup,
   SetPortResponse,
   Thumbnail,
+  UploadJob,
   WikiImageResult,
   WikiPage,
   WikiPageContent,
@@ -263,6 +264,43 @@ export const api = {
 
   wikiImageUrl: (dmProjectId: string, itemId: string) =>
     `/api/wiki/image${qs({ dmProjectId, itemId })}`,
+
+  // Uploads: background file-upload jobs into a project folder. uploadFile
+  // spools the bytes to the local server and resolves as soon as the job is
+  // accepted; the APS-side transfer continues asynchronously and is observed by
+  // polling uploads(). The target fields go into the FormData BEFORE the file —
+  // the server reads them streaming and must know the target first. folderPath
+  // is the folder-name trail from the project root (empty = project root);
+  // projectId/folderId are the GraphQL ids echoed back for cache invalidation.
+  uploads: () => request<UploadJob[]>('/api/uploads'),
+
+  uploadFile: (
+    fields: {
+      hubId: string
+      dmProjectId: string
+      projectId?: string
+      folderId?: string
+      folderPath: string[]
+    },
+    file: File,
+  ) => {
+    const fd = new FormData()
+    fd.set('hubId', fields.hubId)
+    fd.set('dmProjectId', fields.dmProjectId)
+    if (fields.projectId) fd.set('projectId', fields.projectId)
+    if (fields.folderId) fd.set('folderId', fields.folderId)
+    fd.set('folderPath', JSON.stringify(fields.folderPath))
+    fd.set('file', file) // last: the server stops reading parts after the file
+    return request<UploadJob>('/api/uploads', { method: 'POST', body: fd })
+  },
+
+  cancelUpload: (id: string) =>
+    request<UploadJob[]>(`/api/uploads/cancel${qs({ id })}`, { method: 'POST' }),
+
+  // dismissUploads clears finished jobs (one by id, or all when omitted) and
+  // returns the refreshed list.
+  dismissUploads: (id?: string) =>
+    request<UploadJob[]>(`/api/uploads/dismiss${qs({ id })}`, { method: 'POST' }),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

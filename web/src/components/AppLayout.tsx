@@ -27,6 +27,8 @@ import { HubSwitcher } from './HubSwitcher'
 import { NavRail } from './NavRail'
 import { PinsDialog } from './PinsDialog'
 import { SettingsDialog } from './SettingsDialog'
+import { UploadDialog } from './UploadDialog'
+import { UploadDropOverlay, UploadFooter } from './UploadFooter'
 
 type DialogKind = 'hubs' | 'pins' | 'settings' | null
 
@@ -139,6 +141,9 @@ export function AppLayout() {
       <HubSwitcher open={dialog === 'hubs'} onClose={() => setDialog(null)} />
       <PinsDialog open={dialog === 'pins'} onClose={() => setDialog(null)} />
       <SettingsDialog open={dialog === 'settings'} onClose={() => setDialog(null)} />
+      <UploadDialog />
+      <UploadFooter />
+      <UploadDropOverlay />
     </Box>
   )
 }

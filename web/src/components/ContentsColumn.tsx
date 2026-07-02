@@ -1,11 +1,12 @@
-import { IconButton, Menu, MenuItem, Tooltip } from '@mui/material'
+import { Box, IconButton, Menu, MenuItem, Tooltip } from '@mui/material'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowDownWideShort } from '@fortawesome/free-solid-svg-icons'
+import { faArrowDownWideShort, faCloudArrowUp } from '@fortawesome/free-solid-svg-icons'
 import { useState } from 'react'
 import { useFolderContents, useProjectContents } from '../api/queries'
 import type { Item } from '../api/types'
 import { useNav } from '../state/nav'
 import { usePinToggle } from '../state/pins'
+import { useUploads } from '../state/uploads'
 import { Column } from './Column'
 import { ItemRow } from './ItemRow'
 
@@ -65,6 +66,7 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (v: SortKey) 
 export function ContentsColumn() {
   const nav = useNav()
   const { pinnedIds, toggle } = usePinToggle()
+  const uploads = useUploads()
   const [sort, setSort] = useState<SortKey>('name')
 
   const atRoot = nav.folderStack.length === 0
@@ -90,7 +92,25 @@ export function ContentsColumn() {
     <Column
       title="Contents"
       flex={1}
-      action={list.length > 0 ? <SortMenu value={sort} onChange={setSort} /> : undefined}
+      action={
+        uploads.target || list.length > 0 ? (
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            {uploads.target && (
+              <Tooltip title="Upload files here">
+                <IconButton
+                  size="small"
+                  aria-label="Upload files"
+                  onClick={uploads.openDialog}
+                  sx={{ color: 'text.secondary' }}
+                >
+                  <FontAwesomeIcon icon={faCloudArrowUp} style={{ fontSize: 12 }} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {list.length > 0 && <SortMenu value={sort} onChange={setSort} />}
+          </Box>
+        ) : undefined
+      }
       loading={activeQ.isLoading}
       error={activeQ.error as Error | null}
       empty={!activeQ.isLoading && list.length === 0}

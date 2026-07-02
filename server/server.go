@@ -102,6 +102,9 @@ type Server struct {
 	// kicked off from the classify probe.
 	thumbs  *thumbCache
 	warmSem chan struct{}
+
+	// uploads tracks background file-upload jobs (per-session; see uploads.go).
+	uploads *uploadManager
 }
 
 // serveReason explains why the inner serve loop returned.
@@ -151,6 +154,7 @@ func Run(opts Options) error {
 		restartCh:        make(chan struct{}, 1),
 		thumbs:           newThumbCache(512, 10*time.Minute),
 		warmSem:          make(chan struct{}, 12),
+		uploads:          newUploadManager(uploadConcurrency),
 	}
 
 	// A canonical public URL fixes the OAuth redirect_uri (one APS registration)
