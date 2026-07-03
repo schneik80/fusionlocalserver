@@ -11,6 +11,9 @@ export interface Meta {
 
 // AuthMe mirrors server.AuthMeDTO (GET /api/auth/me): the login-state probe.
 export interface AuthUser {
+  // id is the OIDC subject (stable Autodesk user id); chat uses it for
+  // own-message affordances. Empty when the profile fetch failed at login.
+  id: string
   name: string
   email: string
 }

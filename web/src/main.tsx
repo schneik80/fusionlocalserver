@@ -49,8 +49,12 @@ createRoot(document.getElementById('root')!).render(
         dehydrateOptions: {
           // Persist only successful, non-volatile queries. Auth state must stay
           // fresh (and persisting it could briefly show a prior user's state).
+          // Chat never persists: it's realtime data, and private-channel
+          // content must not linger in shared-machine localStorage.
           shouldDehydrateQuery: (q) =>
-            q.state.status === 'success' && q.queryKey[0] !== 'authMe',
+            q.state.status === 'success' &&
+            q.queryKey[0] !== 'authMe' &&
+            !String(q.queryKey[0]).startsWith('chat'),
         },
       }}
     >

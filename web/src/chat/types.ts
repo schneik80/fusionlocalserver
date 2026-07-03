@@ -1,6 +1,5 @@
-// Chat DTO shapes (docs/chat/PLAN.md, phase 1). Placeholder module: the
-// Chat tab (ChatApp, ChannelSidebar, MessageList, MessageComposer) mirrors
-// web/src/wiki/* from the wiki branch and lands with phase 1.
+// TypeScript mirrors of the chat DTOs in server/dto_chat.go. Keep field
+// names in sync with the json tags there.
 
 export interface ChatChannel {
   id: string
@@ -11,6 +10,7 @@ export interface ChatChannel {
   createdBy: string
   createdAt: string
   archivedAt?: string
+  memberIds?: string[]
 }
 
 export interface ChatReaction {
@@ -28,8 +28,28 @@ export interface ChatMessage {
   body: string
   createdAt: string
   editedAt?: string
-  deletedAt?: string
+  deleted: boolean
   replyCount: number
   lastReplyAt?: string
   reactions: ChatReaction[]
+}
+
+// ChatCaps is what the signed-in user may do in this project's chat,
+// derived server-side from their APS project role.
+export interface ChatCaps {
+  post: boolean
+  createChannel: boolean
+  moderate: boolean
+}
+
+export interface ChatChannelList {
+  channels: ChatChannel[]
+  capabilities: ChatCaps
+}
+
+export interface ChatMessageList {
+  messages: ChatMessage[]
+  // latestSeq is the channel's newest seq — the polling cursor once SSE
+  // recovery (phase 2/3) starts using afterSeq deltas.
+  latestSeq: number
 }

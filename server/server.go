@@ -15,12 +15,14 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/schneik80/fusionlocalserver/api"
+	"github.com/schneik80/fusionlocalserver/chat"
 	"github.com/schneik80/fusionlocalserver/config"
 	"github.com/schneik80/fusionlocalserver/pins"
 )
@@ -102,6 +104,14 @@ type Server struct {
 	// kicked off from the classify probe.
 	thumbs  *thumbCache
 	warmSem chan struct{}
+
+	// chat is the file-backed project chat store (nil when the config dir is
+	// unavailable; chat endpoints then reply 503), with its APS-role-backed
+	// authorizer and per-session rate limits for messages and channel ops.
+	chat       *chat.Store
+	chatAuthz  *chat.Authorizer
+	chatMsgLim *chat.Limiter
+	chatOpLim  *chat.Limiter
 }
 
 // serveReason explains why the inner serve loop returned.
@@ -171,6 +181,20 @@ func Run(opts Options) error {
 	} else if lerr := s.sessions.EnablePersistence(dir); lerr != nil {
 		logger.Warn("sessions: could not load persisted sessions", "err", lerr)
 	}
+
+	// Chat store (message logs live under <config>/chat/<project>/). Rate
+	// limits are per session: messages 2/s with burst 5, channel ops 10/min.
+	if dir, derr := config.Dir(); derr != nil {
+		logger.Warn("chat: disabled (config dir unavailable)", "err", derr)
+	} else if cs, cerr := chat.NewStore(filepath.Join(dir, "chat")); cerr != nil {
+		logger.Warn("chat: disabled (store init failed)", "err", cerr)
+	} else {
+		s.chat = cs
+		defer cs.Close()
+	}
+	s.chatAuthz = chat.NewAuthorizer()
+	s.chatMsgLim = chat.NewLimiter(2, 5)
+	s.chatOpLim = chat.NewLimiter(10.0/60.0, 10)
 
 	// Resolve TLS once, before the bind loop spans restarts. A self-signed
 	// cert is generated/cached when -tls is given without a cert pair.

@@ -25,6 +25,7 @@ import type {
   ProjectGroup,
   Thumbnail,
 } from './types'
+import type { ChatChannelList, ChatMessageList } from '../chat/types'
 
 // Data fetched here is effectively static for a browsing session, so cache
 // generously and don't refetch on window focus. enabled flags gate queries on
@@ -324,4 +325,96 @@ export function usePinMutations(hubId: string | null) {
     },
   })
   return { add, remove }
+}
+
+// ---- chat (docs/chat/PLAN.md, phase 1) ----
+// Chat is deliberately volatile: nothing here persists to localStorage (see
+// the dehydrate filter in main.tsx) and the active channel polls every 2s —
+// the same cadence as the thumbnail poller — until the SSE stream replaces
+// polling in phase 2/3. `active` gates polling to the visible Chat tab.
+
+export const useChatChannels = (
+  projectId: string | null,
+  active: boolean,
+): UseQueryResult<ChatChannelList> =>
+  useQuery({
+    queryKey: ['chatChannels', projectId],
+    queryFn: () => api.chatChannels(projectId!),
+    enabled: active && !!projectId,
+    staleTime: 0,
+    refetchInterval: active ? 10_000 : false,
+  })
+
+export const useChatMessages = (
+  projectId: string | null,
+  channelId: string | null,
+  active: boolean,
+): UseQueryResult<ChatMessageList> =>
+  useQuery({
+    queryKey: ['chatMessages', projectId, channelId],
+    queryFn: () => api.chatMessages(projectId!, channelId!),
+    enabled: active && !!projectId && !!channelId,
+    staleTime: 0,
+    refetchInterval: active ? 2000 : false,
+  })
+
+export const useChatThread = (
+  projectId: string | null,
+  channelId: string | null,
+  rootSeq: number | null,
+  active: boolean,
+): UseQueryResult<ChatMessageList> =>
+  useQuery({
+    queryKey: ['chatThread', projectId, channelId, rootSeq],
+    queryFn: () => api.chatThread(projectId!, channelId!, rootSeq!),
+    enabled: active && !!projectId && !!channelId && rootSeq !== null,
+    staleTime: 0,
+    refetchInterval: active ? 2000 : false,
+  })
+
+// useChatMutations bundles the write paths for one channel. Sends carry a
+// fresh clientMsgId so a retried POST can never double-post (the server
+// answers the replay with the original message).
+export function useChatMutations(projectId: string | null, channelId: string | null) {
+  const qc = useQueryClient()
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['chatMessages', projectId, channelId] })
+    void qc.invalidateQueries({ queryKey: ['chatThread', projectId, channelId] })
+  }
+
+  const send = useMutation({
+    mutationFn: (args: { body: string; threadRootSeq?: number }) =>
+      api.chatSend(projectId!, channelId!, {
+        body: args.body,
+        clientMsgId: crypto.randomUUID(),
+        threadRootSeq: args.threadRootSeq,
+      }),
+    onSuccess: invalidate,
+  })
+  const edit = useMutation({
+    mutationFn: (args: { seq: number; body: string }) =>
+      api.chatEditMessage(projectId!, channelId!, args.seq, args.body),
+    onSuccess: invalidate,
+  })
+  const remove = useMutation({
+    mutationFn: (seq: number) => api.chatDeleteMessage(projectId!, channelId!, seq),
+    onSuccess: invalidate,
+  })
+  const react = useMutation({
+    mutationFn: (args: { seq: number; emoji: string; on: boolean }) =>
+      args.on
+        ? api.chatReact(projectId!, channelId!, args.seq, args.emoji)
+        : api.chatUnreact(projectId!, channelId!, args.seq, args.emoji),
+    onSuccess: invalidate,
+  })
+  return { send, edit, remove, react }
+}
+
+export const useCreateChatChannel = (projectId: string | null) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; topic?: string; isPrivate?: boolean }) =>
+      api.chatCreateChannel(projectId!, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] }),
+  })
 }

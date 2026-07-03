@@ -12,11 +12,18 @@ import (
 const testProject = "urn:adsk.wipprod:fs.folder:co.example/123"
 
 func newTestStore(t *testing.T) *Store {
+	return newStoreAt(t, t.TempDir())
+}
+
+// newStoreAt opens a Store over dir and registers its Close as cleanup —
+// Windows can't remove the TempDir while message-log handles are open.
+func newStoreAt(t *testing.T, dir string) *Store {
 	t.Helper()
-	s, err := NewStore(t.TempDir())
+	s, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
+	t.Cleanup(s.Close)
 	return s
 }
 

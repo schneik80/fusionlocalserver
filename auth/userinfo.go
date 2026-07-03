@@ -12,9 +12,11 @@ import (
 var userInfoEndpoint = "https://api.userprofile.autodesk.com/userinfo"
 
 // UserProfile is the minimal identity shown in the web UI for a logged-in
-// session. Both fields are best-effort: a profile fetch that fails leaves them
-// empty rather than blocking login.
+// session. All fields are best-effort: a profile fetch that fails leaves them
+// empty rather than blocking login. Sub is the OIDC subject — the stable
+// Autodesk user id — used as the author identity for chat messages.
 type UserProfile struct {
+	Sub   string `json:"sub"`
 	Name  string `json:"name"`
 	Email string `json:"email"`
 }
@@ -46,6 +48,7 @@ func FetchUserProfile(ctx context.Context, accessToken string) (UserProfile, err
 	// APS userinfo returns OIDC claims; name/email are present for the
 	// user-profile:read scope. Tolerate either OIDC or legacy field names.
 	var u struct {
+		Sub       string `json:"sub"`
 		Name      string `json:"name"`
 		Email     string `json:"email"`
 		UserName  string `json:"userName"`
@@ -57,7 +60,7 @@ func FetchUserProfile(ctx context.Context, accessToken string) (UserProfile, err
 		return UserProfile{}, fmt.Errorf("parsing userinfo: %w", err)
 	}
 
-	p := UserProfile{Name: u.Name, Email: u.Email}
+	p := UserProfile{Sub: u.Sub, Name: u.Name, Email: u.Email}
 	if p.Name == "" {
 		if u.UserName != "" {
 			p.Name = u.UserName

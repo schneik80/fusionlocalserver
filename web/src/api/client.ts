@@ -24,6 +24,7 @@ import type {
   SetPortResponse,
   Thumbnail,
 } from './types'
+import type { ChatChannel, ChatChannelList, ChatMessage, ChatMessageList } from '../chat/types'
 
 export class ApiError extends Error {
   status: number
@@ -178,6 +179,74 @@ export const api = {
     }
     return request<PermLayer[]>(`/api/permissions/path?${p.toString()}`)
   },
+
+  // Chat (docs/chat/PLAN.md, phase 1): per-project channels + threaded
+  // messages. Reads poll until the SSE stream lands in phase 2.
+  chatChannels: (projectId: string) =>
+    request<ChatChannelList>(`/api/chat/channels${qs({ projectId })}`),
+
+  chatCreateChannel: (
+    projectId: string,
+    body: { name: string; topic?: string; isPrivate?: boolean; memberIds?: string[] },
+  ) =>
+    request<ChatChannel>(`/api/chat/channels${qs({ projectId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  chatMessages: (
+    projectId: string,
+    channelId: string,
+    opts?: { beforeSeq?: number; afterSeq?: number; limit?: number },
+  ) =>
+    request<ChatMessageList>(
+      `/api/chat/messages${qs({
+        projectId,
+        channelId,
+        beforeSeq: opts?.beforeSeq ? String(opts.beforeSeq) : undefined,
+        afterSeq: opts?.afterSeq !== undefined ? String(opts.afterSeq) : undefined,
+        limit: opts?.limit ? String(opts.limit) : undefined,
+      })}`,
+    ),
+
+  chatSend: (
+    projectId: string,
+    channelId: string,
+    body: { body: string; clientMsgId: string; threadRootSeq?: number },
+  ) =>
+    request<ChatMessage>(`/api/chat/messages${qs({ projectId, channelId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  chatEditMessage: (projectId: string, channelId: string, seq: number, body: string) =>
+    request<ChatMessage>(
+      `/api/chat/messages${qs({ projectId, channelId, seq: String(seq) })}`,
+      { method: 'PATCH', body: JSON.stringify({ body }) },
+    ),
+
+  chatDeleteMessage: (projectId: string, channelId: string, seq: number) =>
+    request<ChatMessage>(
+      `/api/chat/messages${qs({ projectId, channelId, seq: String(seq) })}`,
+      { method: 'DELETE' },
+    ),
+
+  chatThread: (projectId: string, channelId: string, rootSeq: number) =>
+    request<ChatMessageList>(
+      `/api/chat/thread${qs({ projectId, channelId, rootSeq: String(rootSeq) })}`,
+    ),
+
+  chatReact: (projectId: string, channelId: string, seq: number, emoji: string) =>
+    request<ChatMessage>(
+      `/api/chat/reactions${qs({ projectId, channelId, seq: String(seq), emoji })}`,
+      { method: 'POST' },
+    ),
+
+  chatUnreact: (projectId: string, channelId: string, seq: number, emoji: string) =>
+    request<ChatMessage>(
+      `/api/chat/reactions${qs({ projectId, channelId, seq: String(seq), emoji })}`,
+      { method: 'DELETE' },
+    ),
 
   pins: (hubId: string) => request<Pin[]>(`/api/pins${qs({ hubId })}`),
 

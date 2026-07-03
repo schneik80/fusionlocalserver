@@ -1,0 +1,183 @@
+import { faComments, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { Avatar, Box, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { useEffect, useRef } from 'react'
+import type { ChatCaps, ChatMessage } from './types'
+import { fmtChatTime } from './fmt'
+
+// MessageList renders a scrollable, ascending timeline. It backs both the
+// channel view (top-level messages with thread badges) and the thread panel
+// (root + replies, no badges). New messages keep the view pinned to the
+// bottom unless the user has scrolled up to read history. Bodies render as
+// plain text only (React escaping; no HTML/markdown) — see the XSS notes in
+// docs/chat/PLAN.md.
+export function MessageList({
+  messages,
+  meId,
+  caps,
+  emptyText,
+  onOpenThread,
+  onDelete,
+  onToggleReaction,
+}: {
+  messages: ChatMessage[]
+  meId: string
+  caps: ChatCaps
+  emptyText: string
+  onOpenThread?: (rootSeq: number) => void
+  onDelete: (seq: number) => void
+  onToggleReaction: (seq: number, emoji: string, on: boolean) => void
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const pinnedRef = useRef(true)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
+  return (
+    <Box
+      ref={scrollRef}
+      onScroll={(e) => {
+        const el = e.currentTarget
+        pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+      }}
+      sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1.5, py: 1 }}
+    >
+      {messages.length === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+          {emptyText}
+        </Typography>
+      )}
+      {messages.map((m) => (
+        <MessageRow
+          key={m.seq}
+          msg={m}
+          meId={meId}
+          canModerate={caps.moderate}
+          canReact={caps.post}
+          onOpenThread={onOpenThread}
+          onDelete={onDelete}
+          onToggleReaction={onToggleReaction}
+        />
+      ))}
+    </Box>
+  )
+}
+
+function MessageRow({
+  msg,
+  meId,
+  canModerate,
+  canReact,
+  onOpenThread,
+  onDelete,
+  onToggleReaction,
+}: {
+  msg: ChatMessage
+  meId: string
+  canModerate: boolean
+  canReact: boolean
+  onOpenThread?: (rootSeq: number) => void
+  onDelete: (seq: number) => void
+  onToggleReaction: (seq: number, emoji: string, on: boolean) => void
+}) {
+  const own = meId !== '' && msg.authorId === meId
+
+  // Group reactions into per-emoji chips, marking the ones I placed.
+  const grouped = new Map<string, { count: number; mine: boolean }>()
+  for (const r of msg.reactions) {
+    const g = grouped.get(r.emoji) ?? { count: 0, mine: false }
+    g.count++
+    if (meId !== '' && r.userId === meId) g.mine = true
+    grouped.set(r.emoji, g)
+  }
+
+  return (
+    <Stack
+      direction="row"
+      spacing={1.25}
+      sx={{
+        py: 0.75,
+        px: 0.5,
+        borderRadius: 1,
+        '&:hover': { bgcolor: 'action.hover' },
+        '&:hover .msg-actions': { opacity: 1 },
+      }}
+    >
+      <Avatar sx={{ width: 28, height: 28, fontSize: 13, mt: 0.25 }}>
+        {(msg.authorName || '?').slice(0, 1).toUpperCase()}
+      </Avatar>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Stack direction="row" spacing={1} alignItems="baseline">
+          <Typography variant="subtitle2" noWrap>
+            {msg.authorName || 'Unknown'}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {fmtChatTime(msg.createdAt)}
+          </Typography>
+          {msg.editedAt && !msg.deleted && (
+            <Typography variant="caption" color="text.secondary">
+              (edited)
+            </Typography>
+          )}
+          <Box sx={{ flex: 1 }} />
+          <Stack
+            direction="row"
+            className="msg-actions"
+            sx={{ opacity: 0, transition: 'opacity 120ms' }}
+          >
+            {onOpenThread && !msg.deleted && (
+              <Tooltip title="Reply in thread">
+                <IconButton size="small" onClick={() => onOpenThread(msg.seq)}>
+                  <FontAwesomeIcon icon={faComments} size="xs" />
+                </IconButton>
+              </Tooltip>
+            )}
+            {(own || canModerate) && !msg.deleted && (
+              <Tooltip title="Delete message">
+                <IconButton size="small" onClick={() => onDelete(msg.seq)}>
+                  <FontAwesomeIcon icon={faTrash} size="xs" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Stack>
+        </Stack>
+        {msg.deleted ? (
+          <Typography variant="body2" color="text.disabled" fontStyle="italic">
+            message deleted
+          </Typography>
+        ) : (
+          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {msg.body}
+          </Typography>
+        )}
+        {(grouped.size > 0 || false) && (
+          <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
+            {[...grouped.entries()].map(([emoji, g]) => (
+              <Chip
+                key={emoji}
+                size="small"
+                variant={g.mine ? 'filled' : 'outlined'}
+                label={`${emoji} ${g.count}`}
+                onClick={canReact ? () => onToggleReaction(msg.seq, emoji, !g.mine) : undefined}
+              />
+            ))}
+          </Stack>
+        )}
+        {onOpenThread && msg.replyCount > 0 && (
+          <Chip
+            size="small"
+            variant="outlined"
+            color="primary"
+            icon={<FontAwesomeIcon icon={faComments} size="xs" />}
+            label={`${msg.replyCount} ${msg.replyCount === 1 ? 'reply' : 'replies'}`}
+            onClick={() => onOpenThread(msg.seq)}
+            sx={{ mt: 0.5 }}
+          />
+        )}
+      </Box>
+    </Stack>
+  )
+}

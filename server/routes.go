@@ -63,8 +63,22 @@ func (s *Server) routes() http.Handler {
 	// probe for discovering how a version exposes its root component version.
 	mux.HandleFunc("GET /api/debug/version-probe", prot(s.handleDebugVersionProbe))
 
-	// Chat (docs/chat/PLAN.md; scaffold — returns 501 until phase 1 lands).
+	// Chat (docs/chat/PLAN.md, phase 1). REST + client polling; the SSE
+	// event stream lands in phase 2. URN-style ids ride query params, per
+	// the repo-wide convention.
 	mux.HandleFunc("GET /api/chat/channels", prot(s.handleChatChannels))
+	mux.HandleFunc("POST /api/chat/channels", prot(s.handleChatChannelCreate))
+	mux.HandleFunc("PATCH /api/chat/channels", prot(s.handleChatChannelUpdate))
+	mux.HandleFunc("DELETE /api/chat/channels", prot(s.handleChatChannelArchive))
+	mux.HandleFunc("POST /api/chat/channels/members", prot(s.handleChatMemberAdd))
+	mux.HandleFunc("DELETE /api/chat/channels/members", prot(s.handleChatMemberRemove))
+	mux.HandleFunc("GET /api/chat/messages", prot(s.handleChatMessages))
+	mux.HandleFunc("POST /api/chat/messages", prot(s.handleChatMessageCreate))
+	mux.HandleFunc("PATCH /api/chat/messages", prot(s.handleChatMessageEdit))
+	mux.HandleFunc("DELETE /api/chat/messages", prot(s.handleChatMessageDelete))
+	mux.HandleFunc("GET /api/chat/thread", prot(s.handleChatThread))
+	mux.HandleFunc("POST /api/chat/reactions", prot(s.handleChatReactionAdd))
+	mux.HandleFunc("DELETE /api/chat/reactions", prot(s.handleChatReactionRemove))
 
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))

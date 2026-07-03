@@ -27,14 +27,24 @@ var (
 )
 
 // tokenCtxKey carries the per-request APS access token that requireAuth
-// resolves from the session. Private type so no other package can collide.
+// resolves from the session; sessionCtxKey carries the session itself, for
+// handlers (chat) that need the caller's identity, not just their token.
+// Private type so no other package can collide.
 type ctxKey int
 
-const tokenCtxKey ctxKey = iota
+const (
+	tokenCtxKey ctxKey = iota
+	sessionCtxKey
+)
 
 func tokenFromCtx(ctx context.Context) (string, bool) {
 	t, ok := ctx.Value(tokenCtxKey).(string)
 	return t, ok && t != ""
+}
+
+func sessionFromCtx(ctx context.Context) (*Session, bool) {
+	s, ok := ctx.Value(sessionCtxKey).(*Session)
+	return s, ok && s != nil
 }
 
 // AuthMeDTO is the GET /api/auth/me response: the SPA's login-state probe.
@@ -43,8 +53,11 @@ type AuthMeDTO struct {
 	User          *UserDTO `json:"user,omitempty"`
 }
 
-// UserDTO is the minimal logged-in identity shown in the web UI.
+// UserDTO is the minimal logged-in identity shown in the web UI. ID is the
+// OIDC subject (stable Autodesk user id); the SPA uses it for own-message
+// affordances in chat. Empty when the profile fetch failed at login.
 type UserDTO struct {
+	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Email string `json:"email"`
 }
@@ -199,7 +212,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, AuthMeDTO{
 		Authenticated: true,
-		User:          &UserDTO{Name: sess.Profile.Name, Email: sess.Profile.Email},
+		User:          &UserDTO{ID: sess.Profile.Sub, Name: sess.Profile.Name, Email: sess.Profile.Email},
 	})
 }
 
@@ -231,6 +244,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), tokenCtxKey, tok)
+		ctx = context.WithValue(ctx, sessionCtxKey, sess)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

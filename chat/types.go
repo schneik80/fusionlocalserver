@@ -31,7 +31,6 @@ type Channel struct {
 	CreatedBy  string          `json:"createdBy"` // author id; empty for the auto-created root
 	CreatedAt  time.Time       `json:"createdAt"`
 	ArchivedAt *time.Time      `json:"archivedAt,omitempty"`
-	NextMsgSeq int64           `json:"nextMsgSeq"` // next per-channel message sequence number
 	Members    []ChannelMember `json:"members,omitempty"`
 }
 
