@@ -63,6 +63,9 @@ func (s *Server) routes() http.Handler {
 	// probe for discovering how a version exposes its root component version.
 	mux.HandleFunc("GET /api/debug/version-probe", prot(s.handleDebugVersionProbe))
 
+	// Chat (docs/chat/PLAN.md; scaffold — returns 501 until phase 1 lands).
+	mux.HandleFunc("GET /api/chat/channels", prot(s.handleChatChannels))
+
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))
