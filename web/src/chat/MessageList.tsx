@@ -102,6 +102,8 @@ function MessageRow({
         py: 0.75,
         px: 0.5,
         borderRadius: 1,
+        // Optimistic copies render dimmed until the server echo replaces them.
+        opacity: msg.pending ? 0.55 : 1,
         '&:hover': { bgcolor: 'action.hover' },
         '&:hover .msg-actions': { opacity: 1 },
       }}
@@ -128,14 +130,14 @@ function MessageRow({
             className="msg-actions"
             sx={{ opacity: 0, transition: 'opacity 120ms' }}
           >
-            {onOpenThread && !msg.deleted && (
+            {onOpenThread && !msg.deleted && !msg.pending && (
               <Tooltip title="Reply in thread">
                 <IconButton size="small" onClick={() => onOpenThread(msg.seq)}>
                   <FontAwesomeIcon icon={faComments} size="xs" />
                 </IconButton>
               </Tooltip>
             )}
-            {(own || canModerate) && !msg.deleted && (
+            {(own || canModerate) && !msg.deleted && !msg.pending && (
               <Tooltip title="Delete message">
                 <IconButton size="small" onClick={() => onDelete(msg.seq)}>
                   <FontAwesomeIcon icon={faTrash} size="xs" />

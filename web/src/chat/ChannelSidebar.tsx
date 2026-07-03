@@ -30,12 +30,16 @@ export function ChannelSidebar({
   channels,
   currentId,
   caps,
+  unseen,
   onSelect,
 }: {
   projectId: string | null
   channels: ChatChannel[]
   currentId: string | null
   caps: ChatCaps
+  // unseen channels (activity since the user last viewed them) render bold
+  // with a dot — fed by channel.activity SSE events.
+  unseen: Set<string>
   onSelect: (id: string) => void
 }) {
   const [createOpen, setCreateOpen] = useState(false)
@@ -78,8 +82,23 @@ export function ChannelSidebar({
             <ListItemText
               primary={ch.name}
               secondary={ch.archivedAt ? 'archived' : undefined}
-              primaryTypographyProps={{ noWrap: true, fontSize: 14 }}
+              primaryTypographyProps={{
+                noWrap: true,
+                fontSize: 14,
+                fontWeight: unseen.has(ch.id) ? 700 : undefined,
+              }}
             />
+            {unseen.has(ch.id) && (
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  bgcolor: 'primary.main',
+                  flexShrink: 0,
+                }}
+              />
+            )}
           </ListItemButton>
         ))}
       </List>

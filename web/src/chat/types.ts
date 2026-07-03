@@ -11,6 +11,11 @@ export interface ChatChannel {
   createdAt: string
   archivedAt?: string
   memberIds?: string[]
+  // lastActivitySeq is CLIENT-ONLY: patched into the cache by
+  // channel.activity SSE events, never sent by REST. The sidebar compares
+  // it against the last seq the user saw to bold channels with unseen
+  // activity (proper read cursors land in phase 4).
+  lastActivitySeq?: number
 }
 
 export interface ChatReaction {
@@ -32,6 +37,11 @@ export interface ChatMessage {
   replyCount: number
   lastReplyAt?: string
   reactions: ChatReaction[]
+  // pending is CLIENT-ONLY: true on the optimistic copy shown between
+  // hitting send and the server's echo (REST response or SSE event,
+  // whichever lands first — both reconcile on clientMsgId). Pending
+  // messages carry a negative placeholder seq.
+  pending?: boolean
 }
 
 // ChatCaps is what the signed-in user may do in this project's chat,
@@ -52,4 +62,34 @@ export interface ChatMessageList {
   // latestSeq is the channel's newest seq — the polling cursor once SSE
   // recovery (phase 2/3) starts using afterSeq deltas.
   latestSeq: number
+}
+
+// ---- SSE event payloads (mirror server/dto_chat.go's ChatXxxEventDTO) ----
+
+// ChatEvent is the {type, v, data} envelope every frame carries
+// (design doc §3).
+export interface ChatEvent {
+  type: string
+  v: number
+  data: unknown
+}
+
+export interface ChatMessageEvent {
+  channelId: string
+  message: ChatMessage
+}
+
+export interface ChatChannelEvent {
+  channel: ChatChannel
+}
+
+export interface ChatMemberEvent {
+  channelId: string
+  userId: string
+  channel: ChatChannel
+}
+
+export interface ChatActivityEvent {
+  channelId: string
+  lastMessageSeq: number
 }

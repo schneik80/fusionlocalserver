@@ -14,6 +14,7 @@ export function ThreadPanel({
   channelId,
   rootSeq,
   active,
+  live,
   meId,
   caps,
   archived,
@@ -27,6 +28,7 @@ export function ThreadPanel({
   channelId: string | null
   rootSeq: number
   active: boolean
+  live: boolean
   meId: string
   caps: ChatCaps
   archived: boolean
@@ -36,7 +38,7 @@ export function ThreadPanel({
   onToggleReaction: (seq: number, emoji: string, on: boolean) => void
   sending: boolean
 }) {
-  const threadQ = useChatThread(projectId, channelId, rootSeq, active)
+  const threadQ = useChatThread(projectId, channelId, rootSeq, active, live)
   const messages = threadQ.data?.messages ?? []
 
   return (

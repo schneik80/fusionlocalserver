@@ -18,20 +18,27 @@ import type { ChatCaps } from './types'
 const NO_CAPS: ChatCaps = { post: false, createChannel: false, moderate: false }
 
 // ChatApp is the Chat tab's content: channel sidebar, message timeline,
-// composer, and an optional thread panel. Phase 1 transport is polling (2s
-// on the open channel, gated to the visible tab via `active`); the SSE
-// stream replaces it in phases 2–3 (docs/chat/PLAN.md).
-export function ChatApp({ active }: { active: boolean }) {
+// composer, and an optional thread panel. Transport is the project's SSE
+// stream (opened by ProjectPanel; `live` reports its health) writing into
+// the react-query caches; the 2s polling from phase 1 survives only as the
+// fallback while the stream is down. `active` gates fetching to the
+// visible tab.
+export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
   const nav = useNav()
   const projectId = nav.project?.id ?? null
   const meId = useAuthMe().data?.user?.id ?? ''
 
-  const channelsQ = useChatChannels(projectId, active)
+  const channelsQ = useChatChannels(projectId, active, live)
   const channels = channelsQ.data?.channels ?? []
   const caps = channelsQ.data?.capabilities ?? NO_CAPS
 
   const [channelId, setChannelId] = useState<string | null>(null)
   const [threadRoot, setThreadRoot] = useState<number | null>(null)
+  // seen[channelId] = highest seq the user has had on screen; channels
+  // whose lastActivitySeq (patched in by channel.activity events) is
+  // beyond it get bolded in the sidebar. Local-only until phase 4's read
+  // cursors.
+  const [seen, setSeen] = useState<Record<string, number>>({})
   const current =
     channels.find((c) => c.id === channelId) ?? channels.find((c) => c.isRoot) ?? channels[0] ?? null
   const archived = !!current?.archivedAt
@@ -41,16 +48,31 @@ export function ChatApp({ active }: { active: boolean }) {
   useEffect(() => {
     setChannelId(null)
     setThreadRoot(null)
+    setSeen({})
   }, [projectId])
   useEffect(() => {
     setThreadRoot(null)
   }, [current?.id])
 
-  const messagesQ = useChatMessages(projectId, current?.id ?? null, active)
-  const { send, remove, react } = useChatMutations(projectId, current?.id ?? null)
+  const messagesQ = useChatMessages(projectId, current?.id ?? null, active, live)
+  const { send, sending, remove, react } = useChatMutations(projectId, current?.id ?? null)
 
-  const sendBody = (body: string, threadRootSeq?: number) =>
-    send.mutateAsync({ body, threadRootSeq })
+  // Viewing a channel marks everything in it as seen.
+  const latestSeq = messagesQ.data?.latestSeq ?? 0
+  const currentId = current?.id
+  useEffect(() => {
+    if (!active || !currentId || latestSeq <= 0) return
+    setSeen((prev) =>
+      (prev[currentId] ?? 0) >= latestSeq ? prev : { ...prev, [currentId]: latestSeq },
+    )
+  }, [active, currentId, latestSeq])
+
+  const unseen = new Set(
+    channels
+      .filter((c) => c.id !== currentId && (c.lastActivitySeq ?? 0) > (seen[c.id] ?? 0))
+      .map((c) => c.id),
+  )
+
   const doDelete = (seq: number) => void remove.mutateAsync(seq).catch(() => {})
   const doToggleReaction = (seq: number, emoji: string, on: boolean) =>
     void react.mutateAsync({ seq, emoji, on }).catch(() => {})
@@ -79,6 +101,7 @@ export function ChatApp({ active }: { active: boolean }) {
         channels={channels}
         currentId={current?.id ?? null}
         caps={caps}
+        unseen={unseen}
         onSelect={setChannelId}
       />
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
@@ -103,6 +126,12 @@ export function ChatApp({ active }: { active: boolean }) {
                 archived
               </Typography>
             )}
+            <Box sx={{ flex: 1 }} />
+            {!live && (
+              <Typography variant="caption" color="text.disabled">
+                reconnecting…
+              </Typography>
+            )}
           </Stack>
         )}
         <MessageList
@@ -122,8 +151,8 @@ export function ChatApp({ active }: { active: boolean }) {
           disabledReason={
             archived ? 'This channel is archived' : 'Your project role is read-only'
           }
-          sending={send.isPending}
-          onSend={(body) => sendBody(body)}
+          sending={sending}
+          onSend={(body) => send(body)}
         />
       </Box>
       {threadRoot !== null && current && (
@@ -132,14 +161,15 @@ export function ChatApp({ active }: { active: boolean }) {
           channelId={current.id}
           rootSeq={threadRoot}
           active={active}
+          live={live}
           meId={meId}
           caps={caps}
           archived={archived}
           onClose={() => setThreadRoot(null)}
-          onSend={(body, root) => sendBody(body, root)}
+          onSend={(body, root) => send(body, root)}
           onDelete={doDelete}
           onToggleReaction={doToggleReaction}
-          sending={send.isPending}
+          sending={sending}
         />
       )}
     </Box>

@@ -26,6 +26,11 @@ import type {
   Thumbnail,
 } from './types'
 import type { ChatChannelList, ChatMessageList } from '../chat/types'
+import {
+  appendPendingMessage,
+  removePendingMessage,
+  upsertMessage,
+} from '../chat/cache'
 
 // Data fetched here is effectively static for a browsing session, so cache
 // generously and don't refetch on window focus. enabled flags gate queries on
@@ -327,35 +332,38 @@ export function usePinMutations(hubId: string | null) {
   return { add, remove }
 }
 
-// ---- chat (docs/chat/PLAN.md, phase 1) ----
+// ---- chat (docs/chat/PLAN.md, phases 1 & 3) ----
 // Chat is deliberately volatile: nothing here persists to localStorage (see
-// the dehydrate filter in main.tsx) and the active channel polls every 2s —
-// the same cadence as the thumbnail poller — until the SSE stream replaces
-// polling in phase 2/3. `active` gates polling to the visible Chat tab.
+// the dehydrate filter in main.tsx). The SSE stream (useChatEvents, mounted
+// in ProjectPanel) writes events straight into these caches; `live` demotes
+// the phase-1 polling to a FALLBACK that re-arms only while the stream is
+// down. `active` further gates everything to the visible Chat tab.
 
 export const useChatChannels = (
   projectId: string | null,
   active: boolean,
+  live: boolean,
 ): UseQueryResult<ChatChannelList> =>
   useQuery({
     queryKey: ['chatChannels', projectId],
     queryFn: () => api.chatChannels(projectId!),
     enabled: active && !!projectId,
     staleTime: 0,
-    refetchInterval: active ? 10_000 : false,
+    refetchInterval: active && !live ? 10_000 : false,
   })
 
 export const useChatMessages = (
   projectId: string | null,
   channelId: string | null,
   active: boolean,
+  live: boolean,
 ): UseQueryResult<ChatMessageList> =>
   useQuery({
     queryKey: ['chatMessages', projectId, channelId],
     queryFn: () => api.chatMessages(projectId!, channelId!),
     enabled: active && !!projectId && !!channelId,
     staleTime: 0,
-    refetchInterval: active ? 2000 : false,
+    refetchInterval: active && !live ? 2000 : false,
   })
 
 export const useChatThread = (
@@ -363,51 +371,74 @@ export const useChatThread = (
   channelId: string | null,
   rootSeq: number | null,
   active: boolean,
+  live: boolean,
 ): UseQueryResult<ChatMessageList> =>
   useQuery({
     queryKey: ['chatThread', projectId, channelId, rootSeq],
     queryFn: () => api.chatThread(projectId!, channelId!, rootSeq!),
     enabled: active && !!projectId && !!channelId && rootSeq !== null,
     staleTime: 0,
-    refetchInterval: active ? 2000 : false,
+    refetchInterval: active && !live ? 2000 : false,
   })
 
-// useChatMutations bundles the write paths for one channel. Sends carry a
-// fresh clientMsgId so a retried POST can never double-post (the server
-// answers the replay with the original message).
+// useChatMutations bundles the write paths for one channel.
+//
+// Sends are optimistic (design doc §5): a pending copy keyed on a fresh
+// clientMsgId appears immediately with a negative placeholder seq; the
+// server's echo — REST response or SSE message.created, whichever lands
+// first — replaces it via the clientMsgId match in upsertMessage. A failed
+// send removes the pending copy (the composer surfaces the error). The
+// clientMsgId also makes retries safe server-side: a replayed POST returns
+// the original message instead of double-posting.
 export function useChatMutations(projectId: string | null, channelId: string | null) {
   const qc = useQueryClient()
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['chatMessages', projectId, channelId] })
-    void qc.invalidateQueries({ queryKey: ['chatThread', projectId, channelId] })
-  }
+  const me = useAuthMe().data?.user
 
-  const send = useMutation({
-    mutationFn: (args: { body: string; threadRootSeq?: number }) =>
+  const sendMutation = useMutation({
+    mutationFn: (args: { body: string; clientMsgId: string; threadRootSeq?: number }) =>
       api.chatSend(projectId!, channelId!, {
         body: args.body,
-        clientMsgId: crypto.randomUUID(),
+        clientMsgId: args.clientMsgId,
         threadRootSeq: args.threadRootSeq,
       }),
-    onSuccess: invalidate,
+    onMutate: (args) => {
+      appendPendingMessage(qc, projectId!, channelId!, {
+        seq: -Date.now(), // unique placeholder; replaced by the echo
+        threadRoot: args.threadRootSeq,
+        authorId: me?.id ?? '',
+        authorName: me?.name || me?.email || 'me',
+        clientMsgId: args.clientMsgId,
+        body: args.body,
+        createdAt: new Date().toISOString(),
+        deleted: false,
+        replyCount: 0,
+        reactions: [],
+        pending: true,
+      })
+    },
+    onSuccess: (msg) => upsertMessage(qc, projectId!, channelId!, msg),
+    onError: (_err, args) => removePendingMessage(qc, projectId!, channelId!, args.clientMsgId),
   })
+  const send = (body: string, threadRootSeq?: number) =>
+    sendMutation.mutateAsync({ body, clientMsgId: crypto.randomUUID(), threadRootSeq })
+
   const edit = useMutation({
     mutationFn: (args: { seq: number; body: string }) =>
       api.chatEditMessage(projectId!, channelId!, args.seq, args.body),
-    onSuccess: invalidate,
+    onSuccess: (msg) => upsertMessage(qc, projectId!, channelId!, msg),
   })
   const remove = useMutation({
     mutationFn: (seq: number) => api.chatDeleteMessage(projectId!, channelId!, seq),
-    onSuccess: invalidate,
+    onSuccess: (msg) => upsertMessage(qc, projectId!, channelId!, msg),
   })
   const react = useMutation({
     mutationFn: (args: { seq: number; emoji: string; on: boolean }) =>
       args.on
         ? api.chatReact(projectId!, channelId!, args.seq, args.emoji)
         : api.chatUnreact(projectId!, channelId!, args.seq, args.emoji),
-    onSuccess: invalidate,
+    onSuccess: (msg) => upsertMessage(qc, projectId!, channelId!, msg),
   })
-  return { send, edit, remove, react }
+  return { send, sending: sendMutation.isPending, edit, remove, react }
 }
 
 export const useCreateChatChannel = (projectId: string | null) => {

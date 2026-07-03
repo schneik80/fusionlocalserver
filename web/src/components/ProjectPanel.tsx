@@ -1,6 +1,8 @@
 import { Box, Paper, Tab, Tabs } from '@mui/material'
 import { useState } from 'react'
 import { ChatApp } from '../chat/ChatApp'
+import { useChatEvents } from '../chat/useChatEvents'
+import { useNav } from '../state/nav'
 import { ProjectDashboard } from './Dashboards'
 
 // ProjectPanel is the project-level pane: a tab shell over the existing
@@ -21,6 +23,11 @@ type ProjectTab = 'dashboard' | 'chat'
 
 export function ProjectPanel() {
   const [tab, setTab] = useState<ProjectTab>('dashboard')
+  const nav = useNav()
+  // The project's single SSE stream lives here — at the project level, not
+  // inside the Chat tab — so events keep the chat caches warm from any tab
+  // (design doc §5's subscription-scoping table, collapsed to one stream).
+  const { live } = useChatEvents(nav.project?.id ?? null)
 
   return (
     <Paper
@@ -56,7 +63,7 @@ export function ProjectPanel() {
         <ProjectDashboard />
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, display: tab === 'chat' ? 'flex' : 'none' }}>
-        <ChatApp active={tab === 'chat'} />
+        <ChatApp active={tab === 'chat'} live={live} />
       </Box>
     </Paper>
   )
