@@ -3,31 +3,39 @@ import { useState } from 'react'
 import { ChatApp } from '../chat/ChatApp'
 import { useChatEvents } from '../chat/useChatEvents'
 import { useNav } from '../state/nav'
+import { WikiApp } from '../wiki/WikiApp'
 import { ProjectDashboard } from './Dashboards'
 
-// ProjectPanel is the project-level pane: a tab shell over the existing
-// dashboard and the new chat. It replaces the bare <ProjectDashboard/> that
-// used to fill slot B, so the Chat tab exists only at the project level —
-// never for a selected folder or document (those levels render
-// ContentsColumn / DetailsPanel instead, see BrowserStage). It owns the same
+// ProjectPanel is the project-level pane: a tab shell over the dashboard, the
+// wiki, and chat. It replaces the bare <ProjectDashboard/> that used to fill
+// slot B. Wiki and Chat are project-ROOT concepts — drilling into any folder
+// hides them (they belong to the project, not a folder), and selected
+// documents render DetailsPanel instead (see BrowserStage). It owns the same
 // left-bordered Paper frame the dashboard used, so the slide swap to a
 // document's DetailsPanel stays seamless.
 //
-// This shell deliberately mirrors the wiki branch's ProjectPanel (which
-// hosts Dashboard | Wiki) so the two branches merge into one strip with a
-// one-<Tab> conflict. Both tabs stay mounted (hidden via display) so
-// switching preserves the dashboard's scroll and the chat's draft/scroll
-// state; `active` gates chat's polling to the visible tab.
+// All tabs stay mounted (hidden via display) so switching preserves the
+// dashboard's scroll, the wiki editor's in-progress state, and the chat
+// scroll/draft. `active` gates chat's fetching to the visible tab; the chat
+// SSE stream (below) lives regardless of the tab, keeping the chat caches
+// warm from any tab.
 
-type ProjectTab = 'dashboard' | 'chat'
+type ProjectTab = 'dashboard' | 'wiki' | 'chat'
 
 export function ProjectPanel() {
-  const [tab, setTab] = useState<ProjectTab>('dashboard')
   const nav = useNav()
-  // The project's single SSE stream lives here — at the project level, not
-  // inside the Chat tab — so events keep the chat caches warm from any tab
-  // (design doc §5's subscription-scoping table, collapsed to one stream).
+  const [tab, setTab] = useState<ProjectTab>('dashboard')
+
+  // One SSE stream per open project, opened here (not inside the Chat tab) so
+  // events keep the channel list and activity badges warm from any tab. `live`
+  // demotes chat's polling to a fallback while the stream is healthy.
   const { live } = useChatEvents(nav.project?.id ?? null)
+
+  // Inside a folder the Wiki/Chat tabs are hidden, so the dashboard shows
+  // regardless of the chosen tab. The choice itself is kept, not reset —
+  // returning to the project root lands back where the user was.
+  const atRoot = nav.folderStack.length === 0
+  const effectiveTab: ProjectTab = atRoot ? tab : 'dashboard'
 
   return (
     <Paper
@@ -46,7 +54,7 @@ export function ProjectPanel() {
       }}
     >
       <Tabs
-        value={tab}
+        value={effectiveTab}
         onChange={(_, v) => setTab(v as ProjectTab)}
         sx={{
           minHeight: 40,
@@ -57,13 +65,17 @@ export function ProjectPanel() {
         }}
       >
         <Tab label="Dashboard" value="dashboard" />
-        <Tab label="Chat" value="chat" />
+        {atRoot && <Tab label="Wiki" value="wiki" />}
+        {atRoot && <Tab label="Chat" value="chat" />}
       </Tabs>
-      <Box sx={{ flex: 1, minHeight: 0, display: tab === 'dashboard' ? 'flex' : 'none' }}>
+      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'dashboard' ? 'flex' : 'none' }}>
         <ProjectDashboard />
       </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: tab === 'chat' ? 'flex' : 'none' }}>
-        <ChatApp active={tab === 'chat'} live={live} />
+      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'wiki' ? 'flex' : 'none' }}>
+        <WikiApp active={effectiveTab === 'wiki'} />
+      </Box>
+      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'chat' ? 'flex' : 'none' }}>
+        <ChatApp active={effectiveTab === 'chat'} live={live} />
       </Box>
     </Paper>
   )

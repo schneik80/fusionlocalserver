@@ -7,6 +7,7 @@ import { AppLayout } from './components/AppLayout'
 import { LoginScreen } from './components/LoginScreen'
 import { useColorMode } from './state/colorMode'
 import { NavProvider } from './state/nav'
+import { UploadsProvider } from './state/uploads'
 import { makeTheme } from './theme'
 
 // Gate decides what to render based on login state: a spinner while the probe
@@ -26,7 +27,9 @@ function Gate() {
   }
   return (
     <NavProvider>
-      <AppLayout />
+      <UploadsProvider>
+        <AppLayout />
+      </UploadsProvider>
     </NavProvider>
   )
 }

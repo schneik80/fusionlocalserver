@@ -45,15 +45,17 @@ createRoot(document.getElementById('root')!).render(
         persister,
         maxAge: DAY,
         // Bump when query shapes change to invalidate stale persisted caches.
-        buster: 'fls-6',
+        buster: 'fls-8',
         dehydrateOptions: {
           // Persist only successful, non-volatile queries. Auth state must stay
-          // fresh (and persisting it could briefly show a prior user's state).
-          // Chat never persists: it's realtime data, and private-channel
+          // fresh (and persisting it could briefly show a prior user's state);
+          // upload jobs are live server state and are re-polled on load; and
+          // chat never persists — it's realtime data, and private-channel
           // content must not linger in shared-machine localStorage.
           shouldDehydrateQuery: (q) =>
             q.state.status === 'success' &&
             q.queryKey[0] !== 'authMe' &&
+            q.queryKey[0] !== 'uploads' &&
             !String(q.queryKey[0]).startsWith('chat'),
         },
       }}

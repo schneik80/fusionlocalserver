@@ -33,6 +33,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
 	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
 	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))
+	// Raw bytes of an uploaded (non-native) file's tip, for the preview viewers.
+	mux.HandleFunc("GET /api/items/file", prot(s.handleFile))
 
 	// References.
 	mux.HandleFunc("GET /api/items/uses", prot(s.handleUses))
@@ -85,6 +87,20 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))
 	mux.HandleFunc("DELETE /api/pins", prot(s.handlePinsRemove))
+
+	// Uploads (background file-upload jobs into a project folder).
+	mux.HandleFunc("POST /api/uploads", prot(s.handleUploadCreate))
+	mux.HandleFunc("GET /api/uploads", prot(s.handleUploadList))
+	mux.HandleFunc("POST /api/uploads/cancel", prot(s.handleUploadCancel))
+	mux.HandleFunc("POST /api/uploads/dismiss", prot(s.handleUploadDismiss))
+
+	// Wiki (project-scoped markdown pages in a project-root "Wiki" folder).
+	mux.HandleFunc("GET /api/wiki/pages", prot(s.handleWikiPages))
+	mux.HandleFunc("GET /api/wiki/page", prot(s.handleWikiPage))
+	mux.HandleFunc("POST /api/wiki/publish", prot(s.handleWikiPublish))
+	mux.HandleFunc("POST /api/wiki/rename", prot(s.handleWikiRename))
+	mux.HandleFunc("POST /api/wiki/image", prot(s.handleWikiImageUpload))
+	mux.HandleFunc("GET /api/wiki/image", prot(s.handleWikiImage))
 
 	// Static SPA for everything else.
 	mux.Handle("/", s.staticHandler())

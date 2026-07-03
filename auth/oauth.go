@@ -26,7 +26,10 @@ import (
 var (
 	authEndpoint  = "https://developer.api.autodesk.com/authentication/v2/authorize"
 	tokenEndpoint = "https://developer.api.autodesk.com/authentication/v2/token"
-	authScope     = "data:read user-profile:read"
+	// data:write + data:create are needed to publish wiki pages and upload images
+	// (create Wiki folder, storage objects, items, and versions). Widening the
+	// scope forces every user to re-consent (re-login) once.
+	authScope = "data:read data:write data:create user-profile:read"
 )
 
 // NewPKCE generates a fresh PKCE verifier and its S256 challenge. The caller

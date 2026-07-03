@@ -24,6 +24,8 @@ import type {
   Pin,
   ProjectGroup,
   Thumbnail,
+  WikiPage,
+  WikiPageContent,
 } from './types'
 import type { ChatChannelList, ChatMessageList } from '../chat/types'
 import {
@@ -447,5 +449,71 @@ export const useCreateChatChannel = (projectId: string | null) => {
     mutationFn: (body: { name: string; topic?: string; isPrivate?: boolean }) =>
       api.chatCreateChannel(projectId!, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] }),
+  })
+}
+
+// useWikiPages lists a project's published wiki pages. Gated on the hub id and
+// the project's data-management id (altId) both being present; the Wiki tab only
+// mounts at the project level, but a project may have no Wiki folder yet (→ []).
+export const useWikiPages = (
+  hubId: string | null,
+  dmProjectId: string | null | undefined,
+  enabled = true,
+): UseQueryResult<WikiPage[]> =>
+  useQuery({
+    queryKey: ['wikiPages', hubId, dmProjectId],
+    queryFn: () => api.wikiPages(hubId!, dmProjectId!),
+    enabled: enabled && !!hubId && !!dmProjectId,
+    // Shorter stale window + refetch on focus so returning to the app surfaces
+    // pages another device published; explicit refetches (tab open, page select)
+    // cover the rest. There's no push channel (a localhost BFF can't take APS
+    // webhooks), so freshness is on-demand.
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: true,
+  })
+
+// useWikiPage fetches one published page's markdown body. Used when opening a
+// published page for reading or pulling it down as a draft.
+export const useWikiPage = (
+  dmProjectId: string | null | undefined,
+  itemId: string | null,
+  enabled = true,
+): UseQueryResult<WikiPageContent> =>
+  useQuery({
+    queryKey: ['wikiPage', dmProjectId, itemId],
+    queryFn: () => api.wikiPage(dmProjectId!, itemId!),
+    enabled: enabled && !!dmProjectId && !!itemId,
+    staleTime: STALE,
+  })
+
+// useWikiPublish uploads the working copy of a page to the project's Wiki folder
+// and refreshes the published-pages list on success. A 409 ApiError means the
+// page changed upstream — the caller can retry with force to overwrite.
+export function useWikiPublish(hubId: string | null, dmProjectId: string | null | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      itemId?: string
+      slug: string
+      markdown: string
+      baseVersion?: string
+      force?: boolean
+    }) => api.wikiPublish({ hubId: hubId!, dmProjectId: dmProjectId!, ...body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['wikiPages', hubId, dmProjectId] })
+    },
+  })
+}
+
+// useWikiRename renames a published page's file (and images subfolder) and
+// refreshes the published-pages list.
+export function useWikiRename(hubId: string | null, dmProjectId: string | null | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { itemId: string; oldSlug: string; newSlug: string }) =>
+      api.wikiRename({ hubId: hubId!, dmProjectId: dmProjectId!, ...body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['wikiPages', hubId, dmProjectId] })
+    },
   })
 }

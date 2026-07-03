@@ -281,6 +281,57 @@ export interface ActivityReport {
   eventsTruncated: boolean
 }
 
+// --- Wiki (mirror server/dto_wiki.go) ---
+
+// WikiPage is one published markdown page in a project's Wiki folder. title is
+// the file name without its .md extension; tipVersion is the current version urn
+// (also the base-version token a draft records for stale-publish detection).
+export interface WikiPage {
+  itemId: string
+  name: string
+  title: string
+  tipVersion?: string
+  modifiedOn?: string
+  modifiedBy?: string
+}
+
+// WikiPageContent is the markdown body of a single published page.
+export interface WikiPageContent {
+  itemId: string
+  markdown: string
+}
+
+// WikiImageResult is returned after uploading an image into a page's images
+// folder — the stored item's lineage urn and file name.
+export interface WikiImageResult {
+  itemId: string
+  name: string
+}
+
+// --- Uploads (mirror server/dto_upload.go) ---
+
+export type UploadStatus = 'queued' | 'uploading' | 'done' | 'error' | 'canceled'
+
+// UploadJob is one background file-upload job. bytesSent tracks the server→APS
+// transfer (the browser→server spool finished before the job existed).
+// hubId/projectId/folderId are the GraphQL ids echoed back from submission so
+// the client can invalidate the matching contents queries when the job lands.
+export interface UploadJob {
+  id: string
+  fileName: string
+  size: number
+  bytesSent: number
+  status: UploadStatus | string
+  error?: string
+  hubId?: string
+  projectId?: string
+  folderId?: string
+  dmProjectId?: string
+  folderPath: string[]
+  itemId?: string
+  createdOn?: string
+}
+
 // Pin mirrors pins.Pin (snake_case json tags, unlike the camelCase DTOs).
 export interface Pin {
   id: string
