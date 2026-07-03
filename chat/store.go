@@ -637,7 +637,10 @@ func (s *Store) LatestSeq(projectID, channelID string) (int64, error) {
 // ---- internals ----
 
 // project returns the cached state for projectID, loading meta.json on
-// first access.
+// first access. The load bumps and persists EventEpoch, so SSE event ids
+// minted by different process runs can never alias: a client's
+// Last-Event-ID from before a restart parses as a stale epoch and forces a
+// clean resync instead of silently missing events.
 func (s *Store) project(projectID string) (*projectState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -648,9 +651,25 @@ func (s *Store) project(projectID string) (*projectState, error) {
 	if err != nil {
 		return nil, err
 	}
+	meta.EventEpoch++
+	if err := s.saveMeta(projectID, meta); err != nil {
+		return nil, err
+	}
 	ps := &projectState{meta: meta, channels: make(map[string]*channelState)}
 	s.projects[projectID] = ps
 	return ps, nil
+}
+
+// EventEpoch reports the project's event epoch for this process run (see
+// project() for why it bumps every run).
+func (s *Store) EventEpoch(projectID string) (int64, error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return 0, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.meta.EventEpoch, nil
 }
 
 // channelState resolves a channel and its replayed message state, returning

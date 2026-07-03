@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,28 +20,57 @@ import (
 
 const chatTestProject = "urn:project:1"
 
-// newChatTestServer builds a Server with a real chat store over a TempDir
-// and an authorizer pointed at a fake APS roster: one VIEWER, one EDITOR,
-// one MANAGER, and an extra EDITOR ("member") for private-channel ACLs.
-func newChatTestServer(t *testing.T) *Server {
-	t.Helper()
-	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
-		row := func(id, email, role string) map[string]any {
-			return map[string]any{
-				"role": role, "status": "ACTIVE",
-				"user": map[string]any{"id": id, "userName": id, "firstName": "", "lastName": "", "email": email},
-			}
+// fakeRoster is the mutable project roster the fake APS serves; tests
+// mutate it (Remove) to simulate revocation.
+type fakeRoster struct {
+	mu   sync.Mutex
+	rows []map[string]any
+}
+
+func rosterRow(id, email, role string) map[string]any {
+	return map[string]any{
+		"role": role, "status": "ACTIVE",
+		"user": map[string]any{"id": id, "userName": id, "firstName": "", "lastName": "", "email": email},
+	}
+}
+
+func (fr *fakeRoster) Remove(userID string) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	out := fr.rows[:0]
+	for _, row := range fr.rows {
+		if row["user"].(map[string]any)["id"] != userID {
+			out = append(out, row)
 		}
+	}
+	fr.rows = out
+}
+
+func (fr *fakeRoster) snapshot() []map[string]any {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	return append([]map[string]any{}, fr.rows...)
+}
+
+// newChatTestServer builds a Server with a real chat store over a TempDir,
+// the SSE hub, and an authorizer pointed at a fake APS roster: one VIEWER,
+// one EDITOR, one MANAGER, and an extra EDITOR ("member") for
+// private-channel ACLs. The returned roster is live — mutations apply to
+// the next uncached fetch.
+func newChatTestServer(t *testing.T) (*Server, *fakeRoster) {
+	t.Helper()
+	roster := &fakeRoster{rows: []map[string]any{
+		rosterRow("u-viewer", "viewer@x.io", "VIEWER"),
+		rosterRow("u-editor", "editor@x.io", "EDITOR"),
+		rosterRow("u-member", "member@x.io", "EDITOR"),
+		rosterRow("u-manager", "manager@x.io", "MANAGER"),
+	}}
+	srv := testutil.GraphQLServer(t, func(req testutil.GraphQLRequest) testutil.GraphQLResponse {
 		return testutil.GraphQLResponse{Data: map[string]any{
 			"project": map[string]any{
 				"folderLevelProjectMembers": map[string]any{
 					"pagination": map[string]any{"cursor": ""},
-					"results": []map[string]any{
-						row("u-viewer", "viewer@x.io", "VIEWER"),
-						row("u-editor", "editor@x.io", "EDITOR"),
-						row("u-member", "member@x.io", "EDITOR"),
-						row("u-manager", "manager@x.io", "MANAGER"),
-					},
+					"results":    roster.snapshot(),
 				},
 			},
 		}}
@@ -54,16 +84,19 @@ func newChatTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(store.Close)
 
-	return &Server{
+	authz := chat.NewAuthorizer()
+	s := &Server{
 		logger:     quietLogger(),
 		clientID:   "test-client",
 		sessions:   NewSessionStore(sessionIdleTTL, sessionAbsTTL, quietLogger()),
 		pending:    NewPendingStore(pendingTTL),
 		chat:       store,
-		chatAuthz:  chat.NewAuthorizer(),
+		chatAuthz:  authz,
 		chatMsgLim: chat.NewLimiter(2, 5),
 		chatOpLim:  chat.NewLimiter(10.0/60.0, 10),
+		chatHub:    chat.NewHub(authz, store.EventEpoch),
 	}
+	return s, roster
 }
 
 // login creates a session for the given identity and returns its cookie.
@@ -121,7 +154,7 @@ func chatURL(path string, kv ...string) string {
 }
 
 func TestChat_RequiresSession(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 
@@ -131,7 +164,7 @@ func TestChat_RequiresSession(t *testing.T) {
 }
 
 func TestChat_RootChannelAndRoleGates(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	viewer := login(t, s, "u-viewer", "Vera Viewer", "viewer@x.io")
@@ -176,7 +209,7 @@ func TestChat_RootChannelAndRoleGates(t *testing.T) {
 }
 
 func TestChat_IdempotentCreateOverHTTP(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
@@ -204,7 +237,7 @@ func TestChat_IdempotentCreateOverHTTP(t *testing.T) {
 }
 
 func TestChat_BodyLimits(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
@@ -226,7 +259,7 @@ func TestChat_BodyLimits(t *testing.T) {
 }
 
 func TestChat_MessageRateLimit(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
@@ -249,7 +282,7 @@ func TestChat_MessageRateLimit(t *testing.T) {
 }
 
 func TestChat_PrivateChannelHiddenFromNonMembers(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	manager := login(t, s, "u-manager", "Mia Manager", "manager@x.io")
@@ -290,7 +323,7 @@ func TestChat_PrivateChannelHiddenFromNonMembers(t *testing.T) {
 }
 
 func TestChat_EditAndModerationRules(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)
 	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
@@ -327,7 +360,7 @@ func TestChat_EditAndModerationRules(t *testing.T) {
 }
 
 func TestChat_UnavailableStore(t *testing.T) {
-	s := newChatTestServer(t)
+	s, _ := newChatTestServer(t)
 	s.chat = nil // config dir unavailable at startup
 	ts := httptest.NewServer(s.routes())
 	t.Cleanup(ts.Close)

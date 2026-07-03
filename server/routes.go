@@ -66,6 +66,7 @@ func (s *Server) routes() http.Handler {
 	// Chat (docs/chat/PLAN.md, phase 1). REST + client polling; the SSE
 	// event stream lands in phase 2. URN-style ids ride query params, per
 	// the repo-wide convention.
+	mux.HandleFunc("GET /api/chat/events", prot(s.handleChatEvents))
 	mux.HandleFunc("GET /api/chat/channels", prot(s.handleChatChannels))
 	mux.HandleFunc("POST /api/chat/channels", prot(s.handleChatChannelCreate))
 	mux.HandleFunc("PATCH /api/chat/channels", prot(s.handleChatChannelUpdate))

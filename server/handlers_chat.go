@@ -123,6 +123,22 @@ func (s *Server) chatError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
+// chatPublish emits one event on the project's SSE stream (REST → store →
+// publish; docs/chat/PLAN.md phase 2). ch scopes visibility: events about a
+// private channel reach only its members and project moderators. extra
+// users receive the event regardless of the ACL (a just-removed member
+// learning of their removal). Publish failures are logged, never surfaced —
+// the write already succeeded, and pollers/reconnects converge anyway.
+func (s *Server) chatPublish(projectID, evType string, data any, ch chat.Channel, extra ...string) {
+	if s.chatHub == nil {
+		return
+	}
+	vis := chat.Vis{Private: ch.IsPrivate, Channel: ch, ExtraUserIDs: extra}
+	if err := s.chatHub.Publish(projectID, chat.Event{Type: evType, V: 1, Data: data}, vis); err != nil {
+		s.logger.Error("chat: publish failed", "type", evType, "err", err)
+	}
+}
+
 func decodeChatBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, chatMaxBody)).Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -230,6 +246,7 @@ func (s *Server) handleChatChannelCreate(w http.ResponseWriter, r *http.Request)
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, "channel.created", ChatChannelEventDTO{Channel: channelDTO(ch)}, ch)
 	writeJSON(w, http.StatusCreated, channelDTO(ch))
 }
 
@@ -272,6 +289,7 @@ func (s *Server) handleChatChannelUpdate(w http.ResponseWriter, r *http.Request)
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, "channel.updated", ChatChannelEventDTO{Channel: channelDTO(updated)}, updated)
 	writeJSON(w, http.StatusOK, channelDTO(updated))
 }
 
@@ -305,6 +323,7 @@ func (s *Server) handleChatChannelArchive(w http.ResponseWriter, r *http.Request
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, "channel.archived", ChatChannelEventDTO{Channel: channelDTO(archived)}, archived)
 	writeJSON(w, http.StatusOK, channelDTO(archived))
 }
 
@@ -357,6 +376,10 @@ func (s *Server) handleChatMemberAdd(w http.ResponseWriter, r *http.Request) {
 		s.chatError(w, r, err)
 		return
 	}
+	// The post-add snapshot's ACL includes the new member, so this event is
+	// how their sidebar learns the channel now exists for them.
+	s.chatPublish(c.projectID, "channel.member_added",
+		ChatMemberEventDTO{ChannelID: updated.ID, UserID: in.UserID, Channel: channelDTO(updated)}, updated)
 	writeJSON(w, http.StatusOK, channelDTO(updated))
 }
 
@@ -394,6 +417,10 @@ func (s *Server) handleChatMemberRemove(w http.ResponseWriter, r *http.Request) 
 		s.chatError(w, r, err)
 		return
 	}
+	// The removed user is no longer in the ACL snapshot, so they're listed
+	// explicitly — this event is how their sidebar drops the channel.
+	s.chatPublish(c.projectID, "channel.member_removed",
+		ChatMemberEventDTO{ChannelID: updated.ID, UserID: userID, Channel: channelDTO(updated)}, updated, userID)
 	writeJSON(w, http.StatusOK, channelDTO(updated))
 }
 
@@ -503,8 +530,12 @@ func (s *Server) handleChatMessageCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	status := http.StatusOK
-	if created {
+	if created { // a clientMsgId replay publishes nothing — it created nothing
 		status = http.StatusCreated
+		s.chatPublish(c.projectID, "message.created",
+			ChatMessageEventDTO{ChannelID: ch.ID, Message: messageDTO(msg)}, ch)
+		s.chatPublish(c.projectID, "channel.activity",
+			ChatActivityEventDTO{ChannelID: ch.ID, LastMessageSeq: msg.Seq}, ch)
 	}
 	writeJSON(w, status, messageDTO(msg))
 }
@@ -553,6 +584,8 @@ func (s *Server) handleChatMessageEdit(w http.ResponseWriter, r *http.Request) {
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, "message.updated",
+		ChatMessageEventDTO{ChannelID: ch.ID, Message: messageDTO(updated)}, ch)
 	writeJSON(w, http.StatusOK, messageDTO(updated))
 }
 
@@ -595,6 +628,8 @@ func (s *Server) handleChatMessageDelete(w http.ResponseWriter, r *http.Request)
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, "message.deleted",
+		ChatMessageEventDTO{ChannelID: ch.ID, Message: messageDTO(deleted)}, ch)
 	writeJSON(w, http.StatusOK, messageDTO(deleted))
 }
 
@@ -634,14 +669,14 @@ func (s *Server) handleChatThread(w http.ResponseWriter, r *http.Request) {
 // ---- reactions ----
 
 func (s *Server) handleChatReactionAdd(w http.ResponseWriter, r *http.Request) {
-	s.handleChatReaction(w, r, s.chat.AddReaction)
+	s.handleChatReaction(w, r, s.chat.AddReaction, "reaction.added")
 }
 
 func (s *Server) handleChatReactionRemove(w http.ResponseWriter, r *http.Request) {
-	s.handleChatReaction(w, r, s.chat.RemoveReaction)
+	s.handleChatReaction(w, r, s.chat.RemoveReaction, "reaction.removed")
 }
 
-func (s *Server) handleChatReaction(w http.ResponseWriter, r *http.Request, apply func(projectID, channelID string, seq int64, userID, emoji string) (chat.Message, error)) {
+func (s *Server) handleChatReaction(w http.ResponseWriter, r *http.Request, apply func(projectID, channelID string, seq int64, userID, emoji string) (chat.Message, error), evType string) {
 	c, ok := s.chatReq(w, r)
 	if !ok {
 		return
@@ -680,5 +715,7 @@ func (s *Server) handleChatReaction(w http.ResponseWriter, r *http.Request, appl
 		s.chatError(w, r, err)
 		return
 	}
+	s.chatPublish(c.projectID, evType,
+		ChatMessageEventDTO{ChannelID: ch.ID, Message: messageDTO(msg)}, ch)
 	writeJSON(w, http.StatusOK, messageDTO(msg))
 }

@@ -68,6 +68,30 @@ type MessageListDTO struct {
 	LatestSeq int64        `json:"latestSeq"`
 }
 
+// SSE event payloads (the `data` field of the {type, v, data} envelope).
+// message.* and reaction.* events carry the full post-mutation message so
+// the client can replace its copy wholesale; channel.activity is the
+// lightweight sidebar signal (design doc §3).
+type ChatMessageEventDTO struct {
+	ChannelID string     `json:"channelId"`
+	Message   MessageDTO `json:"message"`
+}
+
+type ChatChannelEventDTO struct {
+	Channel ChannelDTO `json:"channel"`
+}
+
+type ChatMemberEventDTO struct {
+	ChannelID string     `json:"channelId"`
+	UserID    string     `json:"userId"`
+	Channel   ChannelDTO `json:"channel"`
+}
+
+type ChatActivityEventDTO struct {
+	ChannelID      string `json:"channelId"`
+	LastMessageSeq int64  `json:"lastMessageSeq"`
+}
+
 func channelDTO(c chat.Channel) ChannelDTO {
 	out := ChannelDTO{
 		ID:         c.ID,

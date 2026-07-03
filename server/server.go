@@ -107,11 +107,15 @@ type Server struct {
 
 	// chat is the file-backed project chat store (nil when the config dir is
 	// unavailable; chat endpoints then reply 503), with its APS-role-backed
-	// authorizer and per-session rate limits for messages and channel ops.
-	chat       *chat.Store
-	chatAuthz  *chat.Authorizer
-	chatMsgLim *chat.Limiter
-	chatOpLim  *chat.Limiter
+	// authorizer, per-session rate limits, and the SSE fan-out hub.
+	// chatKeepalive is the events stream's ping/entitlement-recheck cadence
+	// (defaulted in Run; overridable in tests).
+	chat          *chat.Store
+	chatAuthz     *chat.Authorizer
+	chatMsgLim    *chat.Limiter
+	chatOpLim     *chat.Limiter
+	chatHub       *chat.Hub
+	chatKeepalive time.Duration
 }
 
 // serveReason explains why the inner serve loop returned.
@@ -195,6 +199,10 @@ func Run(opts Options) error {
 	s.chatAuthz = chat.NewAuthorizer()
 	s.chatMsgLim = chat.NewLimiter(2, 5)
 	s.chatOpLim = chat.NewLimiter(10.0/60.0, 10)
+	s.chatKeepalive = 25 * time.Second
+	if s.chat != nil {
+		s.chatHub = chat.NewHub(s.chatAuthz, s.chat.EventEpoch)
+	}
 
 	// Resolve TLS once, before the bind loop spans restarts. A self-signed
 	// cert is generated/cached when -tls is given without a cert pair.
@@ -334,8 +342,14 @@ func (s *Server) serveUntil(ctx context.Context, srv *http.Server) (serveReason,
 }
 
 // drain gracefully shuts down srv, waiting up to 10s for in-flight requests
-// (including the just-sent port-change response) to complete.
+// (including the just-sent port-change response) to complete. Chat event
+// streams are closed first — they are indefinitely long-lived, and Shutdown
+// would otherwise wait the full budget on them and stall the port-rebind
+// loop.
 func (s *Server) drain(srv *http.Server) {
+	if s.chatHub != nil {
+		s.chatHub.CloseAll()
+	}
 	s.logger.Info("draining connections")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

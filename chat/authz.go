@@ -91,6 +91,13 @@ func NewAuthorizer() *Authorizer {
 	}
 }
 
+// SetTTLsForTesting overrides the cache lifetimes so tests can exercise
+// expiry-driven behavior (revocation teardown) without waiting out the
+// production TTLs. Production code MUST NOT call this.
+func (a *Authorizer) SetTTLsForTesting(positive, negative time.Duration) {
+	a.ttl, a.negTTL = positive, negative
+}
+
 // Identity is the caller as chat authorization sees them: the OIDC subject
 // plus their email. The roster row is matched by UserID when the profile
 // carried a sub, falling back to a case-insensitive email match (open
