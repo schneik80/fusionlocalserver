@@ -1,6 +1,7 @@
 import { faHashtag, faLock, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -19,27 +20,27 @@ import {
   Typography,
 } from '@mui/material'
 import { useState } from 'react'
-import { useCreateChatChannel } from '../api/queries'
-import type { ChatCaps, ChatChannel } from './types'
+import { useAuthMe, useChatMembers, useCreateChatChannel } from '../api/queries'
+import type { ChatCaps, ChatChannel, ChatMember } from './types'
 
 // ChannelSidebar lists the channels the server says this user can see and
-// hosts the create-channel dialog (member management for private channels
-// arrives in phase 5; until then a private channel starts owner-only).
+// hosts the create-channel dialog, including the private-channel member
+// picker (the creator becomes owner; picked members join the ACL).
 export function ChannelSidebar({
   projectId,
   channels,
   currentId,
   caps,
-  unseen,
+  unread,
   onSelect,
 }: {
   projectId: string | null
   channels: ChatChannel[]
   currentId: string | null
   caps: ChatCaps
-  // unseen channels (activity since the user last viewed them) render bold
-  // with a dot — fed by channel.activity SSE events.
-  unseen: Set<string>
+  // per-channel unread counts (server read cursors, kept live by
+  // channel.activity / read.updated events); >0 renders bold with a badge.
+  unread: Map<string, number>
   onSelect: (id: string) => void
 }) {
   const [createOpen, setCreateOpen] = useState(false)
@@ -69,38 +70,47 @@ export function ChannelSidebar({
         )}
       </Box>
       <List dense disablePadding sx={{ flex: 1, overflowY: 'auto' }}>
-        {channels.map((ch) => (
-          <ListItemButton
-            key={ch.id}
-            selected={ch.id === currentId}
-            onClick={() => onSelect(ch.id)}
-            sx={{ py: 0.25 }}
-          >
-            <ListItemIcon sx={{ minWidth: 26, fontSize: 12 }}>
-              <FontAwesomeIcon icon={ch.isPrivate ? faLock : faHashtag} />
-            </ListItemIcon>
-            <ListItemText
-              primary={ch.name}
-              secondary={ch.archivedAt ? 'archived' : undefined}
-              primaryTypographyProps={{
-                noWrap: true,
-                fontSize: 14,
-                fontWeight: unseen.has(ch.id) ? 700 : undefined,
-              }}
-            />
-            {unseen.has(ch.id) && (
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  bgcolor: 'primary.main',
-                  flexShrink: 0,
+        {channels.map((ch) => {
+          const count = unread.get(ch.id) ?? 0
+          return (
+            <ListItemButton
+              key={ch.id}
+              selected={ch.id === currentId}
+              onClick={() => onSelect(ch.id)}
+              sx={{ py: 0.25 }}
+            >
+              <ListItemIcon sx={{ minWidth: 26, fontSize: 12 }}>
+                <FontAwesomeIcon icon={ch.isPrivate ? faLock : faHashtag} />
+              </ListItemIcon>
+              <ListItemText
+                primary={ch.name}
+                secondary={ch.archivedAt ? 'archived' : undefined}
+                primaryTypographyProps={{
+                  noWrap: true,
+                  fontSize: 14,
+                  fontWeight: count > 0 ? 700 : undefined,
                 }}
               />
-            )}
-          </ListItemButton>
-        ))}
+              {count > 0 && (
+                <Box
+                  sx={{
+                    px: 0.75,
+                    minWidth: 18,
+                    borderRadius: 9,
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    fontSize: 11,
+                    lineHeight: '18px',
+                    textAlign: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  {count > 99 ? '99+' : count}
+                </Box>
+              )}
+            </ListItemButton>
+          )
+        })}
       </List>
       <CreateChannelDialog
         projectId={projectId}
@@ -124,12 +134,20 @@ function CreateChannelDialog({
   const [name, setName] = useState('')
   const [topic, setTopic] = useState('')
   const [isPrivate, setIsPrivate] = useState(false)
+  const [members, setMembers] = useState<ChatMember[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // The roster loads only once the private box is ticked; the creator is
+  // implicit (they become the channel owner) and filtered from the picker.
+  const meId = useAuthMe().data?.user?.id ?? ''
+  const membersQ = useChatMembers(projectId, open && isPrivate)
+  const candidates = (membersQ.data ?? []).filter((m) => m.userId !== meId)
 
   const close = () => {
     setName('')
     setTopic('')
     setIsPrivate(false)
+    setMembers([])
     setError(null)
     onClose()
   }
@@ -137,7 +155,12 @@ function CreateChannelDialog({
   const submit = async () => {
     setError(null)
     try {
-      await create.mutateAsync({ name: name.trim(), topic: topic.trim() || undefined, isPrivate })
+      await create.mutateAsync({
+        name: name.trim(),
+        topic: topic.trim() || undefined,
+        isPrivate,
+        memberIds: isPrivate ? members.map((m) => m.userId) : undefined,
+      })
       close()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not create channel')
@@ -169,6 +192,21 @@ function CreateChannelDialog({
           }
           label="Private (only invited members can see it)"
         />
+        {isPrivate && (
+          <Autocomplete
+            multiple
+            size="small"
+            options={candidates}
+            getOptionLabel={(m) => m.name || m.email || m.userId}
+            isOptionEqualToValue={(a, b) => a.userId === b.userId}
+            loading={membersQ.isLoading}
+            value={members}
+            onChange={(_, v) => setMembers(v)}
+            renderInput={(params) => (
+              <TextField {...params} label="Members" placeholder="Add project members" />
+            )}
+          />
+        )}
         {error && (
           <Typography variant="caption" color="error">
             {error}

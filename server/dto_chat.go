@@ -92,6 +92,30 @@ type ChatActivityEventDTO struct {
 	LastMessageSeq int64  `json:"lastMessageSeq"`
 }
 
+// ChatUnreadDTO is one channel's unread summary for the caller. It is both
+// an element of GET /api/chat/unreads and the payload of the user-only
+// read.updated event (PATCH /api/chat/read), so marking a channel read in
+// one tab updates the same user's other tabs.
+type ChatUnreadDTO struct {
+	ChannelID   string `json:"channelId"`
+	LastReadSeq int64  `json:"lastReadSeq"`
+	UnreadCount int    `json:"unreadCount"`
+	LatestSeq   int64  `json:"latestSeq"`
+}
+
+// ChatUnreadListDTO is GET /api/chat/unreads.
+type ChatUnreadListDTO struct {
+	Unreads []ChatUnreadDTO `json:"unreads"`
+}
+
+// ChatTypingEventDTO is the ephemeral typing event (never persisted, never
+// replayed; docs/chat/PLAN.md phase 4).
+type ChatTypingEventDTO struct {
+	ChannelID string `json:"channelId"`
+	UserID    string `json:"userId"`
+	Name      string `json:"name"`
+}
+
 func channelDTO(c chat.Channel) ChannelDTO {
 	out := ChannelDTO{
 		ID:         c.ID,
@@ -139,6 +163,15 @@ func messageListDTO(ms []chat.Message, latestSeq int64) MessageListDTO {
 		out.Messages[i] = messageDTO(m)
 	}
 	return out
+}
+
+func unreadDTO(u chat.Unread) ChatUnreadDTO {
+	return ChatUnreadDTO{
+		ChannelID:   u.ChannelID,
+		LastReadSeq: u.LastReadSeq,
+		UnreadCount: u.UnreadCount,
+		LatestSeq:   u.LatestSeq,
+	}
 }
 
 // fmtTimePtr renders an optional timestamp as RFC3339, or "" when absent.

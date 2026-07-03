@@ -1,18 +1,23 @@
 import { faHashtag, faLock } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Alert, Box, CircularProgress, Stack, Typography } from '@mui/material'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useAuthMe,
   useChatChannels,
   useChatMessages,
   useChatMutations,
+  useChatUnreads,
+  useMarkChatRead,
 } from '../api/queries'
 import { useNav } from '../state/nav'
+import { ChannelMenu } from './ChannelMenu'
 import { ChannelSidebar } from './ChannelSidebar'
 import { MessageComposer } from './MessageComposer'
 import { MessageList } from './MessageList'
 import { ThreadPanel } from './ThreadPanel'
+import { TypingIndicator } from './TypingIndicator'
+import { useTypingNames, useTypingPing } from './typing'
 import type { ChatCaps } from './types'
 
 const NO_CAPS: ChatCaps = { post: false, createChannel: false, moderate: false }
@@ -34,11 +39,6 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
 
   const [channelId, setChannelId] = useState<string | null>(null)
   const [threadRoot, setThreadRoot] = useState<number | null>(null)
-  // seen[channelId] = highest seq the user has had on screen; channels
-  // whose lastActivitySeq (patched in by channel.activity events) is
-  // beyond it get bolded in the sidebar. Local-only until phase 4's read
-  // cursors.
-  const [seen, setSeen] = useState<Record<string, number>>({})
   const current =
     channels.find((c) => c.id === channelId) ?? channels.find((c) => c.isRoot) ?? channels[0] ?? null
   const archived = !!current?.archivedAt
@@ -48,7 +48,6 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
   useEffect(() => {
     setChannelId(null)
     setThreadRoot(null)
-    setSeen({})
   }, [projectId])
   useEffect(() => {
     setThreadRoot(null)
@@ -57,21 +56,31 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
   const messagesQ = useChatMessages(projectId, current?.id ?? null, active, live)
   const { send, sending, remove, react } = useChatMutations(projectId, current?.id ?? null)
 
-  // Viewing a channel marks everything in it as seen.
+  // Server-backed read cursors (phase 4): viewing a channel marks it read
+  // up to the newest fetched seq. The ref dedupes — one PATCH per new seq,
+  // not one per render — and the server ignores non-advancing marks anyway.
   const latestSeq = messagesQ.data?.latestSeq ?? 0
   const currentId = current?.id
+  const unreadsQ = useChatUnreads(projectId, live)
+  const { mutate: markRead } = useMarkChatRead(projectId)
+  const markedRef = useRef<{ cid: string; seq: number }>({ cid: '', seq: 0 })
   useEffect(() => {
     if (!active || !currentId || latestSeq <= 0) return
-    setSeen((prev) =>
-      (prev[currentId] ?? 0) >= latestSeq ? prev : { ...prev, [currentId]: latestSeq },
-    )
-  }, [active, currentId, latestSeq])
+    const marked = markedRef.current
+    if (marked.cid === currentId && marked.seq >= latestSeq) return
+    markedRef.current = { cid: currentId, seq: latestSeq }
+    markRead({ channelId: currentId, lastReadSeq: latestSeq })
+  }, [active, currentId, latestSeq, markRead])
 
-  const unseen = new Set(
-    channels
-      .filter((c) => c.id !== currentId && (c.lastActivitySeq ?? 0) > (seen[c.id] ?? 0))
-      .map((c) => c.id),
-  )
+  // The badge for the channel being viewed lags the mark-read roundtrip by
+  // a beat; suppress it locally so reading never shows as unread.
+  const unread = new Map<string, number>()
+  for (const u of unreadsQ.data?.unreads ?? []) {
+    if (u.channelId !== currentId && u.unreadCount > 0) unread.set(u.channelId, u.unreadCount)
+  }
+
+  const typingNames = useTypingNames(projectId, current?.id ?? null, meId)
+  const onTyping = useTypingPing(projectId, current?.id ?? null)
 
   const doDelete = (seq: number) => void remove.mutateAsync(seq).catch(() => {})
   const doToggleReaction = (seq: number, emoji: string, on: boolean) =>
@@ -101,7 +110,7 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
         channels={channels}
         currentId={current?.id ?? null}
         caps={caps}
-        unseen={unseen}
+        unread={unread}
         onSelect={setChannelId}
       />
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
@@ -132,6 +141,7 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
                 reconnecting…
               </Typography>
             )}
+            <ChannelMenu projectId={projectId} channel={current} caps={caps} meId={meId} />
           </Stack>
         )}
         <MessageList
@@ -145,6 +155,7 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
           onDelete={doDelete}
           onToggleReaction={doToggleReaction}
         />
+        <TypingIndicator names={typingNames} />
         <MessageComposer
           placeholder={current ? `Message #${current.name}` : 'Message'}
           disabled={!caps.post || archived || !current}
@@ -153,6 +164,7 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
           }
           sending={sending}
           onSend={(body) => send(body)}
+          onTyping={onTyping}
         />
       </Box>
       {threadRoot !== null && current && (
@@ -169,6 +181,7 @@ export function ChatApp({ active, live }: { active: boolean; live: boolean }) {
           onSend={(body, root) => send(body, root)}
           onDelete={doDelete}
           onToggleReaction={doToggleReaction}
+          onTyping={onTyping}
           sending={sending}
         />
       )}

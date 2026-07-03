@@ -60,15 +60,19 @@ func TestCapabilityMapping(t *testing.T) {
 	ctx := context.Background()
 
 	caps := []Capability{CapRead, CapPost, CapReact, CapEditOwn, CapCreateChannel, CapModerate}
-	want := map[string][]bool{ //           read  post  react editOwn create moderate
-		"u-viewer":   {true, false, false, false, false, false},
-		"u-reader":   {true, false, false, false, false, false},
-		"u-editor":   {true, true, true, true, true, false},
-		"u-manager":  {true, true, true, true, true, true},
-		"u-admin":    {true, true, true, true, true, true},
-		"u-mystery":  {false, false, false, false, false, false},
-		"u-pending":  {false, false, false, false, false, false},
-		"u-stranger": {false, false, false, false, false, false}, // not on roster
+	want := map[string][]bool{ //            read  post  react editOwn create moderate
+		"u-viewer":  {true, false, false, false, false, false},
+		"u-reader":  {true, false, false, false, false, false},
+		"u-editor":  {true, true, true, true, true, false},
+		"u-manager": {true, true, true, true, true, true},
+		"u-admin":   {true, true, true, true, true, true},
+		"u-mystery": {false, false, false, false, false, false}, // listed, unknown role → deny
+		"u-pending": {false, false, false, false, false, false}, // listed but not ACTIVE → deny
+		// Not individually listed, but the roster fetch (their own token)
+		// succeeded → access is via a project group → contributor, not
+		// moderator. This is the group-only member the phase-3 authorizer
+		// wrongly locked out entirely.
+		"u-grouponly": {true, true, true, true, true, false},
 	}
 	for user, expect := range want {
 		for i, cap := range caps {
@@ -189,11 +193,11 @@ func TestCanAccessChannel_TwoLayer(t *testing.T) {
 		want bool
 	}{
 		{"public: any project role passes layer 1", Identity{UserID: "u-viewer"}, public, true},
-		{"public: stranger denied at layer 1", Identity{UserID: "u-stranger"}, public, false},
+		{"public: group-only member passes layer 1", Identity{UserID: "u-grouponly"}, public, true},
 		{"private: editor not in ACL denied", Identity{UserID: "u-editor"}, private, false},
 		{"private: ACL member allowed", Identity{UserID: "u-member"}, private, true},
 		{"private: project admin allowed (policy knob)", Identity{UserID: "u-admin"}, private, true},
-		{"private: stranger denied", Identity{UserID: "u-stranger"}, private, false},
+		{"private: group-only non-member denied (not a moderator)", Identity{UserID: "u-grouponly"}, private, false},
 	}
 	for _, c := range cases {
 		got, err := a.CanAccessChannel(ctx, "tok", c.id, "p", c.ch)
@@ -202,6 +206,35 @@ func TestCanAccessChannel_TwoLayer(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIsActiveMember_Strict(t *testing.T) {
+	a, _, _ := rosterAuthorizer(t, []map[string]any{
+		member("u-editor", "e@x.com", "EDITOR", "ACTIVE"),
+		member("u-pending", "p@x.com", "EDITOR", "PENDING"),
+	})
+	ctx := context.Background()
+
+	// Unlike Can, IsActiveMember never applies the group-derived fallback:
+	// only a listed ACTIVE individual counts, so a group-only invitee can't
+	// be confirmed (and thus can't be added to a private channel's ACL).
+	cases := []struct {
+		id   Identity
+		want bool
+	}{
+		{Identity{UserID: "u-editor"}, true},     // listed & ACTIVE
+		{Identity{UserID: "u-pending"}, false},   // listed but PENDING
+		{Identity{UserID: "u-grouponly"}, false}, // not individually listed
+	}
+	for _, c := range cases {
+		got, err := a.IsActiveMember(ctx, "tok", c.id, "p")
+		if err != nil {
+			t.Fatalf("%s: %v", c.id.UserID, err)
+		}
+		if got != c.want {
+			t.Errorf("IsActiveMember(%s) = %v, want %v", c.id.UserID, got, c.want)
 		}
 	}
 }

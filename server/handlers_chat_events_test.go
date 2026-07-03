@@ -226,8 +226,13 @@ func TestSSE_RevocationClosesStream(t *testing.T) {
 	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, nil)
 
 	events, _ := openSSE(t, ts.URL, editor, "")
-	roster.Remove("u-editor")
-	waitClosed(t, events, "revoked user's stream")
+	// Suspend the user (still on the roster, but INACTIVE) — the realistic
+	// revocation the keepalive tick catches. A full project removal instead
+	// makes the user's own token fail to read the roster, a transient-looking
+	// error the tick deliberately rides out; and merely de-listing an
+	// individual now reads as group-derived access, not a denial.
+	roster.SetStatus("u-editor", "INACTIVE")
+	waitClosed(t, events, "suspended user's stream")
 }
 
 func TestSSE_CloseAllDisconnectsStreams(t *testing.T) {
@@ -240,4 +245,75 @@ func TestSSE_CloseAllDisconnectsStreams(t *testing.T) {
 	events, _ := openSSE(t, ts.URL, editor, "")
 	s.chatHub.CloseAll()
 	waitClosed(t, events, "stream after CloseAll")
+}
+
+func TestSSE_TypingFrameIsIDless(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+	member := login(t, s, "u-member", "Mel", "member@x.io")
+
+	var list ChannelListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, &list)
+	root := list.Channels[0].ID
+
+	events, _ := openSSE(t, ts.URL, editor, "")
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/typing", "channelId", root), member, nil, nil)
+
+	typing := waitEvent(t, events, "typing", func(ev sseEvent) bool {
+		return strings.Contains(ev.data, `"typing"`)
+	})
+	if typing.id != "" {
+		t.Fatalf("typing frame carries id %q — it must never advance Last-Event-ID", typing.id)
+	}
+	if !strings.Contains(typing.data, "Mel") {
+		t.Fatalf("typing frame lacks the author name: %s", typing.data)
+	}
+
+	// A durable message afterwards still has an id (the writer branches
+	// per frame, not per stream).
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), member,
+		map[string]any{"body": "durable after typing", "clientMsgId": "cm-t1"}, nil)
+	durable := waitEvent(t, events, "durable message", func(ev sseEvent) bool {
+		return strings.Contains(ev.data, "durable after typing")
+	})
+	if durable.id == "" {
+		t.Fatal("durable frame lost its id")
+	}
+}
+
+func TestSSE_ReadUpdatedIsUserOnly(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+	manager := login(t, s, "u-manager", "Mia", "manager@x.io")
+
+	var list ChannelListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, &list)
+	root := list.Channels[0].ID
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), editor,
+		map[string]any{"body": "to be read", "clientMsgId": "cm-ru1"}, nil)
+
+	editorEvents, _ := openSSE(t, ts.URL, editor, "")
+	managerEvents, _ := openSSE(t, ts.URL, manager, "")
+
+	// The editor marks the channel read in "another tab".
+	chatDo(t, ts.URL, http.MethodPatch, chatURL("/api/chat/read", "channelId", root), editor,
+		map[string]any{"lastReadSeq": 1}, nil)
+	// Then posts a marker so the manager's (ordered) stream provably moved
+	// past the point where the read.updated would have been.
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), editor,
+		map[string]any{"body": "marker after read", "clientMsgId": "cm-ru2"}, nil)
+
+	waitEvent(t, editorEvents, "editor's own read.updated", func(ev sseEvent) bool {
+		return strings.Contains(ev.data, `"read.updated"`)
+	})
+	waitEvent(t, managerEvents, "marker on manager stream", func(ev sseEvent) bool {
+		if strings.Contains(ev.data, `"read.updated"`) {
+			t.Fatalf("another user (even a moderator) received a user-only read.updated: %s", ev.data)
+		}
+		return strings.Contains(ev.data, "marker after read")
+	})
 }

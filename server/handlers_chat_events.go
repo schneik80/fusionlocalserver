@@ -125,5 +125,10 @@ func (s *Server) writeEntitledFrame(ctx context.Context, write func(string, ...a
 	if err != nil || !entitled {
 		return err == nil || ctx.Err() == nil
 	}
+	if f.ID == "" {
+		// Ephemeral frame (typing): no id, so it never advances the
+		// client's Last-Event-ID and is never replayed.
+		return write("data: %s\n\n", f.Data)
+	}
 	return write("id: %s\ndata: %s\n\n", f.ID, f.Data)
 }

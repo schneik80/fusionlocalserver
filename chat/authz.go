@@ -57,12 +57,27 @@ var capRank = map[Capability]int{
 	CapModerate:      rankModerate,
 }
 
+// groupDerivedRank is what a caller gets when the roster fetch made with
+// their OWN token succeeds but doesn't list them as an individual member —
+// i.e. their access to the project comes through a project GROUP.
+// folderLevelProjectMembers enumerates only direct contributors, and group
+// membership can't be expanded without hub-admin, so we can't read such a
+// caller's exact role. Rather than lock them out (they demonstrably have
+// project access — the same "your token sees it or it doesn't" trust the
+// Dashboard and Wiki tabs already run on), grant contributor capabilities
+// (read, post, react, edit own, create channels) but never moderation,
+// whose scope (deleting others' messages, renaming/archiving channels,
+// managing private ACLs) demands a confirmed Manager/Administrator role.
+// Resolves docs/chat/PLAN.md open question 3.
+const groupDerivedRank = rankWrite
+
 // Authorizer answers "may this user do X in this project's chat" by
 // fetching the project roster with the caller's own APS token
 // (api.GetProjectMembers — readable by any project member, no hub-admin
-// needed) and caching the resolved role per (user, project). Positive
-// entries live for ttl, negative (not on the roster) for negTTL, so a
-// removed user's REST access lapses within ttl at worst.
+// needed) and caching the resolved entry per (user, project). Entries for
+// individually-listed members live for ttl; entries resolved by fallback
+// (not individually listed → group-derived) live for negTTL, so a change in
+// a caller's standing is picked up within negTTL at worst.
 type Authorizer struct {
 	fetch  func(ctx context.Context, token, projectID string) ([]api.Member, error)
 	ttl    time.Duration
@@ -74,10 +89,29 @@ type Authorizer struct {
 	sf    singleflight.Group
 }
 
+// roleEntry is a resolved roster lookup. listed records whether the identity
+// appeared as an individual member row at all (any status); active narrows
+// that to status ACTIVE; role is the uppercase FolderRoleEnum, set only when
+// active. A caller who is not listed (but whose fetch succeeded) is
+// group-derived — see groupDerivedRank.
 type roleEntry struct {
-	role  string // uppercase FolderRoleEnum; "" when not on the roster
-	found bool
-	at    time.Time
+	role   string
+	listed bool
+	active bool
+	at     time.Time
+}
+
+// rankOf turns a resolved entry into a capability rank. Listed-but-inactive
+// (PENDING/INACTIVE) and listed-with-an-unrecognized-role both deny;
+// not-listed falls through to group-derived contributor access.
+func rankOf(e roleEntry) int {
+	if e.listed {
+		if !e.active {
+			return rankNone // on the roster but suspended → deny
+		}
+		return roleRank[e.role] // known role → its tier; unknown → rankNone
+	}
+	return groupDerivedRank
 }
 
 // NewAuthorizer returns an Authorizer with production wiring and TTLs.
@@ -108,27 +142,31 @@ type Identity struct {
 	Email  string
 }
 
-// Can reports whether the identity holds cap in the project.
+// Can reports whether the identity holds cap in the project. The identity
+// MUST be the authenticated caller whose token is passed — the group-derived
+// fallback (rankOf) reasons "this token could read the roster, so this
+// caller has project access," which is only sound for the token's owner. To
+// test a THIRD party's membership (e.g. a private-channel invitee), use
+// IsActiveMember, not Can.
 func (a *Authorizer) Can(ctx context.Context, token string, id Identity, projectID string, cap Capability) (bool, error) {
-	role, found, err := a.role(ctx, token, id, projectID)
+	e, err := a.resolve(ctx, token, id, projectID)
 	if err != nil {
 		return false, err
 	}
-	if !found {
-		return false, nil
-	}
-	return roleRank[role] >= capRank[cap], nil
+	return rankOf(e) >= capRank[cap], nil
 }
 
 // CanAccessChannel is the design doc's two-layer rule (§1): project-level
 // read access first, then — for private channels — the channel ACL, with
-// project moderators (Manager/Administrator) always allowed through.
+// project moderators (Manager/Administrator) always allowed through. Like
+// Can, this is a self-check: id must be the caller who owns token.
 func (a *Authorizer) CanAccessChannel(ctx context.Context, token string, id Identity, projectID string, ch Channel) (bool, error) {
-	role, found, err := a.role(ctx, token, id, projectID)
+	e, err := a.resolve(ctx, token, id, projectID)
 	if err != nil {
 		return false, err
 	}
-	if !found || roleRank[role] < rankRead {
+	rank := rankOf(e)
+	if rank < rankRead {
 		return false, nil
 	}
 	if !ch.IsPrivate {
@@ -137,59 +175,71 @@ func (a *Authorizer) CanAccessChannel(ctx context.Context, token string, id Iden
 	if id.UserID != "" && memberIndex(ch.Members, id.UserID) >= 0 {
 		return true, nil
 	}
-	return roleRank[role] >= rankModerate, nil
+	return rank >= rankModerate, nil
 }
 
-// role resolves the identity's project role through the cache. A roster
-// fetch error is returned as-is (and not cached) so the handler can map it
-// with s.fail — a flaky APS response must not lock a user out for negTTL.
-func (a *Authorizer) role(ctx context.Context, token string, id Identity, projectID string) (string, bool, error) {
+// IsActiveMember reports whether id is listed as an ACTIVE individual member
+// of the project — the STRICT check for validating a third party (e.g. a
+// private-channel invitee), where the caller's own project access says
+// nothing about the target's. Unlike Can it never applies the group-derived
+// fallback, so a group-only user (who isn't individually listed) can't be
+// confirmed this way and thus can't be added to a private channel's ACL
+// until they hold a direct membership.
+func (a *Authorizer) IsActiveMember(ctx context.Context, token string, id Identity, projectID string) (bool, error) {
+	e, err := a.resolve(ctx, token, id, projectID)
+	if err != nil {
+		return false, err
+	}
+	return e.active, nil
+}
+
+// resolve looks the identity up in the project roster through the cache. A
+// roster fetch error is returned as-is (and not cached) so the handler can
+// map it with s.fail — a flaky APS response must not lock a user out for a
+// TTL. A successful fetch that doesn't list the identity yields a zero-value
+// (not listed) entry, which rankOf reads as group-derived access.
+func (a *Authorizer) resolve(ctx context.Context, token string, id Identity, projectID string) (roleEntry, error) {
 	key := id.UserID + "\x00" + strings.ToLower(id.Email) + "\x00" + projectID
 
 	a.mu.Lock()
 	if e, ok := a.cache[key]; ok {
 		maxAge := a.ttl
-		if !e.found {
+		if !e.listed {
 			maxAge = a.negTTL
 		}
 		if a.now().Sub(e.at) < maxAge {
 			a.mu.Unlock()
-			return e.role, e.found, nil
+			return e, nil
 		}
 	}
 	a.mu.Unlock()
 
-	type result struct {
-		role  string
-		found bool
-	}
 	v, err, _ := a.sf.Do(key, func() (any, error) {
 		members, err := a.fetch(ctx, token, projectID)
 		if err != nil {
-			return nil, err
+			return roleEntry{}, err
 		}
-		res := result{}
+		e := roleEntry{at: a.now()}
 		for _, m := range members {
 			if !matchesMember(m, id) {
 				continue
 			}
-			if !strings.EqualFold(m.Status, "ACTIVE") {
-				break // on the roster but not active (PENDING/INACTIVE) → deny
+			e.listed = true
+			if strings.EqualFold(m.Status, "ACTIVE") {
+				e.active = true
+				e.role = strings.ToUpper(m.Role)
 			}
-			res.role = strings.ToUpper(m.Role)
-			res.found = true
 			break
 		}
 		a.mu.Lock()
-		a.cache[key] = roleEntry{role: res.role, found: res.found, at: a.now()}
+		a.cache[key] = e
 		a.mu.Unlock()
-		return res, nil
+		return e, nil
 	})
 	if err != nil {
-		return "", false, err
+		return roleEntry{}, err
 	}
-	res := v.(result)
-	return res.role, res.found, nil
+	return v.(roleEntry), nil
 }
 
 func matchesMember(m api.Member, id Identity) bool {

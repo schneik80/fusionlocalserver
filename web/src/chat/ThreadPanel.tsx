@@ -22,6 +22,7 @@ export function ThreadPanel({
   onSend,
   onDelete,
   onToggleReaction,
+  onTyping,
   sending,
 }: {
   projectId: string | null
@@ -36,6 +37,7 @@ export function ThreadPanel({
   onSend: (body: string, threadRootSeq: number) => Promise<unknown>
   onDelete: (seq: number) => void
   onToggleReaction: (seq: number, emoji: string, on: boolean) => void
+  onTyping?: () => void
   sending: boolean
 }) {
   const threadQ = useChatThread(projectId, channelId, rootSeq, active, live)
@@ -86,6 +88,7 @@ export function ThreadPanel({
         }
         sending={sending}
         onSend={(body) => onSend(body, rootSeq)}
+        onTyping={onTyping}
       />
     </Box>
   )

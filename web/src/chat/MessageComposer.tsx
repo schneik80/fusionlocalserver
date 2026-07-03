@@ -12,12 +12,16 @@ export function MessageComposer({
   disabledReason,
   sending,
   onSend,
+  onTyping,
 }: {
   placeholder: string
   disabled: boolean
   disabledReason?: string
   sending: boolean
   onSend: (body: string) => Promise<unknown>
+  // Called on keystrokes with content; the provider throttles the actual
+  // typing pings (see useTypingPing).
+  onTyping?: () => void
 }) {
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -44,7 +48,10 @@ export function MessageComposer({
         placeholder={placeholder}
         value={text}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value)
+          if (e.target.value.trim()) onTyping?.()
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()

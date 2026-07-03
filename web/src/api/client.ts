@@ -28,7 +28,15 @@ import type {
   WikiPage,
   WikiPageContent,
 } from './types'
-import type { ChatChannel, ChatChannelList, ChatMessage, ChatMessageList } from '../chat/types'
+import type {
+  ChatChannel,
+  ChatChannelList,
+  ChatMember,
+  ChatMessage,
+  ChatMessageList,
+  ChatUnread,
+  ChatUnreadList,
+} from '../chat/types'
 
 export class ApiError extends Error {
   status: number
@@ -224,6 +232,35 @@ export const api = {
   chatChannels: (projectId: string) =>
     request<ChatChannelList>(`/api/chat/channels${qs({ projectId })}`),
 
+  chatMembers: (projectId: string) =>
+    request<ChatMember[]>(`/api/chat/members${qs({ projectId })}`),
+
+  chatUpdateChannel: (
+    projectId: string,
+    channelId: string,
+    body: { name?: string; topic?: string },
+  ) =>
+    request<ChatChannel>(`/api/chat/channels${qs({ projectId, channelId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  chatArchiveChannel: (projectId: string, channelId: string) =>
+    request<ChatChannel>(`/api/chat/channels${qs({ projectId, channelId })}`, {
+      method: 'DELETE',
+    }),
+
+  chatAddChannelMember: (projectId: string, channelId: string, userId: string) =>
+    request<ChatChannel>(`/api/chat/channels/members${qs({ projectId, channelId })}`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
+
+  chatRemoveChannelMember: (projectId: string, channelId: string, userId: string) =>
+    request<ChatChannel>(`/api/chat/channels/members${qs({ projectId, channelId, userId })}`, {
+      method: 'DELETE',
+    }),
+
   chatCreateChannel: (
     projectId: string,
     body: { name: string; topic?: string; isPrivate?: boolean; memberIds?: string[] },
@@ -286,6 +323,19 @@ export const api = {
       `/api/chat/reactions${qs({ projectId, channelId, seq: String(seq), emoji })}`,
       { method: 'DELETE' },
     ),
+
+  chatUnreads: (projectId: string) =>
+    request<ChatUnreadList>(`/api/chat/unreads${qs({ projectId })}`),
+
+  chatMarkRead: (projectId: string, channelId: string, lastReadSeq: number) =>
+    request<ChatUnread>(`/api/chat/read${qs({ projectId, channelId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ lastReadSeq }),
+    }),
+
+  // chatTyping is a fire-and-forget ephemeral ping (204, no body).
+  chatTyping: (projectId: string, channelId: string) =>
+    request<void>(`/api/chat/typing${qs({ projectId, channelId })}`, { method: 'POST' }),
   // Wiki: published markdown pages in a project's root "Wiki" folder. hubId is
   // the GraphQL hub id (the server resolves it to the DM hub id); dmProjectId is
   // the project's altId. itemId is a page's lineage urn.

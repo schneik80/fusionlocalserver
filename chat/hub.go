@@ -49,11 +49,14 @@ type Event struct {
 // value is public (every project subscriber). Private events carry a
 // snapshot of the channel whose ACL governs them; ExtraUserIDs are always
 // delivered regardless of the ACL (e.g. a just-removed member learning of
-// their removal).
+// their removal). UserOnly events reach ONLY the ExtraUserIDs — no channel
+// or role fallback — which is how per-user events (read.updated syncing a
+// user's own tabs) stay invisible to everyone else.
 type Vis struct {
 	Private      bool
 	Channel      Channel
 	ExtraUserIDs []string
+	UserOnly     bool
 }
 
 // Frame is one rendered SSE event: the id to send, the JSON payload, and
@@ -105,6 +108,18 @@ func NewHub(authz *Authorizer, epoch func(projectID string) (int64, error)) *Hub
 // never blocks on entitlement checks — those happen in each subscriber's
 // writer via Entitled.
 func (h *Hub) Publish(projectID string, ev Event, vis Vis) error {
+	return h.publish(projectID, ev, vis, false)
+}
+
+// PublishEphemeral fans ev out WITHOUT touching the ring or the id
+// sequence: the frame carries no id, so it never advances a client's
+// Last-Event-ID and is never replayed after a reconnect. Typing indicators
+// only (docs/chat/PLAN.md phase 4) — anything durable goes via Publish.
+func (h *Hub) PublishEphemeral(projectID string, ev Event, vis Vis) error {
+	return h.publish(projectID, ev, vis, true)
+}
+
+func (h *Hub) publish(projectID string, ev Event, vis Vis, ephemeral bool) error {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return err
@@ -115,14 +130,16 @@ func (h *Hub) Publish(projectID string, ev Event, vis Vis) error {
 	if err != nil {
 		return err
 	}
-	hp.seq++
-	now := time.Now()
-	hp.ring = append(hp.ring, ringEntry{seq: hp.seq, at: now, data: data, vis: vis})
-	for len(hp.ring) > 0 && (len(hp.ring) > ringCap || now.Sub(hp.ring[0].at) > ringTTL) {
-		hp.ring = hp.ring[1:]
+	f := Frame{Data: data, vis: vis}
+	if !ephemeral {
+		hp.seq++
+		now := time.Now()
+		hp.ring = append(hp.ring, ringEntry{seq: hp.seq, at: now, data: data, vis: vis})
+		for len(hp.ring) > 0 && (len(hp.ring) > ringCap || now.Sub(hp.ring[0].at) > ringTTL) {
+			hp.ring = hp.ring[1:]
+		}
+		f.ID = eventID(hp.epoch, hp.seq)
 	}
-
-	f := Frame{ID: eventID(hp.epoch, hp.seq), Data: data, vis: vis}
 	for sub := range hp.subs {
 		select {
 		case sub.ch <- f:
@@ -182,17 +199,24 @@ func (h *Hub) Unsubscribe(projectID string, sub *Subscriber) {
 
 // Entitled reports whether a subscriber identified by (token, id) may see
 // the frame: public frames always, private frames per the channel's
-// two-layer rule, ExtraUserIDs unconditionally. May fetch the roster when
-// the authorizer's cache has lapsed — call it from the subscriber's own
-// writer goroutine, never from Publish.
+// two-layer rule, ExtraUserIDs unconditionally (matched on user id, or on
+// email for sessions predating the Sub claim), UserOnly frames exclusively
+// so. May fetch the roster when the authorizer's cache has lapsed — call
+// it from the subscriber's own writer goroutine, never from Publish.
 func (h *Hub) Entitled(ctx context.Context, token string, id Identity, projectID string, f Frame) (bool, error) {
-	if !f.vis.Private {
-		return true, nil
-	}
 	for _, u := range f.vis.ExtraUserIDs {
-		if u != "" && u == id.UserID {
+		if u == "" {
+			continue
+		}
+		if u == id.UserID || (id.Email != "" && strings.EqualFold(u, id.Email)) {
 			return true, nil
 		}
+	}
+	if f.vis.UserOnly {
+		return false, nil
+	}
+	if !f.vis.Private {
+		return true, nil
 	}
 	return h.authz.CanAccessChannel(ctx, token, id, projectID, f.vis.Channel)
 }

@@ -45,6 +45,7 @@ export function useChatEvents(projectId: string | null): { live: boolean } {
       void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] })
       void qc.invalidateQueries({ queryKey: ['chatMessages', projectId] })
       void qc.invalidateQueries({ queryKey: ['chatThread', projectId] })
+      void qc.invalidateQueries({ queryKey: ['chatUnreads', projectId] })
     })
 
     return () => {

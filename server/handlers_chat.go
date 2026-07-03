@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/schneik80/fusionlocalserver/api"
 	"github.com/schneik80/fusionlocalserver/chat"
 )
 
@@ -361,8 +362,11 @@ func (s *Server) handleChatMemberAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The target must be an active member of the project (design doc §REST).
+	// This is a THIRD-party check, so it uses the strict IsActiveMember, not
+	// Can: the caller's own project access (which the group-derived fallback
+	// keys on) says nothing about whether the target belongs here.
 	target := chat.Identity{UserID: in.UserID}
-	isMember, err := s.chatAuthz.Can(ctx, c.token, target, c.projectID, chat.CapRead)
+	isMember, err := s.chatAuthz.IsActiveMember(ctx, c.token, target, c.projectID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -697,6 +701,12 @@ func (s *Server) handleChatReaction(w http.ResponseWriter, r *http.Request, appl
 		writeError(w, http.StatusBadRequest, "invalid emoji")
 		return
 	}
+	// Adds come from the palette only; removal stays unrestricted so a
+	// reaction placed under an older palette is still removable.
+	if evType == "reaction.added" && !chat.IsAllowedEmoji(emoji) {
+		writeError(w, http.StatusBadRequest, "unsupported emoji")
+		return
+	}
 	ctx, cancel := s.reqCtx(r)
 	defer cancel()
 	if !s.chatCan(ctx, w, r, c, chat.CapReact) {
@@ -718,4 +728,172 @@ func (s *Server) handleChatReaction(w http.ResponseWriter, r *http.Request, appl
 	s.chatPublish(c.projectID, evType,
 		ChatMessageEventDTO{ChannelID: ch.ID, Message: messageDTO(msg)}, ch)
 	writeJSON(w, http.StatusOK, messageDTO(msg))
+}
+
+// handleChatMembers is GET /api/chat/members — the project's ACTIVE roster,
+// for the private-channel member pickers (docs/chat/PLAN.md phase 5). Same
+// source as the authorizer (api.GetProjectMembers with the caller's own
+// token), so the picker can only ever offer users the ACL would accept.
+func (s *Server) handleChatMembers(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.chatReq(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	if !s.chatCan(ctx, w, r, c, chat.CapRead) {
+		return
+	}
+	members, err := api.GetProjectMembers(ctx, c.token, c.projectID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := []MemberDTO{}
+	for _, m := range members {
+		if strings.EqualFold(m.Status, "ACTIVE") {
+			out = append(out, MemberDTO{UserID: m.UserID, Name: m.Name, Email: m.Email, Role: m.Role})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- read cursors, unreads, typing (docs/chat/PLAN.md phase 4) ----
+
+// cursorKey is the stable per-user key read cursors are stored under (and
+// user-only events are addressed to): the OIDC sub, falling back to the
+// lowercase email for sessions that predate the Sub claim.
+func (c chatCtx) cursorKey() string {
+	if c.id.UserID != "" {
+		return c.id.UserID
+	}
+	return strings.ToLower(c.id.Email)
+}
+
+// handleChatRead is PATCH /api/chat/read — advance the caller's read cursor
+// in a channel. Moves are monotonic (racing tabs can only advance) and the
+// advance is echoed to the same user's other tabs as a user-only
+// read.updated event carrying the fresh unread summary.
+func (s *Server) handleChatRead(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.chatReq(w, r)
+	if !ok {
+		return
+	}
+	channelID, ok := reqParam(w, r, "channelId")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	ch, ok := s.chatChannel(ctx, w, r, c, channelID)
+	if !ok {
+		return
+	}
+	if !s.chatSyncLim.Allow(c.sessID) {
+		writeError(w, http.StatusTooManyRequests, safeErrorMessage(http.StatusTooManyRequests))
+		return
+	}
+	var in struct {
+		LastReadSeq int64 `json:"lastReadSeq"`
+	}
+	if !decodeChatBody(w, r, &in) {
+		return
+	}
+	unread, advanced, err := s.chat.SetReadCursor(c.projectID, c.cursorKey(), ch.ID, in.LastReadSeq)
+	if err != nil {
+		s.chatError(w, r, err)
+		return
+	}
+	if advanced && s.chatHub != nil {
+		ev := chat.Event{Type: "read.updated", V: 1, Data: unreadDTO(unread)}
+		vis := chat.Vis{UserOnly: true, ExtraUserIDs: []string{c.cursorKey()}}
+		if perr := s.chatHub.Publish(c.projectID, ev, vis); perr != nil {
+			s.logger.Error("chat: publish failed", "type", "read.updated", "err", perr)
+		}
+	}
+	writeJSON(w, http.StatusOK, unreadDTO(unread))
+}
+
+// handleChatUnreads is GET /api/chat/unreads — the caller's unread summary
+// for every channel they can see (archived ones excluded).
+func (s *Server) handleChatUnreads(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.chatReq(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	if !s.chatCan(ctx, w, r, c, chat.CapRead) {
+		return
+	}
+	chans, err := s.chat.Channels(c.projectID)
+	if err != nil {
+		s.chatError(w, r, err)
+		return
+	}
+	visible := []chat.Channel{}
+	for _, ch := range chans {
+		if ch.IsPrivate {
+			v, aerr := s.chatAuthz.CanAccessChannel(ctx, c.token, c.id, c.projectID, ch)
+			if aerr != nil {
+				s.fail(w, r, aerr)
+				return
+			}
+			if !v {
+				continue
+			}
+		}
+		visible = append(visible, ch)
+	}
+	unreads, err := s.chat.Unreads(c.projectID, c.cursorKey(), visible)
+	if err != nil {
+		s.chatError(w, r, err)
+		return
+	}
+	out := ChatUnreadListDTO{Unreads: make([]ChatUnreadDTO, len(unreads))}
+	for i, u := range unreads {
+		out.Unreads[i] = unreadDTO(u)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleChatTyping is POST /api/chat/typing — an ephemeral "the caller is
+// typing in this channel" ping, fanned out without an SSE id so it never
+// advances Last-Event-ID and is never replayed. Nothing is stored.
+func (s *Server) handleChatTyping(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.chatReq(w, r)
+	if !ok {
+		return
+	}
+	channelID, ok := reqParam(w, r, "channelId")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.reqCtx(r)
+	defer cancel()
+	if !s.chatCan(ctx, w, r, c, chat.CapPost) {
+		return
+	}
+	ch, ok := s.chatChannel(ctx, w, r, c, channelID)
+	if !ok {
+		return
+	}
+	if !s.chatSyncLim.Allow(c.sessID) {
+		writeError(w, http.StatusTooManyRequests, safeErrorMessage(http.StatusTooManyRequests))
+		return
+	}
+	if ch.ArchivedAt == nil && s.chatHub != nil {
+		name := c.id.Email
+		if sess, sok := sessionFromCtx(r.Context()); sok && sess.Profile.Name != "" {
+			name = sess.Profile.Name
+		}
+		ev := chat.Event{Type: "typing", V: 1, Data: ChatTypingEventDTO{
+			ChannelID: ch.ID, UserID: c.cursorKey(), Name: name,
+		}}
+		vis := chat.Vis{Private: ch.IsPrivate, Channel: ch}
+		if perr := s.chatHub.PublishEphemeral(c.projectID, ev, vis); perr != nil {
+			s.logger.Error("chat: publish failed", "type", "typing", "err", perr)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -114,6 +114,7 @@ type Server struct {
 	chatAuthz     *chat.Authorizer
 	chatMsgLim    *chat.Limiter
 	chatOpLim     *chat.Limiter
+	chatSyncLim   *chat.Limiter
 	chatHub       *chat.Hub
 	chatKeepalive time.Duration
 
@@ -191,7 +192,8 @@ func Run(opts Options) error {
 	}
 
 	// Chat store (message logs live under <config>/chat/<project>/). Rate
-	// limits are per session: messages 2/s with burst 5, channel ops 10/min.
+	// limits are per session: messages 2/s with burst 5, channel ops 10/min,
+	// sync (read cursors + typing pings) 2/s with burst 20.
 	if dir, derr := config.Dir(); derr != nil {
 		logger.Warn("chat: disabled (config dir unavailable)", "err", derr)
 	} else if cs, cerr := chat.NewStore(filepath.Join(dir, "chat")); cerr != nil {
@@ -203,6 +205,7 @@ func Run(opts Options) error {
 	s.chatAuthz = chat.NewAuthorizer()
 	s.chatMsgLim = chat.NewLimiter(2, 5)
 	s.chatOpLim = chat.NewLimiter(10.0/60.0, 10)
+	s.chatSyncLim = chat.NewLimiter(2, 20)
 	s.chatKeepalive = 25 * time.Second
 	if s.chat != nil {
 		s.chatHub = chat.NewHub(s.chatAuthz, s.chat.EventEpoch)

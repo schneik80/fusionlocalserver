@@ -21,7 +21,7 @@ import (
 const chatTestProject = "urn:project:1"
 
 // fakeRoster is the mutable project roster the fake APS serves; tests
-// mutate it (Remove) to simulate revocation.
+// mutate it (SetStatus) to simulate access suspension.
 type fakeRoster struct {
 	mu   sync.Mutex
 	rows []map[string]any
@@ -34,16 +34,17 @@ func rosterRow(id, email, role string) map[string]any {
 	}
 }
 
-func (fr *fakeRoster) Remove(userID string) {
+// SetStatus flips a member's invitation status in place (e.g. ACTIVE →
+// INACTIVE) — a realistic access suspension that keeps the roster row, as
+// opposed to Remove which de-lists the user entirely.
+func (fr *fakeRoster) SetStatus(userID, status string) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	out := fr.rows[:0]
 	for _, row := range fr.rows {
-		if row["user"].(map[string]any)["id"] != userID {
-			out = append(out, row)
+		if row["user"].(map[string]any)["id"] == userID {
+			row["status"] = status
 		}
 	}
-	fr.rows = out
 }
 
 func (fr *fakeRoster) snapshot() []map[string]any {
@@ -86,15 +87,16 @@ func newChatTestServer(t *testing.T) (*Server, *fakeRoster) {
 
 	authz := chat.NewAuthorizer()
 	s := &Server{
-		logger:     quietLogger(),
-		clientID:   "test-client",
-		sessions:   NewSessionStore(sessionIdleTTL, sessionAbsTTL, quietLogger()),
-		pending:    NewPendingStore(pendingTTL),
-		chat:       store,
-		chatAuthz:  authz,
-		chatMsgLim: chat.NewLimiter(2, 5),
-		chatOpLim:  chat.NewLimiter(10.0/60.0, 10),
-		chatHub:    chat.NewHub(authz, store.EventEpoch),
+		logger:      quietLogger(),
+		clientID:    "test-client",
+		sessions:    NewSessionStore(sessionIdleTTL, sessionAbsTTL, quietLogger()),
+		pending:     NewPendingStore(pendingTTL),
+		chat:        store,
+		chatAuthz:   authz,
+		chatMsgLim:  chat.NewLimiter(2, 5),
+		chatOpLim:   chat.NewLimiter(10.0/60.0, 10),
+		chatSyncLim: chat.NewLimiter(2, 20),
+		chatHub:     chat.NewHub(authz, store.EventEpoch),
 	}
 	return s, roster
 }
@@ -368,5 +370,215 @@ func TestChat_UnavailableStore(t *testing.T) {
 
 	if code := chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, nil); code != http.StatusServiceUnavailable {
 		t.Fatalf("nil store status = %d, want 503", code)
+	}
+}
+
+func TestChat_ReadCursorsAndUnreads(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+	viewer := login(t, s, "u-viewer", "Vera", "viewer@x.io")
+
+	var list ChannelListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, &list)
+	root := list.Channels[0].ID
+	for i := 1; i <= 3; i++ {
+		chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), editor,
+			map[string]any{"body": fmt.Sprintf("m%d", i), "clientMsgId": fmt.Sprintf("cm-%d", i)}, nil)
+	}
+
+	// The viewer (read-only role) still tracks read state.
+	var unreads ChatUnreadListDTO
+	if code := chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/unreads"), viewer, nil, &unreads); code != http.StatusOK {
+		t.Fatalf("unreads status = %d", code)
+	}
+	if len(unreads.Unreads) != 1 || unreads.Unreads[0].UnreadCount != 3 {
+		t.Fatalf("initial unreads = %+v, want 3 in root", unreads.Unreads)
+	}
+
+	var cur ChatUnreadDTO
+	if code := chatDo(t, ts.URL, http.MethodPatch, chatURL("/api/chat/read", "channelId", root), viewer,
+		map[string]any{"lastReadSeq": 2}, &cur); code != http.StatusOK {
+		t.Fatalf("mark-read status = %d", code)
+	}
+	if cur.LastReadSeq != 2 || cur.UnreadCount != 1 {
+		t.Fatalf("mark-read reply = %+v", cur)
+	}
+	// Backward moves don't rewind.
+	chatDo(t, ts.URL, http.MethodPatch, chatURL("/api/chat/read", "channelId", root), viewer,
+		map[string]any{"lastReadSeq": 1}, &cur)
+	if cur.LastReadSeq != 2 {
+		t.Fatalf("backward mark-read rewound to %d", cur.LastReadSeq)
+	}
+	// And the summary agrees.
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/unreads"), viewer, nil, &unreads)
+	if unreads.Unreads[0].LastReadSeq != 2 || unreads.Unreads[0].UnreadCount != 1 {
+		t.Fatalf("unreads after mark-read = %+v", unreads.Unreads)
+	}
+}
+
+func TestChat_UnreadsExcludePrivateChannelsFromNonMembers(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	manager := login(t, s, "u-manager", "Mia", "manager@x.io")
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), manager, nil, nil)
+	var priv ChannelDTO
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/channels"), manager,
+		map[string]any{"name": "war-room", "isPrivate": true}, &priv)
+
+	var unreads ChatUnreadListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/unreads"), editor, nil, &unreads)
+	for _, u := range unreads.Unreads {
+		if u.ChannelID == priv.ID {
+			t.Fatalf("non-member's unreads leak the private channel: %+v", u)
+		}
+	}
+	// A non-member can't mark it read either (404 hides its existence).
+	if code := chatDo(t, ts.URL, http.MethodPatch, chatURL("/api/chat/read", "channelId", priv.ID), editor,
+		map[string]any{"lastReadSeq": 1}, nil); code != http.StatusNotFound {
+		t.Fatalf("non-member mark-read status = %d, want 404", code)
+	}
+}
+
+func TestChat_TypingGates(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+	viewer := login(t, s, "u-viewer", "Vera", "viewer@x.io")
+
+	var list ChannelListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, &list)
+	root := list.Channels[0].ID
+
+	if code := chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/typing", "channelId", root), viewer, nil, nil); code != http.StatusForbidden {
+		t.Fatalf("viewer typing status = %d, want 403", code)
+	}
+	if code := chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/typing", "channelId", root), editor, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("editor typing status = %d, want 204", code)
+	}
+}
+
+func TestChat_ReactionEmojiAllowlist(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	editor := login(t, s, "u-editor", "Ed", "editor@x.io")
+
+	var list ChannelListDTO
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), editor, nil, &list)
+	root := list.Channels[0].ID
+	var posted MessageDTO
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), editor,
+		map[string]any{"body": "react to me", "clientMsgId": "cm-react"}, &posted)
+	seq := fmt.Sprintf("%d", posted.Seq)
+
+	if code := chatDo(t, ts.URL, http.MethodPost,
+		chatURL("/api/chat/reactions", "channelId", root, "seq", seq, "emoji", "%F0%9F%91%8D"), editor, nil, nil); code != http.StatusOK {
+		t.Fatalf("allowlisted reaction status = %d, want 200", code)
+	}
+	if code := chatDo(t, ts.URL, http.MethodPost,
+		chatURL("/api/chat/reactions", "channelId", root, "seq", seq, "emoji", "notanemoji"), editor, nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("off-palette reaction status = %d, want 400", code)
+	}
+	// Removal of an off-palette emoji is allowed (idempotent no-op here).
+	if code := chatDo(t, ts.URL, http.MethodDelete,
+		chatURL("/api/chat/reactions", "channelId", root, "seq", seq, "emoji", "notanemoji"), editor, nil, nil); code != http.StatusOK {
+		t.Fatalf("off-palette unreact status = %d, want 200", code)
+	}
+}
+
+func TestChat_MembersRoster(t *testing.T) {
+	s, roster := newChatTestServer(t)
+	roster.mu.Lock()
+	roster.rows = append(roster.rows, map[string]any{
+		"role": "EDITOR", "status": "PENDING",
+		"user": map[string]any{"id": "u-pending", "userName": "u-pending", "firstName": "", "lastName": "", "email": "p@x.io"},
+	})
+	roster.mu.Unlock()
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	viewer := login(t, s, "u-viewer", "Vera", "viewer@x.io")
+
+	var members []MemberDTO
+	if code := chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/members"), viewer, nil, &members); code != http.StatusOK {
+		t.Fatalf("members status = %d", code)
+	}
+	if len(members) != 4 {
+		t.Fatalf("got %d members, want the 4 ACTIVE ones: %+v", len(members), members)
+	}
+	for _, m := range members {
+		if m.UserID == "u-pending" {
+			t.Fatal("PENDING member leaked into the roster")
+		}
+	}
+}
+
+func TestChat_GroupOnlyMemberCanUseChat(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	// A user whose project access comes through a GROUP: authenticated, and
+	// their token can read the project, but they are absent from
+	// folderLevelProjectMembers (the fake roster). The phase-3 authorizer
+	// 403'd them out of chat entirely ("you do not have access"); they must
+	// now get in as a contributor.
+	grp := login(t, s, "u-group", "Georgia Group", "group@x.io")
+
+	var list ChannelListDTO
+	if code := chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), grp, nil, &list); code != http.StatusOK {
+		t.Fatalf("group-only channel list status = %d, want 200", code)
+	}
+	if !list.Capabilities.Post || !list.Capabilities.CreateChannel || list.Capabilities.Moderate {
+		t.Fatalf("group-only caps = %+v, want post+create true, moderate false", list.Capabilities)
+	}
+	root := list.Channels[0].ID
+
+	// They can post…
+	if code := chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/messages", "channelId", root), grp,
+		map[string]any{"body": "hi from a group", "clientMsgId": "cm-grp"}, nil); code != http.StatusCreated {
+		t.Fatalf("group-only post status = %d, want 201", code)
+	}
+	// …and read cursors work for them.
+	if code := chatDo(t, ts.URL, http.MethodPatch, chatURL("/api/chat/read", "channelId", root), grp,
+		map[string]any{"lastReadSeq": 1}, nil); code != http.StatusOK {
+		t.Fatalf("group-only mark-read status = %d, want 200", code)
+	}
+
+	// …but they cannot moderate someone else's channel.
+	manager := login(t, s, "u-manager", "Mia", "manager@x.io")
+	var ch ChannelDTO
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/channels"), manager,
+		map[string]any{"name": "mgr-room"}, &ch)
+	if code := chatDo(t, ts.URL, http.MethodDelete, chatURL("/api/chat/channels", "channelId", ch.ID), grp, nil, nil); code != http.StatusForbidden {
+		t.Fatalf("group-only archive-of-others status = %d, want 403", code)
+	}
+}
+
+func TestChat_GroupOnlyMemberNotAddableToPrivateChannel(t *testing.T) {
+	s, _ := newChatTestServer(t)
+	ts := httptest.NewServer(s.routes())
+	t.Cleanup(ts.Close)
+	manager := login(t, s, "u-manager", "Mia", "manager@x.io")
+
+	chatDo(t, ts.URL, http.MethodGet, chatURL("/api/chat/channels"), manager, nil, nil)
+	var priv ChannelDTO
+	chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/channels"), manager,
+		map[string]any{"name": "secret", "isPrivate": true}, &priv)
+
+	// A listed EDITOR can be added…
+	if code := chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/channels/members", "channelId", priv.ID), manager,
+		map[string]any{"userId": "u-editor"}, nil); code != http.StatusOK {
+		t.Fatalf("adding a listed member status = %d, want 200", code)
+	}
+	// …but a group-only user (not individually listed) can't be confirmed as
+	// a project member, so the add is refused.
+	if code := chatDo(t, ts.URL, http.MethodPost, chatURL("/api/chat/channels/members", "channelId", priv.ID), manager,
+		map[string]any{"userId": "u-group"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("adding a group-only member status = %d, want 400", code)
 	}
 }

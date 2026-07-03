@@ -147,6 +147,67 @@ func TestHub_EntitledVisibility(t *testing.T) {
 	}
 }
 
+func TestHub_EphemeralFramesAreIDlessAndNeverReplayed(t *testing.T) {
+	h := newTestHub()
+	sub, _, _, err := h.Subscribe("p", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Publish("p", Event{Type: "message.created", V: 1, Data: 1}, Vis{}); err != nil {
+		t.Fatal(err)
+	}
+	durable := recvFrame(t, sub)
+	if durable.ID == "" {
+		t.Fatal("durable frame lost its id")
+	}
+	if err := h.PublishEphemeral("p", Event{Type: "typing", V: 1, Data: 2}, Vis{}); err != nil {
+		t.Fatal(err)
+	}
+	eph := recvFrame(t, sub)
+	if eph.ID != "" {
+		t.Fatalf("ephemeral frame has id %q, want none", eph.ID)
+	}
+
+	// Resuming from the durable frame's id replays nothing: the ephemeral
+	// publish neither entered the ring nor advanced the sequence.
+	_, replay, reset, err := h.Subscribe("p", durable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset || len(replay) != 0 {
+		t.Fatalf("after ephemeral publish: replay=%d reset=%v, want 0/false", len(replay), reset)
+	}
+}
+
+func TestHub_UserOnlyVisibility(t *testing.T) {
+	h := newTestHub()
+	ctx := context.Background()
+	f := Frame{vis: Vis{UserOnly: true, ExtraUserIDs: []string{"u-member"}}}
+	emailF := Frame{vis: Vis{UserOnly: true, ExtraUserIDs: []string{"m@x.io"}}}
+
+	cases := []struct {
+		name string
+		id   Identity
+		f    Frame
+		want bool
+	}{
+		{"targeted user", Identity{UserID: "u-member"}, f, true},
+		{"other user", Identity{UserID: "u-editor"}, f, false},
+		{"project admin still excluded", Identity{UserID: "u-admin"}, f, false},
+		{"email-keyed target", Identity{Email: "M@X.IO"}, emailF, true},
+		{"email-keyed, other user", Identity{UserID: "u-editor", Email: "e@x.io"}, emailF, false},
+	}
+	for _, c := range cases {
+		got, err := h.Entitled(ctx, "tok", c.id, "p", c.f)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestHub_SlowSubscriberDisconnected(t *testing.T) {
 	h := newTestHub()
 	sub, _, _, err := h.Subscribe("p", "")

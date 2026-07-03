@@ -82,6 +82,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/chat/thread", prot(s.handleChatThread))
 	mux.HandleFunc("POST /api/chat/reactions", prot(s.handleChatReactionAdd))
 	mux.HandleFunc("DELETE /api/chat/reactions", prot(s.handleChatReactionRemove))
+	mux.HandleFunc("PATCH /api/chat/read", prot(s.handleChatRead))
+	mux.HandleFunc("GET /api/chat/unreads", prot(s.handleChatUnreads))
+	mux.HandleFunc("POST /api/chat/typing", prot(s.handleChatTyping))
+	mux.HandleFunc("GET /api/chat/members", prot(s.handleChatMembers))
 
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))

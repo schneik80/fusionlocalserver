@@ -48,11 +48,12 @@ type Store struct {
 
 // projectState is the in-memory index for one project's chat data. mu
 // serializes every read and write for the project; channel message state
-// loads lazily on first touch of each channel.
+// and read cursors load lazily on first touch.
 type projectState struct {
 	mu       sync.Mutex
 	meta     *projectMeta
 	channels map[string]*channelState
+	cursors  *cursorsFile
 }
 
 // channelState is a channel's replayed message log plus its open append

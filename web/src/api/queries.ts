@@ -27,9 +27,15 @@ import type {
   WikiPage,
   WikiPageContent,
 } from './types'
-import type { ChatChannelList, ChatMessageList } from '../chat/types'
+import type {
+  ChatChannelList,
+  ChatMember,
+  ChatMessageList,
+  ChatUnreadList,
+} from '../chat/types'
 import {
   appendPendingMessage,
+  applyUnread,
   removePendingMessage,
   upsertMessage,
 } from '../chat/cache'
@@ -446,9 +452,84 @@ export function useChatMutations(projectId: string | null, channelId: string | n
 export const useCreateChatChannel = (projectId: string | null) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { name: string; topic?: string; isPrivate?: boolean }) =>
+    mutationFn: (body: { name: string; topic?: string; isPrivate?: boolean; memberIds?: string[] }) =>
       api.chatCreateChannel(projectId!, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] }),
+  })
+}
+
+// useChatMembers is the ACTIVE project roster for private-channel member
+// pickers (phase 5). Gated on `enabled` so it only fetches while a picker
+// is actually open.
+export const useChatMembers = (
+  projectId: string | null,
+  enabled: boolean,
+): UseQueryResult<ChatMember[]> =>
+  useQuery({
+    queryKey: ['chatMembers', projectId],
+    queryFn: () => api.chatMembers(projectId!),
+    enabled: enabled && !!projectId,
+    staleTime: 60_000,
+  })
+
+// useChatChannelAdmin bundles the channel management writes (phase 5):
+// rename/topic, archive, private-channel ACL changes. Everything settles by
+// refetching the channel list — these are rare operations and membership
+// changes what the caller may see.
+export function useChatChannelAdmin(projectId: string | null) {
+  const qc = useQueryClient()
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] })
+    void qc.invalidateQueries({ queryKey: ['chatUnreads', projectId] })
+  }
+  const update = useMutation({
+    mutationFn: (args: { channelId: string; name?: string; topic?: string }) =>
+      api.chatUpdateChannel(projectId!, args.channelId, { name: args.name, topic: args.topic }),
+    onSuccess: invalidate,
+  })
+  const archive = useMutation({
+    mutationFn: (channelId: string) => api.chatArchiveChannel(projectId!, channelId),
+    onSuccess: invalidate,
+  })
+  const addMember = useMutation({
+    mutationFn: (args: { channelId: string; userId: string }) =>
+      api.chatAddChannelMember(projectId!, args.channelId, args.userId),
+    onSuccess: invalidate,
+  })
+  const removeMember = useMutation({
+    mutationFn: (args: { channelId: string; userId: string }) =>
+      api.chatRemoveChannelMember(projectId!, args.channelId, args.userId),
+    onSuccess: invalidate,
+  })
+  return { update, archive, addMember, removeMember }
+}
+
+// useChatUnreads is the caller's per-channel unread summary (phase 4). It
+// runs whenever the project is open — not just on the Chat tab — because it
+// feeds the Chat tab badge. Live updates come from channel.activity /
+// read.updated events; the interval only reconciles drift (e.g. deletions
+// of unread messages) and serves as the fallback while the stream is down.
+export const useChatUnreads = (
+  projectId: string | null,
+  live: boolean,
+): UseQueryResult<ChatUnreadList> =>
+  useQuery({
+    queryKey: ['chatUnreads', projectId],
+    queryFn: () => api.chatUnreads(projectId!),
+    enabled: !!projectId,
+    staleTime: 0,
+    refetchInterval: live ? 60_000 : 10_000,
+  })
+
+// useMarkChatRead advances the caller's read cursor; the response (the
+// fresh unread summary) lands straight in the unreads cache. Other tabs
+// hear about it via the read.updated SSE echo.
+export const useMarkChatRead = (projectId: string | null) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (args: { channelId: string; lastReadSeq: number }) =>
+      api.chatMarkRead(projectId!, args.channelId, args.lastReadSeq),
+    onSuccess: (u) => applyUnread(qc, projectId!, u),
   })
 }
 

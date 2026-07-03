@@ -1,8 +1,8 @@
-import { faComments, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faComments, faFaceSmile, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Avatar, Box, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
-import { useEffect, useRef } from 'react'
-import type { ChatCaps, ChatMessage } from './types'
+import { Avatar, Box, Chip, IconButton, Popover, Stack, Tooltip, Typography } from '@mui/material'
+import { useEffect, useRef, useState } from 'react'
+import { REACTION_EMOJI, type ChatCaps, type ChatMessage } from './types'
 import { fmtChatTime } from './fmt'
 
 // MessageList renders a scrollable, ascending timeline. It backs both the
@@ -84,6 +84,7 @@ function MessageRow({
   onToggleReaction: (seq: number, emoji: string, on: boolean) => void
 }) {
   const own = meId !== '' && msg.authorId === meId
+  const [pickerAnchor, setPickerAnchor] = useState<HTMLElement | null>(null)
 
   // Group reactions into per-emoji chips, marking the ones I placed.
   const grouped = new Map<string, { count: number; mine: boolean }>()
@@ -130,6 +131,13 @@ function MessageRow({
             className="msg-actions"
             sx={{ opacity: 0, transition: 'opacity 120ms' }}
           >
+            {canReact && !msg.deleted && !msg.pending && (
+              <Tooltip title="Add reaction">
+                <IconButton size="small" onClick={(e) => setPickerAnchor(e.currentTarget)}>
+                  <FontAwesomeIcon icon={faFaceSmile} size="xs" />
+                </IconButton>
+              </Tooltip>
+            )}
             {onOpenThread && !msg.deleted && !msg.pending && (
               <Tooltip title="Reply in thread">
                 <IconButton size="small" onClick={() => onOpenThread(msg.seq)}>
@@ -155,7 +163,7 @@ function MessageRow({
             {msg.body}
           </Typography>
         )}
-        {(grouped.size > 0 || false) && (
+        {grouped.size > 0 && (
           <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
             {[...grouped.entries()].map(([emoji, g]) => (
               <Chip
@@ -168,6 +176,28 @@ function MessageRow({
             ))}
           </Stack>
         )}
+        <Popover
+          open={pickerAnchor !== null}
+          anchorEl={pickerAnchor}
+          onClose={() => setPickerAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        >
+          <Stack direction="row" sx={{ p: 0.5, maxWidth: 220, flexWrap: 'wrap' }}>
+            {REACTION_EMOJI.map((emoji) => (
+              <IconButton
+                key={emoji}
+                size="small"
+                sx={{ fontSize: 18, borderRadius: 1 }}
+                onClick={() => {
+                  onToggleReaction(msg.seq, emoji, !grouped.get(emoji)?.mine)
+                  setPickerAnchor(null)
+                }}
+              >
+                {emoji}
+              </IconButton>
+            ))}
+          </Stack>
+        </Popover>
         {onOpenThread && msg.replyCount > 0 && (
           <Chip
             size="small"

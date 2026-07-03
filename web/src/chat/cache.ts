@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
+import { clearTyping, noteTyping } from './typing'
 import type {
   ChatActivityEvent,
   ChatChannel,
@@ -8,13 +9,16 @@ import type {
   ChatMessage,
   ChatMessageEvent,
   ChatMessageList,
+  ChatTypingEvent,
+  ChatUnread,
+  ChatUnreadList,
 } from './types'
 
 // Cache appliers: SSE events and optimistic sends both write straight into
 // the react-query caches (['chatChannels', pid], ['chatMessages', pid, cid],
-// ['chatThread', pid, cid, rootSeq]) instead of invalidating — the stream
-// IS the refetch. Caches that don't exist yet are left alone; the eventual
-// initial fetch is authoritative.
+// ['chatThread', pid, cid, rootSeq], ['chatUnreads', pid]) instead of
+// invalidating — the stream IS the refetch. Caches that don't exist yet are
+// left alone; the eventual initial fetch is authoritative.
 
 // applyChatEvent folds one server event into the caches.
 export function applyChatEvent(qc: QueryClient, projectId: string, ev: ChatEvent) {
@@ -23,6 +27,7 @@ export function applyChatEvent(qc: QueryClient, projectId: string, ev: ChatEvent
       const { channelId, message } = ev.data as ChatMessageEvent
       upsertMessage(qc, projectId, channelId, message)
       if (message.threadRoot) bumpRootCounters(qc, projectId, channelId, message, +1)
+      clearTyping(projectId, channelId, message.authorId)
       break
     }
     case 'message.updated':
@@ -43,6 +48,9 @@ export function applyChatEvent(qc: QueryClient, projectId: string, ev: ChatEvent
     case 'channel.archived': {
       const { channel } = ev.data as ChatChannelEvent
       upsertChannel(qc, projectId, channel)
+      // A new channel needs an unread entry; an archived one must drop its
+      // badge. The summary is cheap — refetch rather than reconstruct.
+      void qc.invalidateQueries({ queryKey: ['chatUnreads', projectId] })
       break
     }
     case 'channel.member_added':
@@ -50,23 +58,23 @@ export function applyChatEvent(qc: QueryClient, projectId: string, ev: ChatEvent
       // Membership changes what THIS user may see (they might be the
       // subject) — let the server recompute the visible list.
       void qc.invalidateQueries({ queryKey: ['chatChannels', projectId] })
+      void qc.invalidateQueries({ queryKey: ['chatUnreads', projectId] })
       break
     case 'channel.activity': {
       const { channelId, lastMessageSeq } = ev.data as ChatActivityEvent
-      qc.setQueryData<ChatChannelList>(['chatChannels', projectId], (cur) =>
-        cur
-          ? {
-              ...cur,
-              channels: cur.channels.map((c) =>
-                c.id === channelId ? { ...c, lastActivitySeq: lastMessageSeq } : c,
-              ),
-            }
-          : cur,
-      )
+      bumpUnread(qc, projectId, channelId, lastMessageSeq)
       break
     }
+    case 'read.updated':
+      // User-only event: this user marked a channel read in some tab; the
+      // payload is the server-computed unread summary for that channel.
+      applyUnread(qc, projectId, ev.data as ChatUnread)
+      break
+    case 'typing':
+      noteTyping(projectId, ev.data as ChatTypingEvent)
+      break
     default:
-      // Future event types (phase 4 typing/read syncs) are ignorable here.
+      // Unknown (future) event types are ignorable here.
       break
   }
 }
@@ -176,15 +184,50 @@ function bumpRootCounters(
   })
 }
 
+// applyUnread replaces one channel's unread summary with a server-computed
+// one (mark-read response, or the read.updated echo from another tab).
+export function applyUnread(qc: QueryClient, projectId: string, u: ChatUnread) {
+  qc.setQueryData<ChatUnreadList>(['chatUnreads', projectId], (cur) => {
+    if (!cur) return cur
+    const ix = cur.unreads.findIndex((e) => e.channelId === u.channelId)
+    if (ix < 0) return { unreads: [...cur.unreads, u] }
+    // Cursors only move forward; an out-of-order echo must not rewind.
+    if (cur.unreads[ix].lastReadSeq > u.lastReadSeq) return cur
+    const unreads = cur.unreads.slice()
+    unreads[ix] = u
+    return { unreads }
+  })
+}
+
+// bumpUnread counts one new message (channel.activity) against the local
+// unread summary. The viewing tab immediately marks itself read again; a
+// hidden channel's badge grows. Exactness self-heals on the next refetch.
+function bumpUnread(qc: QueryClient, projectId: string, channelId: string, lastMessageSeq: number) {
+  qc.setQueryData<ChatUnreadList>(['chatUnreads', projectId], (cur) => {
+    if (!cur) return cur
+    const ix = cur.unreads.findIndex((e) => e.channelId === channelId)
+    if (ix < 0) {
+      // Unknown channel (created since the last fetch) — resync instead.
+      void qc.invalidateQueries({ queryKey: ['chatUnreads', projectId] })
+      return cur
+    }
+    const e = cur.unreads[ix]
+    // Guard against re-deliveries and refetch races: only a genuinely new
+    // seq past the cursor counts.
+    if (lastMessageSeq <= e.latestSeq || lastMessageSeq <= e.lastReadSeq) return cur
+    const unreads = cur.unreads.slice()
+    unreads[ix] = { ...e, latestSeq: lastMessageSeq, unreadCount: e.unreadCount + 1 }
+    return { unreads }
+  })
+}
+
 function upsertChannel(qc: QueryClient, projectId: string, channel: ChatChannel) {
   qc.setQueryData<ChatChannelList>(['chatChannels', projectId], (cur) => {
     if (!cur) return cur
     const ix = cur.channels.findIndex((c) => c.id === channel.id)
     const channels =
       ix >= 0
-        ? cur.channels.map((c) =>
-            c.id === channel.id ? { ...channel, lastActivitySeq: c.lastActivitySeq } : c,
-          )
+        ? cur.channels.map((c) => (c.id === channel.id ? channel : c))
         : [...cur.channels, channel]
     return { ...cur, channels }
   })

@@ -1,5 +1,6 @@
-import { Box, Paper, Tab, Tabs } from '@mui/material'
+import { Box, Paper, Stack, Tab, Tabs } from '@mui/material'
 import { useState } from 'react'
+import { useChatUnreads } from '../api/queries'
 import { ChatApp } from '../chat/ChatApp'
 import { useChatEvents } from '../chat/useChatEvents'
 import { useNav } from '../state/nav'
@@ -30,6 +31,11 @@ export function ProjectPanel() {
   // events keep the channel list and activity badges warm from any tab. `live`
   // demotes chat's polling to a fallback while the stream is healthy.
   const { live } = useChatEvents(nav.project?.id ?? null)
+
+  // Unread total for the Chat tab badge — server read cursors, kept live by
+  // the same stream (channel.activity / read.updated events).
+  const unreadsQ = useChatUnreads(nav.project?.id ?? null, live)
+  const totalUnread = (unreadsQ.data?.unreads ?? []).reduce((n, u) => n + u.unreadCount, 0)
 
   // Inside a folder the Wiki/Chat tabs are hidden, so the dashboard shows
   // regardless of the chosen tab. The choice itself is kept, not reset —
@@ -66,7 +72,35 @@ export function ProjectPanel() {
       >
         <Tab label="Dashboard" value="dashboard" />
         {atRoot && <Tab label="Wiki" value="wiki" />}
-        {atRoot && <Tab label="Chat" value="chat" />}
+        {atRoot && (
+          <Tab
+            value="chat"
+            label={
+              totalUnread > 0 ? (
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  <span>Chat</span>
+                  <Box
+                    component="span"
+                    sx={{
+                      px: 0.75,
+                      minWidth: 18,
+                      borderRadius: 9,
+                      bgcolor: 'primary.main',
+                      color: 'primary.contrastText',
+                      fontSize: 11,
+                      lineHeight: '18px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </Box>
+                </Stack>
+              ) : (
+                'Chat'
+              )
+            }
+          />
+        )}
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'dashboard' ? 'flex' : 'none' }}>
         <ProjectDashboard />

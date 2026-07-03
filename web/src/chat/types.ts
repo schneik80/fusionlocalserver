@@ -11,11 +11,6 @@ export interface ChatChannel {
   createdAt: string
   archivedAt?: string
   memberIds?: string[]
-  // lastActivitySeq is CLIENT-ONLY: patched into the cache by
-  // channel.activity SSE events, never sent by REST. The sidebar compares
-  // it against the last seq the user saw to bold channels with unseen
-  // activity (proper read cursors land in phase 4).
-  lastActivitySeq?: number
 }
 
 export interface ChatReaction {
@@ -50,6 +45,33 @@ export interface ChatCaps {
   post: boolean
   createChannel: boolean
   moderate: boolean
+}
+
+// REACTION_EMOJI mirrors chat.AllowedEmoji in chat/emoji.go — the server
+// refuses reaction adds outside this palette, so the picker offers exactly
+// these.
+export const REACTION_EMOJI = ['👍', '👎', '❤️', '😄', '🎉', '🚀', '👀', '✅', '❓', '😕']
+
+// ChatUnread mirrors ChatUnreadDTO: one channel's unread summary for the
+// signed-in user. Also the payload of the user-only read.updated event.
+export interface ChatUnread {
+  channelId: string
+  lastReadSeq: number
+  unreadCount: number
+  latestSeq: number
+}
+
+export interface ChatUnreadList {
+  unreads: ChatUnread[]
+}
+
+// ChatMember is one ACTIVE project member (GET /api/chat/members) — the
+// candidate pool for private-channel ACLs. Mirrors the server's MemberDTO.
+export interface ChatMember {
+  userId: string
+  name: string
+  email?: string
+  role: string
 }
 
 export interface ChatChannelList {
@@ -92,4 +114,11 @@ export interface ChatMemberEvent {
 export interface ChatActivityEvent {
   channelId: string
   lastMessageSeq: number
+}
+
+// ChatTypingEvent is the ephemeral typing ping (no SSE id; never replayed).
+export interface ChatTypingEvent {
+  channelId: string
+  userId: string
+  name: string
 }
