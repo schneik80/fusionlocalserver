@@ -734,7 +734,7 @@ function UsesTab({ item, hubId, cvId, active }: { item: Item; hubId: string | nu
   const nodes = componentRefsToNodes(q.data ?? [])
   const noun = isDrawing ? 'source design' : 'sub-component'
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1.5} sx={{ height: '100%' }}>
       {nodes.length === 0 ? (
         <TabEmpty text={isDrawing ? 'No source design' : 'No sub-components'} />
       ) : (
@@ -779,7 +779,7 @@ function WhereUsedTab({ item, hubId, cvId, active }: { item: Item; hubId: string
     : []
   const relations = [...parents, ...drawings]
   return (
-    <Stack spacing={1}>
+    <Stack spacing={1} sx={{ height: '100%' }}>
       <FormControlLabel
         sx={{ m: 0 }}
         control={<Checkbox size="small" checked={showDrawings} onChange={(e) => setShowDrawings(e.target.checked)} />}

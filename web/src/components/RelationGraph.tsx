@@ -31,7 +31,10 @@ const W = 100
 const H = 92
 const HGAP = 124
 const VGAP = 172
-const VIEW_H = 360
+// The viewport grows to fill whatever vertical space its tab gives it (see
+// the flex:1 below); MIN_VIEW_H is just a floor so a very short panel still
+// shows a usable canvas (and scrolls) rather than collapsing.
+const MIN_VIEW_H = 260
 
 // vertical cubic bezier from an upper point to a lower point (Drawflow-style)
 function edgePath(sx: number, sy: number, ex: number, ey: number): string {
@@ -124,6 +127,18 @@ export default function RelationGraph({
   // re-fit whenever the content changes
   useEffect(fit, [bounds.w, bounds.h]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ...and whenever the viewport itself resizes, so the graph keeps filling
+  // the vertical space its tab gives it (panel drag, window resize, tab show).
+  const fitRef = useRef(fit)
+  fitRef.current = fit
+  useEffect(() => {
+    const vp = vpRef.current
+    if (!vp || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => fitRef.current())
+    ro.observe(vp)
+    return () => ro.disconnect()
+  }, [])
+
   const zoomAt = (factor: number, cx: number, cy: number) =>
     setView((v) => {
       const scale = clamp(v.scale * factor, 0.3, 2)
@@ -156,7 +171,8 @@ export default function RelationGraph({
       onMouseLeave={() => (drag.current = null)}
       sx={{
         position: 'relative',
-        height: VIEW_H,
+        flex: 1,
+        minHeight: MIN_VIEW_H,
         overflow: 'hidden',
         border: 1,
         borderColor: 'divider',
@@ -197,11 +213,11 @@ export default function RelationGraph({
 
       {/* toolbar */}
       <Box sx={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 0.5, alignItems: 'center' }}>
-        <ToolBtn label="Zoom out" icon={faMagnifyingGlassMinus} onClick={() => zoomAt(0.83, (vpRef.current?.clientWidth ?? 0) / 2, VIEW_H / 2)} />
+        <ToolBtn label="Zoom out" icon={faMagnifyingGlassMinus} onClick={() => zoomAt(0.83, (vpRef.current?.clientWidth ?? 0) / 2, (vpRef.current?.clientHeight ?? 0) / 2)} />
         <Typography variant="caption" sx={{ minWidth: 34, textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: 'text.secondary' }}>
           {Math.round(view.scale * 100)}%
         </Typography>
-        <ToolBtn label="Zoom in" icon={faMagnifyingGlassPlus} onClick={() => zoomAt(1.2, (vpRef.current?.clientWidth ?? 0) / 2, VIEW_H / 2)} />
+        <ToolBtn label="Zoom in" icon={faMagnifyingGlassPlus} onClick={() => zoomAt(1.2, (vpRef.current?.clientWidth ?? 0) / 2, (vpRef.current?.clientHeight ?? 0) / 2)} />
         <ToolBtn label="Fit to view" icon={faArrowsToDot} onClick={fit} />
       </Box>
     </Box>
