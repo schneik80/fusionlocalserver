@@ -65,10 +65,20 @@ export function ItemRow({
   return (
     <ListItem
       disablePadding
+      // The pin star stays quiet until wanted: hidden on unpinned rows,
+      // revealed on hover or keyboard focus, and kept on permanently once the
+      // item is pinned (removing the pin returns it to hover-only). The
+      // right-padding is reserved either way (see ListItemButton pr) so the
+      // star fading in never reflows the name.
+      sx={{
+        '& .pin-star': { opacity: pinned ? 1 : 0, transition: 'opacity 120ms' },
+        '&:hover .pin-star, &:focus-within .pin-star': { opacity: 1 },
+      }}
       secondaryAction={
         showStar ? (
           <Tooltip title={pinned ? 'Unpin' : 'Pin'}>
             <IconButton
+              className="pin-star"
               edge="end"
               size="small"
               onClick={(e) => {
