@@ -10,24 +10,58 @@ import { useUploads } from '../state/uploads'
 import { Column } from './Column'
 import { ItemRow } from './ItemRow'
 
-type SortKey = 'name' | 'modified'
+type SortKey = 'name' | 'modified' | 'type'
+
+const byName = (a: Item, b: Item) =>
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+
+// typeOrder groups the contents list by document type for the "type" sort:
+// folders first, then designs (assembly → part → plain), configured designs,
+// drawings (dwg → template), and the ECAD kinds — mirroring typeTag's
+// taxonomy. Subtypes are best-effort: a design whose assembly/part subtype
+// isn't in the list data yet still lands with the other designs.
+function typeOrder(item: Item): number {
+  if (item.isContainer) return 0
+  switch (item.kind) {
+    case 'design':
+      return item.subtype === 'assembly' ? 10 : item.subtype === 'part' ? 11 : 12
+    case 'configured':
+      return 20
+    case 'drawing':
+      return item.subtype === 'template' ? 31 : 30
+    case 'schematic':
+      return 40
+    case 'pcb':
+      return 50
+    case 'ecad':
+      return 60
+    default:
+      return 90
+  }
+}
 
 // sortItems orders the contents list. "name" groups containers (folders) first,
 // then alphabetises; "modified" is newest-first, with undated rows (folders)
-// falling to the bottom by name.
+// falling to the bottom by name; "type" groups by document kind, name within
+// each group.
 function sortItems(list: Item[], sort: SortKey): Item[] {
   const arr = [...list]
   if (sort === 'modified') {
     arr.sort((a, b) => {
       const am = a.modifiedOn ? Date.parse(a.modifiedOn) : -Infinity
       const bm = b.modifiedOn ? Date.parse(b.modifiedOn) : -Infinity
-      if (am !== bm) return bm - am
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      return am !== bm ? bm - am : byName(a, b)
+    })
+  } else if (sort === 'type') {
+    arr.sort((a, b) => {
+      const at = typeOrder(a)
+      const bt = typeOrder(b)
+      return at !== bt ? at - bt : byName(a, b)
     })
   } else {
     arr.sort((a, b) => {
       if (a.isContainer !== b.isContainer) return a.isContainer ? -1 : 1
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      return byName(a, b)
     })
   }
   return arr
@@ -57,6 +91,9 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (v: SortKey) 
         </MenuItem>
         <MenuItem selected={value === 'modified'} onClick={() => pick('modified')}>
           Last modified
+        </MenuItem>
+        <MenuItem selected={value === 'type'} onClick={() => pick('type')}>
+          Type
         </MenuItem>
       </Menu>
     </>
