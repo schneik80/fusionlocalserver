@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Fusion Local Server (tray)
+Comment=Tray icon to start, stop, and monitor the local Fusion Team server
+Exec=@EXEC@
+Icon=network-server
+Terminal=false
+Categories=Network;System;Utility;
+Keywords=fusion;server;aps;autodesk;tray;
+StartupNotify=false

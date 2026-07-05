@@ -26,6 +26,10 @@ web/dist/
 *.out
 vendor/
 
+# Python (desktop/ manager apps)
+__pycache__/
+*.pyc
+
 # Dependency cache
 go/pkg/
 
