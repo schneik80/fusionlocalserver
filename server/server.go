@@ -268,6 +268,10 @@ func Run(opts Options) error {
 			Addr:              addr,
 			Handler:           s.routes(),
 			ReadHeaderTimeout: 10 * time.Second,
+			// Route the server's internal complaints through slog, demoting
+			// no-handshake disconnect noise (probes, browser preconnects) to
+			// debug — see httpErrorLog.
+			ErrorLog: httpErrorLog(logger),
 		}
 
 		logger.Info("server starting",

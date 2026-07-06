@@ -2,9 +2,11 @@ package server
 
 import (
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/schneik80/fusionlocalserver/api"
 	"github.com/schneik80/fusionlocalserver/config"
@@ -62,4 +64,39 @@ func openLogFile() (*os.File, string, error) {
 		return nil, "", err
 	}
 	return f, path, nil
+}
+
+// httpErrorLog adapts http.Server.ErrorLog onto slog, so the server's
+// internal complaints share the process sinks instead of leaking to stderr —
+// and so the noisiest of them can be demoted. Bare connections that open and
+// close without a TLS handshake (port-liveness probes, browsers'
+// speculative preconnects, scanners) each log "http: TLS handshake error
+// ... EOF"; at one line per probe they flood the log while signalling
+// nothing, so that class drops to debug. Real handshake failures (bad
+// certs, protocol mismatches) and everything else stay at error.
+func httpErrorLog(logger *slog.Logger) *log.Logger {
+	return log.New(httpErrLogWriter{logger: logger}, "", 0)
+}
+
+type httpErrLogWriter struct{ logger *slog.Logger }
+
+func (w httpErrLogWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimSpace(string(p))
+	if isHandshakeNoise(msg) {
+		w.logger.Debug(msg)
+	} else {
+		w.logger.Error(msg)
+	}
+	return len(p), nil
+}
+
+// isHandshakeNoise reports whether an http.Server error line is a
+// no-handshake disconnect rather than a genuine TLS failure.
+func isHandshakeNoise(msg string) bool {
+	if !strings.Contains(msg, "TLS handshake error") {
+		return false
+	}
+	return strings.HasSuffix(msg, ": EOF") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "i/o timeout")
 }
