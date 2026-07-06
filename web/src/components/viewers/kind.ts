@@ -11,7 +11,10 @@ export function extOf(name: string): string {
   return m ? m[1].toLowerCase() : ''
 }
 
-const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif', 'apng'])
+// Every raster/vector format browsers render natively in an <img>. Formats a
+// browser can't display (tiff, heic, raw, …) are deliberately absent: listing
+// them as images would embed references that render as broken images.
+const IMAGE = new Set(['png', 'jpg', 'jpeg', 'jfif', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif', 'apng'])
 const VIDEO = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'ogg'])
 // Plain-text / source formats the code viewer renders (g-code and markdown are
 // routed separately, above).

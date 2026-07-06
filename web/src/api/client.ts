@@ -118,6 +118,14 @@ export const api = {
   folderContents: (hubId: string, folderId: string) =>
     request<Item[]>(`/api/folders/contents${qs({ hubId, folderId })}`),
 
+  // browseContents lists one folder (or, with folderId omitted, the project
+  // root) through the Data Management API for the in-place hub browser. Unlike
+  // folderContents it sees everything in the folder — DM-created files and
+  // folders (e.g. wiki images) are invisible to the GraphQL listing. Ids are
+  // DM folder urns / item lineage urns; dmProjectId is the project's altId.
+  browseContents: (hubId: string, dmProjectId: string, folderId?: string) =>
+    request<Item[]>(`/api/browse/contents${qs({ hubId, dmProjectId, folderId })}`),
+
   itemDetails: (hubId: string, itemId: string) =>
     request<Details>(`/api/items/details${qs({ hubId, itemId })}`),
 

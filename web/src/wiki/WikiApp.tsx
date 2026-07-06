@@ -338,6 +338,8 @@ export function WikiApp({ active = true }: { active?: boolean }) {
             onPublish={canWrite ? () => void handlePublish() : undefined}
             publishing={publishMut.isPending}
             onUploadImage={canWrite ? uploadImage : undefined}
+            hubId={hubId}
+            hubProject={project}
           />
         ) : selectedEntry?.kind === 'draft' ? (
           <DraftReader

@@ -31,6 +31,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/projects", prot(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/contents", prot(s.handleProjectContents))
 	mux.HandleFunc("GET /api/folders/contents", prot(s.handleFolderContents))
+	// DM-space folder listing for the in-place hub browser (sees content the
+	// GraphQL listing misses, e.g. wiki image folders).
+	mux.HandleFunc("GET /api/browse/contents", prot(s.handleBrowseContents))
 	mux.HandleFunc("GET /api/items/details", prot(s.handleItemDetails))
 	mux.HandleFunc("GET /api/items/location", prot(s.handleItemLocation))
 	// Raw bytes of an uploaded (non-native) file's tip, for the preview viewers.

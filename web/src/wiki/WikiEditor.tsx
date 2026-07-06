@@ -2,7 +2,9 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBold,
   faCode,
+  faGlobe,
   faImage,
+  faImages,
   faItalic,
   faLink,
   faListUl,
@@ -28,7 +30,15 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Item } from '../api/types'
+import {
+  HubBrowserDialog,
+  hubFileSrc,
+  isImageDocument,
+  type HubPick,
+} from '../components/hubbrowser/HubBrowserDialog'
 import type { WikiDraft } from './draftStore'
+import { ImageUrlDialog } from './ImageUrlDialog'
 import { Markdown } from './Markdown'
 
 interface WikiEditorProps {
@@ -43,6 +53,10 @@ interface WikiEditorProps {
   // Uploads an image and resolves to the markdown src + alt to embed. Undefined
   // falls back to inserting an `![alt](url)` placeholder for a manual URL.
   onUploadImage?: (file: File) => Promise<{ src: string; alt: string }>
+  // Enables the "embed image from hub" browser: the hub to browse and,
+  // optionally, the project to open it at (usually the wiki's own project).
+  hubId?: string | null
+  hubProject?: Item | null
   saved: boolean // true when the working copy is flushed to IndexedDB
 }
 
@@ -94,6 +108,15 @@ function insertImage(view: EditorView) {
   view.focus()
 }
 
+// insertImageRef drops a complete image reference (alt + src both known) at the
+// cursor, replacing any selection — the shared tail of the upload / URL / hub
+// -embed actions.
+function insertImageRef(view: EditorView, alt: string, src: string) {
+  const { from, to } = view.state.selection.main
+  view.dispatch({ changes: { from, to, insert: `![${alt}](${src})` } })
+  view.focus()
+}
+
 export function WikiEditor({
   draft,
   markdownValue,
@@ -104,6 +127,8 @@ export function WikiEditor({
   onPublish,
   publishing,
   onUploadImage,
+  hubId,
+  hubProject,
   saved,
 }: WikiEditorProps) {
   const theme = useTheme()
@@ -111,6 +136,8 @@ export function WikiEditor({
   const viewRef = useRef<EditorView | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [urlDialogOpen, setUrlDialogOpen] = useState(false)
+  const [hubPickerOpen, setHubPickerOpen] = useState(false)
   // Hold the latest onChange in a ref so the update listener (installed once per
   // document) always calls the current callback without re-creating the editor.
   const onChangeRef = useRef(onChangeMarkdown)
@@ -220,16 +247,23 @@ export function WikiEditor({
     setUploadingImage(true)
     try {
       const { src, alt } = await onUploadImage(file)
-      const v = viewRef.current
-      const { from, to } = v.state.selection.main
-      v.dispatch({ changes: { from, to, insert: `![${alt}](${src})` } })
-      v.focus()
+      insertImageRef(viewRef.current, alt, src)
     } catch {
       // eslint-disable-next-line no-alert
       alert('Image upload failed.')
     } finally {
       setUploadingImage(false)
     }
+  }
+
+  // handleHubPick embeds a document picked in the hub browser as an image
+  // reference streaming through the same-origin file endpoint.
+  function handleHubPick(pick: HubPick) {
+    setHubPickerOpen(false)
+    const src = hubFileSrc(pick)
+    if (!src || !pick.item || !viewRef.current) return
+    const alt = pick.item.name.replace(/\.[^./\\]+$/, '')
+    insertImageRef(viewRef.current, alt, src)
   }
 
   const status = saved ? 'Saved locally' : 'Saving…'
@@ -295,6 +329,18 @@ export function WikiEditor({
           busy={uploadingImage}
           onClick={onImageClick}
         />
+        <ToolBtn
+          title="Insert image from a public URL"
+          icon={faGlobe}
+          onClick={() => setUrlDialogOpen(true)}
+        />
+        {hubId && (
+          <ToolBtn
+            title="Embed an image stored in this hub"
+            icon={faImages}
+            onClick={() => setHubPickerOpen(true)}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -323,6 +369,27 @@ export function WikiEditor({
           <Markdown>{markdownValue || '_Nothing to preview yet._'}</Markdown>
         </Box>
       </Box>
+
+      <ImageUrlDialog
+        open={urlDialogOpen}
+        onClose={() => setUrlDialogOpen(false)}
+        onInsert={(url, alt) => {
+          setUrlDialogOpen(false)
+          if (viewRef.current) insertImageRef(viewRef.current, alt, url)
+        }}
+      />
+      {hubId && (
+        <HubBrowserDialog
+          open={hubPickerOpen}
+          hubId={hubId}
+          title="Embed an image from the hub"
+          selectable={isImageDocument}
+          initialProject={hubProject}
+          pickLabel="Embed image"
+          onClose={() => setHubPickerOpen(false)}
+          onPick={handleHubPick}
+        />
+      )}
     </Box>
   )
 }

@@ -92,6 +92,22 @@ export const useFolderContents = (
     staleTime: STALE,
   })
 
+// useBrowseContents is the hub browser's DM-space listing: one folder of a
+// project, or the project root when folderId is '' — complete, unlike the
+// GraphQL folderContents (which misses DM-created files/folders). Pass a null
+// dmProjectId to disable (e.g. a collapsed tree node).
+export const useBrowseContents = (
+  hubId: string | null,
+  dmProjectId: string | null | undefined,
+  folderId: string,
+): UseQueryResult<Item[]> =>
+  useQuery({
+    queryKey: ['browseContents', dmProjectId, folderId],
+    queryFn: () => api.browseContents(hubId!, dmProjectId!, folderId || undefined),
+    enabled: !!hubId && !!dmProjectId,
+    staleTime: STALE,
+  })
+
 export const useItemDetails = (
   hubId: string | null,
   itemId: string | null,
