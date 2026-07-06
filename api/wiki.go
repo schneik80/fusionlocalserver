@@ -46,6 +46,7 @@ type dmEntity struct {
 		DisplayName          string `json:"displayName"`
 		LastModifiedTime     string `json:"lastModifiedTime"`
 		LastModifiedUserName string `json:"lastModifiedUserName"`
+		Hidden               bool   `json:"hidden"` // deleted entries linger as hidden
 	} `json:"attributes"`
 	Relationships struct {
 		Tip struct {
@@ -116,9 +117,11 @@ func dmTopFolders(ctx context.Context, token, dmHubID, dmProjectID string) ([]dm
 }
 
 // dmFolderContents lists a folder's immediate children (data/v1), following
-// pagination links so a large Wiki folder is fully enumerated.
+// pagination links so a large folder is fully enumerated. Pages are requested
+// at 100 entries (DM defaults to 200) to keep each verbose JSON:API response
+// comfortably inside dmGet's body cap; the next links preserve the size.
 func dmFolderContents(ctx context.Context, token, dmProjectID, folderID string) ([]dmEntity, error) {
-	next := fmt.Sprintf("%s/data/v1/projects/%s/folders/%s/contents",
+	next := fmt.Sprintf("%s/data/v1/projects/%s/folders/%s/contents?page%%5Blimit%%5D=100",
 		dmBaseURL, dmEscape(dmProjectID), dmEscape(folderID))
 	var out []dmEntity
 	for next != "" {

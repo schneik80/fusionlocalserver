@@ -49,7 +49,11 @@ func dmGet(ctx context.Context, token, fullURL string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// The cap is a runaway-response guard, not a working budget: one JSON:API
+	// contents page (up to 200 entries plus their `included` versions) can top
+	// 1 MiB for a big folder, and truncating it surfaces as a baffling
+	// "unexpected end of JSON input" — so leave generous headroom.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("DM GET %s -> HTTP %d: %s", trimURL(fullURL), resp.StatusCode, strings.TrimSpace(string(body)))
 	}
