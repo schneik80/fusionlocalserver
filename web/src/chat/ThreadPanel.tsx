@@ -46,7 +46,9 @@ export function ThreadPanel({
   return (
     <Box
       sx={{
-        width: 300,
+        // Wide enough that an attached document card (thumbnail + name +
+        // location) reads comfortably; the card itself also shrinks-to-fit.
+        width: 360,
         flexShrink: 0,
         borderLeft: 1,
         borderColor: 'divider',

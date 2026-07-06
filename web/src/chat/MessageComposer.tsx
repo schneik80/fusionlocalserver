@@ -1,11 +1,16 @@
-import { faPaperPlane } from '@fortawesome/free-solid-svg-icons'
+import { faFileCirclePlus, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Box, IconButton, TextField, Tooltip, Typography } from '@mui/material'
 import { useState } from 'react'
+import { encodeDocRef, docRefFromItem } from '../components/doccard/docref'
+import { HubBrowserDialog } from '../components/hubbrowser/HubBrowserDialog'
+import { useNav } from '../state/nav'
 
 // MessageComposer is the send box for a channel or thread. Enter sends,
 // Shift+Enter inserts a newline. Read-only roles see a disabled box with an
-// explanation instead of bouncing off the server's 403.
+// explanation instead of bouncing off the server's 403. The attach button
+// browses the hub and drops a doc-ref token into the draft, which the message
+// list unfurls into a DocumentCard.
 export function MessageComposer({
   placeholder,
   disabled,
@@ -23,8 +28,10 @@ export function MessageComposer({
   // typing pings (see useTypingPing).
   onTyping?: () => void
 }) {
+  const nav = useNav()
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const send = async () => {
     const body = text.trim()
@@ -40,6 +47,21 @@ export function MessageComposer({
 
   const box = (
     <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, p: 1, pt: 0.5 }}>
+      {nav.hubId && (
+        <Tooltip title="Attach a document card">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => setPickerOpen(true)}
+              aria-label="attach a document card"
+              sx={{ color: 'text.secondary' }}
+            >
+              <FontAwesomeIcon icon={faFileCirclePlus} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
       <TextField
         fullWidth
         size="small"
@@ -84,6 +106,22 @@ export function MessageComposer({
         </Tooltip>
       ) : (
         box
+      )}
+      {nav.hubId && (
+        <HubBrowserDialog
+          open={pickerOpen}
+          hubId={nav.hubId}
+          title="Attach a document card"
+          initialProject={nav.project}
+          pickLabel="Attach"
+          onClose={() => setPickerOpen(false)}
+          onPick={(pick) => {
+            setPickerOpen(false)
+            if (!pick.item) return
+            const token = encodeDocRef(docRefFromItem(pick.hubId, pick.item))
+            setText((t) => (t && !/\s$/.test(t) ? `${t} ` : t) + token + ' ')
+          }}
+        />
       )}
     </Box>
   )

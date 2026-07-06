@@ -1,7 +1,9 @@
 import { faComments, faFaceSmile, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Avatar, Box, Chip, IconButton, Popover, Stack, Tooltip, Typography } from '@mui/material'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { DocumentCard } from '../components/doccard/DocumentCard'
+import { splitDocRefs } from '../components/doccard/docref'
 import { REACTION_EMOJI, type ChatCaps, type ChatMessage } from './types'
 import { fmtChatTime } from './fmt'
 
@@ -63,6 +65,22 @@ export function MessageList({
         />
       ))}
     </Box>
+  )
+}
+
+// ChatBody renders a message body, unfurling any fls:doc tokens into
+// DocumentCards. Everything else stays plain text (React-escaped — the chat
+// deliberately renders no HTML/markdown; a card is a React component, not
+// injected markup, so the XSS posture is unchanged).
+function ChatBody({ body }: { body: string }) {
+  const parts = useMemo(() => splitDocRefs(body), [body])
+  if (parts.length === 1 && 'text' in parts[0]) return <>{body}</>
+  return (
+    <>
+      {parts.map((p, i) =>
+        'ref' in p ? <DocumentCard key={i} docRef={p.ref} /> : <span key={i}>{p.text}</span>,
+      )}
+    </>
   )
 }
 
@@ -160,7 +178,7 @@ function MessageRow({
           </Typography>
         ) : (
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {msg.body}
+            <ChatBody body={msg.body} />
           </Typography>
         )}
         {grouped.size > 0 && (

@@ -1,8 +1,10 @@
 import { Box } from '@mui/material'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeSlug from 'rehype-slug'
+import { DocumentCard } from '../components/doccard/DocumentCard'
+import { parseDocRef } from '../components/doccard/docref'
 // highlight.js token theme for fenced code blocks. Light-mode palette for now;
 // swapping to a dark variant under the app's dark theme is a follow-up polish
 // item (the plan defers markdown-rendering refinements to a later iteration).
@@ -60,7 +62,24 @@ export function Markdown({ children }: { children: string }) {
         '& img': { maxWidth: '100%' },
       }}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug, rehypeHighlight]}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSlug, rehypeHighlight]}
+        // Let fls:doc tokens through the URL sanitiser (they never reach the
+        // DOM as hrefs — the link component below unfurls them into cards).
+        urlTransform={(url) => (url.startsWith('fls:') ? url : defaultUrlTransform(url))}
+        components={{
+          a: ({ node: _node, href, children: linkChildren, ...rest }) => {
+            const ref = href ? parseDocRef(href) : null
+            if (ref) return <DocumentCard docRef={ref} />
+            return (
+              <a href={href} {...rest}>
+                {linkChildren}
+              </a>
+            )
+          },
+        }}
+      >
         {children}
       </ReactMarkdown>
     </Box>

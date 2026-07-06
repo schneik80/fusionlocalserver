@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBold,
   faCode,
+  faFileCirclePlus,
   faGlobe,
   faImage,
   faImages,
@@ -31,6 +32,7 @@ import { EditorView } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Item } from '../api/types'
+import { docRefFromItem, docRefMarkdown } from '../components/doccard/docref'
 import {
   HubBrowserDialog,
   hubFileSrc,
@@ -108,13 +110,17 @@ function insertImage(view: EditorView) {
   view.focus()
 }
 
-// insertImageRef drops a complete image reference (alt + src both known) at the
-// cursor, replacing any selection — the shared tail of the upload / URL / hub
-// -embed actions.
-function insertImageRef(view: EditorView, alt: string, src: string) {
+// insertText drops literal text at the cursor, replacing any selection — the
+// shared tail of the image-insert and document-card actions.
+function insertText(view: EditorView, text: string) {
   const { from, to } = view.state.selection.main
-  view.dispatch({ changes: { from, to, insert: `![${alt}](${src})` } })
+  view.dispatch({ changes: { from, to, insert: text } })
   view.focus()
+}
+
+// insertImageRef drops a complete image reference (alt + src both known).
+function insertImageRef(view: EditorView, alt: string, src: string) {
+  insertText(view, `![${alt}](${src})`)
 }
 
 export function WikiEditor({
@@ -138,6 +144,7 @@ export function WikiEditor({
   const [uploadingImage, setUploadingImage] = useState(false)
   const [urlDialogOpen, setUrlDialogOpen] = useState(false)
   const [hubPickerOpen, setHubPickerOpen] = useState(false)
+  const [docPickerOpen, setDocPickerOpen] = useState(false)
   // Hold the latest onChange in a ref so the update listener (installed once per
   // document) always calls the current callback without re-creating the editor.
   const onChangeRef = useRef(onChangeMarkdown)
@@ -266,6 +273,14 @@ export function WikiEditor({
     insertImageRef(viewRef.current, alt, src)
   }
 
+  // handleDocPick inserts a document card: a doc-ref link token the markdown
+  // renderer unfurls into a DocumentCard (thumbnail + name + location + jump).
+  function handleDocPick(pick: HubPick) {
+    setDocPickerOpen(false)
+    if (!pick.item || !viewRef.current) return
+    insertText(viewRef.current, docRefMarkdown(docRefFromItem(pick.hubId, pick.item)))
+  }
+
   const status = saved ? 'Saved locally' : 'Saving…'
 
   return (
@@ -341,6 +356,13 @@ export function WikiEditor({
             onClick={() => setHubPickerOpen(true)}
           />
         )}
+        {hubId && (
+          <ToolBtn
+            title="Insert a document card (browse this hub)"
+            icon={faFileCirclePlus}
+            onClick={() => setDocPickerOpen(true)}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -388,6 +410,17 @@ export function WikiEditor({
           pickLabel="Embed image"
           onClose={() => setHubPickerOpen(false)}
           onPick={handleHubPick}
+        />
+      )}
+      {hubId && (
+        <HubBrowserDialog
+          open={docPickerOpen}
+          hubId={hubId}
+          title="Insert a document card"
+          initialProject={hubProject}
+          pickLabel="Insert card"
+          onClose={() => setDocPickerOpen(false)}
+          onPick={handleDocPick}
         />
       )}
     </Box>
