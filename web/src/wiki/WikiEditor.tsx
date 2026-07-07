@@ -8,8 +8,10 @@ import {
   faImages,
   faItalic,
   faLink,
+  faListCheck,
   faListUl,
   faQuoteRight,
+  faSquarePlus,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   Box,
@@ -33,6 +35,10 @@ import { tags as t } from '@lezer/highlight'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Item } from '../api/types'
 import { docRefFromItem, docRefMarkdown } from '../components/doccard/docref'
+import { taskRefFromTask, taskRefMarkdown } from '../components/taskcard/taskref'
+import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
+import { QuickTaskDialog } from '../tasks/QuickTaskDialog'
+import type { Task } from '../tasks/types'
 import {
   HubBrowserDialog,
   hubFileSrc,
@@ -145,6 +151,8 @@ export function WikiEditor({
   const [urlDialogOpen, setUrlDialogOpen] = useState(false)
   const [hubPickerOpen, setHubPickerOpen] = useState(false)
   const [docPickerOpen, setDocPickerOpen] = useState(false)
+  const [taskPickerOpen, setTaskPickerOpen] = useState(false)
+  const [taskCreateOpen, setTaskCreateOpen] = useState(false)
   // Hold the latest onChange in a ref so the update listener (installed once per
   // document) always calls the current callback without re-creating the editor.
   const onChangeRef = useRef(onChangeMarkdown)
@@ -281,6 +289,15 @@ export function WikiEditor({
     insertText(viewRef.current, docRefMarkdown(docRefFromItem(pick.hubId, pick.item)))
   }
 
+  // handleTaskPick inserts a task card: the fls:task sibling of the doc-ref
+  // token, unfurled into a TaskCard by the same markdown renderer.
+  function handleTaskPick(task: Task) {
+    setTaskPickerOpen(false)
+    setTaskCreateOpen(false)
+    if (!viewRef.current) return
+    insertText(viewRef.current, taskRefMarkdown(taskRefFromTask(task)))
+  }
+
   const status = saved ? 'Saved locally' : 'Saving…'
 
   return (
@@ -363,6 +380,20 @@ export function WikiEditor({
             onClick={() => setDocPickerOpen(true)}
           />
         )}
+        {hubProject && (
+          <ToolBtn
+            title="Insert a task card (this project's tasks)"
+            icon={faListCheck}
+            onClick={() => setTaskPickerOpen(true)}
+          />
+        )}
+        {hubProject && (
+          <ToolBtn
+            title="Create a task and insert its card"
+            icon={faSquarePlus}
+            onClick={() => setTaskCreateOpen(true)}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -421,6 +452,24 @@ export function WikiEditor({
           pickLabel="Insert card"
           onClose={() => setDocPickerOpen(false)}
           onPick={handleDocPick}
+        />
+      )}
+      {hubProject && taskPickerOpen && (
+        <AttachTaskDialog
+          open={taskPickerOpen}
+          projectId={hubProject.id}
+          onClose={() => setTaskPickerOpen(false)}
+          onPick={handleTaskPick}
+        />
+      )}
+      {hubProject && taskCreateOpen && (
+        <QuickTaskDialog
+          open={taskCreateOpen}
+          onClose={() => setTaskCreateOpen(false)}
+          projectId={hubProject.id}
+          hubId={hubId ?? ''}
+          projectName={hubProject.name}
+          onCreated={handleTaskPick}
         />
       )}
     </Box>

@@ -1,10 +1,14 @@
-import { faFileCirclePlus, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
+import { faFileCirclePlus, faListCheck, faPaperPlane, faSquarePlus } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Box, IconButton, TextField, Tooltip, Typography } from '@mui/material'
 import { useState } from 'react'
 import { encodeDocRef, docRefFromItem } from '../components/doccard/docref'
+import { encodeTaskRef, taskRefFromTask } from '../components/taskcard/taskref'
 import { HubBrowserDialog } from '../components/hubbrowser/HubBrowserDialog'
 import { useNav } from '../state/nav'
+import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
+import { QuickTaskDialog } from '../tasks/QuickTaskDialog'
+import type { Task } from '../tasks/types'
 
 // MessageComposer is the send box for a channel or thread. Enter sends,
 // Shift+Enter inserts a newline. Read-only roles see a disabled box with an
@@ -32,6 +36,14 @@ export function MessageComposer({
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [taskPickerOpen, setTaskPickerOpen] = useState(false)
+  const [taskCreateOpen, setTaskCreateOpen] = useState(false)
+
+  // appendToken drops a card token into the draft, spacing it off whatever
+  // is already there so the unfurl regex can find it.
+  const appendToken = (token: string) =>
+    setText((t) => (t && !/\s$/.test(t) ? `${t} ` : t) + token + ' ')
+  const appendTaskToken = (task: Task) => appendToken(encodeTaskRef(taskRefFromTask(task)))
 
   const send = async () => {
     const body = text.trim()
@@ -58,6 +70,36 @@ export function MessageComposer({
               sx={{ color: 'text.secondary' }}
             >
               <FontAwesomeIcon icon={faFileCirclePlus} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      {nav.project && (
+        <Tooltip title="Attach a task card">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => setTaskPickerOpen(true)}
+              aria-label="attach a task card"
+              sx={{ color: 'text.secondary' }}
+            >
+              <FontAwesomeIcon icon={faListCheck} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      {nav.project && (
+        <Tooltip title="Create a task and attach its card">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => setTaskCreateOpen(true)}
+              aria-label="create a task and attach its card"
+              sx={{ color: 'text.secondary' }}
+            >
+              <FontAwesomeIcon icon={faSquarePlus} />
             </IconButton>
           </span>
         </Tooltip>
@@ -118,9 +160,29 @@ export function MessageComposer({
           onPick={(pick) => {
             setPickerOpen(false)
             if (!pick.item) return
-            const token = encodeDocRef(docRefFromItem(pick.hubId, pick.item))
-            setText((t) => (t && !/\s$/.test(t) ? `${t} ` : t) + token + ' ')
+            appendToken(encodeDocRef(docRefFromItem(pick.hubId, pick.item)))
           }}
+        />
+      )}
+      {nav.project && taskPickerOpen && (
+        <AttachTaskDialog
+          open={taskPickerOpen}
+          projectId={nav.project.id}
+          onClose={() => setTaskPickerOpen(false)}
+          onPick={(task) => {
+            setTaskPickerOpen(false)
+            appendTaskToken(task)
+          }}
+        />
+      )}
+      {nav.project && taskCreateOpen && (
+        <QuickTaskDialog
+          open={taskCreateOpen}
+          onClose={() => setTaskCreateOpen(false)}
+          projectId={nav.project.id}
+          hubId={nav.hubId ?? ''}
+          projectName={nav.project.name}
+          onCreated={appendTaskToken}
         />
       )}
     </Box>
