@@ -3,7 +3,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Avatar, Box, Chip, IconButton, Popover, Stack, Tooltip, Typography } from '@mui/material'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DocumentCard } from '../components/doccard/DocumentCard'
-import { splitDocRefs } from '../components/doccard/docref'
+import { splitRefTokens } from '../components/reftokens'
+import { TaskCard } from '../components/taskcard/TaskCard'
 import { REACTION_EMOJI, type ChatCaps, type ChatMessage } from './types'
 import { fmtChatTime } from './fmt'
 
@@ -69,16 +70,23 @@ export function MessageList({
 }
 
 // ChatBody renders a message body, unfurling any fls:doc tokens into
-// DocumentCards. Everything else stays plain text (React-escaped — the chat
-// deliberately renders no HTML/markdown; a card is a React component, not
-// injected markup, so the XSS posture is unchanged).
+// DocumentCards and fls:task tokens into TaskCards. Everything else stays
+// plain text (React-escaped — the chat deliberately renders no
+// HTML/markdown; a card is a React component, not injected markup, so the
+// XSS posture is unchanged).
 function ChatBody({ body }: { body: string }) {
-  const parts = useMemo(() => splitDocRefs(body), [body])
+  const parts = useMemo(() => splitRefTokens(body), [body])
   if (parts.length === 1 && 'text' in parts[0]) return <>{body}</>
   return (
     <>
       {parts.map((p, i) =>
-        'ref' in p ? <DocumentCard key={i} docRef={p.ref} /> : <span key={i}>{p.text}</span>,
+        'doc' in p ? (
+          <DocumentCard key={i} docRef={p.doc} />
+        ) : 'task' in p ? (
+          <TaskCard key={i} taskRef={p.task} />
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
       )}
     </>
   )
