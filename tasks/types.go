@@ -1,0 +1,143 @@
+// Package tasks persists per-project task lists locally, the same posture
+// as chat: projects and users are APS-side (referenced by URN / OIDC sub),
+// the server stores only its own data under the config dir. Unlike chat's
+// append-only JSONL logs, a project's tasks are a small mutable set, so the
+// whole set lives in one tasks.json rewritten atomically per mutation —
+// which also makes the cross-project "my tasks" scan a cheap read of one
+// small file per project. No pagination: MaxTasksPerProject bounds the file
+// at human scale.
+package tasks
+
+import (
+	"errors"
+	"time"
+)
+
+const fileVersion = 1
+
+// Validation caps, enforced here as well as at the HTTP boundary so no
+// caller can bypass them.
+const (
+	MaxTitleRunes      = 200
+	MaxDescRunes       = 20000
+	MaxDocRefs         = 20
+	MaxDocRefLen       = 2048
+	MaxTasksPerProject = 5000
+)
+
+var (
+	// ErrFutureVersion is returned when a project's task data was written
+	// by a newer build than this one. The caller must refuse to serve
+	// tasks for that project rather than risk rewriting data it doesn't
+	// understand.
+	ErrFutureVersion = errors.New("tasks: data written by a newer version")
+
+	// ErrNotFound is returned for unknown tasks (→ 404).
+	ErrNotFound = errors.New("tasks: not found")
+
+	// ErrInvalid is returned for requests that violate a task invariant —
+	// empty titles, unknown statuses, cap overruns (→ 400). Wrapped errors
+	// carry the specific reason.
+	ErrInvalid = errors.New("tasks: invalid request")
+)
+
+// Statuses double as the Kanban columns, in board order.
+var Statuses = []string{"todo", "inprogress", "blocked", "done"}
+
+var Priorities = []string{"low", "medium", "high", "urgent"}
+
+func validStatus(s string) bool {
+	for _, v := range Statuses {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func validPriority(p string) bool {
+	for _, v := range Priorities {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// UserRef identifies a project member the way chat does: by OIDC sub, with
+// name/email captured at write time for display without an APS round-trip.
+type UserRef struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
+// Task is one task. ID is "t<num>" with a per-project counter (displayed as
+// "T-<num>"); Rank orders tasks within their status column on the Kanban
+// board (floats leave headroom for midpoint inserts).
+type Task struct {
+	ID          string    `json:"id"`
+	Num         int64     `json:"num"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Status      string    `json:"status"`
+	Priority    string    `json:"priority"`
+	DueDate     string    `json:"dueDate,omitempty"` // YYYY-MM-DD; date-only avoids TZ drift
+	Assignee    *UserRef  `json:"assignee,omitempty"`
+	CreatedBy   UserRef   `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	DocRefs     []string  `json:"docRefs"` // fls:doc?… tokens, rendered as document cards
+	Rank        float64   `json:"rank"`
+}
+
+// ProjectTask is a task annotated with its project, for cross-project
+// listings ("my tasks") where the caller has no project context.
+type ProjectTask struct {
+	Task
+	ProjectID   string `json:"projectId"`
+	HubID       string `json:"hubId"`
+	ProjectName string `json:"projectName"`
+}
+
+// Draft is the create payload. Zero-value Status/Priority default to
+// "todo"/"medium".
+type Draft struct {
+	Title       string
+	Description string
+	Status      string
+	Priority    string
+	DueDate     string
+	Assignee    *UserRef
+	DocRefs     []string
+}
+
+// Patch is the update payload: nil pointer = leave unchanged. JSON can't
+// cheaply distinguish null from absent, so clearing the optional fields is
+// explicit.
+type Patch struct {
+	Title         *string
+	Description   *string
+	Status        *string
+	Priority      *string
+	DueDate       *string
+	Assignee      *UserRef
+	ClearAssignee bool
+	ClearDueDate  bool
+	DocRefs       *[]string
+	Rank          *float64
+}
+
+// projectFile mirrors tasks.json. The file self-describes hubId and
+// projectName (captured from create requests, refreshed on writes) because
+// the directory slug is not reversible to a URN and "my tasks" results must
+// be navigable without APS calls — same reason chat's projectMeta stores
+// ProjectID.
+type projectFile struct {
+	Version     int     `json:"version"`
+	ProjectID   string  `json:"projectId"`
+	HubID       string  `json:"hubId"`
+	ProjectName string  `json:"projectName"`
+	NextTaskID  int64   `json:"nextTaskId"`
+	Tasks       []*Task `json:"tasks"`
+}
