@@ -1,11 +1,13 @@
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   closestCorners,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -49,6 +51,7 @@ export function TaskKanban({
   const qc = useQueryClient()
   const muts = useTaskMutations(projectId)
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const canWrite = caps ? caps.write : true
 
@@ -56,7 +59,14 @@ export function TaskKanban({
   for (const t of tasks) byStatus.get(t.status)?.push(t)
   for (const list of byStatus.values()) list.sort((a, b) => a.rank - b.rank || a.num - b.num)
 
+  const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null
+
+  function handleDragStart(ev: DragStartEvent) {
+    setActiveId(String(ev.active.id))
+  }
+
   function handleDragEnd(ev: DragEndEvent) {
+    setActiveId(null)
     const { active, over } = ev
     if (!over || active.id === over.id) return
     const task = tasks.find((t) => t.id === active.id)
@@ -124,7 +134,13 @@ export function TaskKanban({
 
   return (
     <>
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setActiveId(null)}
+      >
         <Box sx={{ flex: 1, minHeight: 0, display: 'flex', gap: 1, p: 1, overflowX: 'auto' }}>
           {STATUSES.map((status) => (
             <BoardColumn
@@ -137,6 +153,9 @@ export function TaskKanban({
             />
           ))}
         </Box>
+        {/* The dragged card is rendered here, in a floating layer above the
+            columns, so it is never clipped by a column's scroll container. */}
+        <DragOverlay>{activeTask ? <CardFace task={activeTask} dragging /> : null}</DragOverlay>
       </DndContext>
       {openTaskId && (
         <TaskViewDialog
@@ -204,6 +223,29 @@ function BoardCard({ task, disabled, onOpen }: { task: Task; disabled: boolean; 
     id: task.id,
     disabled,
   })
+  return (
+    <Box
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      onClick={onOpen}
+      sx={{
+        // While dragging, this stays as a dimmed placeholder in the column;
+        // the floating DragOverlay copy is what follows the pointer.
+        opacity: isDragging ? 0.4 : 1,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        cursor: disabled ? 'pointer' : 'grab',
+      }}
+    >
+      <CardFace task={task} />
+    </Box>
+  )
+}
+
+// CardFace is the card's visual, shared by the in-column sortable card and
+// the drag overlay so the picked-up card looks identical to its slot.
+function CardFace({ task, dragging = false }: { task: Task; dragging?: boolean }) {
   const overdue = isOverdue(task.dueDate, task.status)
   const initials = (task.assignee?.name || task.assignee?.email || '')
     .split(/[\s@]+/)
@@ -213,18 +255,13 @@ function BoardCard({ task, disabled, onOpen }: { task: Task; disabled: boolean; 
 
   return (
     <Paper
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      onClick={onOpen}
       variant="outlined"
       sx={{
         p: 1,
-        cursor: disabled ? 'pointer' : 'grab',
-        opacity: isDragging ? 0.4 : 1,
-        transform: CSS.Transform.toString(transform),
-        transition,
         userSelect: 'none',
+        cursor: dragging ? 'grabbing' : undefined,
+        borderColor: dragging ? 'primary.main' : undefined,
+        boxShadow: dragging ? 4 : 0,
         '&:hover': { borderColor: 'primary.main' },
       }}
     >
