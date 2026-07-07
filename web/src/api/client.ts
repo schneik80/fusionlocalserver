@@ -37,6 +37,7 @@ import type {
   ChatUnread,
   ChatUnreadList,
 } from '../chat/types'
+import type { MyTasks, Task, TaskDraft, TaskList, TaskPatch } from '../tasks/types'
 
 export class ApiError extends Error {
   status: number
@@ -344,6 +345,33 @@ export const api = {
   // chatTyping is a fire-and-forget ephemeral ping (204, no body).
   chatTyping: (projectId: string, channelId: string) =>
     request<void>(`/api/chat/typing${qs({ projectId, channelId })}`, { method: 'POST' }),
+
+  // Tasks: per-project task lists on the local store, chat-authz roles.
+  // /api/tasks/get is the single-task fetch (fls:task card hydration);
+  // /api/tasks/mine is the caller's cross-project task list.
+  tasks: (projectId: string) => request<TaskList>(`/api/tasks${qs({ projectId })}`),
+
+  taskGet: (projectId: string, taskId: string) =>
+    request<Task>(`/api/tasks/get${qs({ projectId, taskId })}`),
+
+  taskCreate: (projectId: string, body: TaskDraft) =>
+    request<Task>(`/api/tasks${qs({ projectId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  taskUpdate: (projectId: string, taskId: string, body: TaskPatch) =>
+    request<Task>(`/api/tasks${qs({ projectId, taskId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  taskDelete: (projectId: string, taskId: string) =>
+    request<{ deleted: boolean }>(`/api/tasks${qs({ projectId, taskId })}`, {
+      method: 'DELETE',
+    }),
+
+  myTasks: () => request<MyTasks>('/api/tasks/mine'),
   // Wiki: published markdown pages in a project's root "Wiki" folder. hubId is
   // the GraphQL hub id (the server resolves it to the DM hub id); dmProjectId is
   // the project's altId. itemId is a page's lineage urn.

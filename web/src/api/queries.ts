@@ -4,7 +4,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { api } from './client'
+import { api, ApiError } from './client'
 import type {
   ActivityReport,
   AuthMe,
@@ -33,6 +33,7 @@ import type {
   ChatMessageList,
   ChatUnreadList,
 } from '../chat/types'
+import type { MyTasks, Task, TaskDraft, TaskList, TaskPatch } from '../tasks/types'
 import {
   appendPendingMessage,
   applyUnread,
@@ -547,6 +548,79 @@ export const useMarkChatRead = (projectId: string | null) => {
       api.chatMarkRead(projectId!, args.channelId, args.lastReadSeq),
     onSuccess: (u) => applyUnread(qc, projectId!, u),
   })
+}
+
+// ---- tasks ----
+//
+// Tasks are volatile like chat: nothing here persists to localStorage (see
+// the dehydrate filter in main.tsx). No SSE in v1 — mutations invalidate,
+// and a modest interval keeps other users' edits from going stale while a
+// task view is actually visible.
+
+export const useTasks = (
+  projectId: string | null,
+  active: boolean,
+): UseQueryResult<TaskList> =>
+  useQuery({
+    queryKey: ['tasks', projectId],
+    queryFn: () => api.tasks(projectId!),
+    enabled: active && !!projectId,
+    staleTime: 10_000,
+    refetchInterval: active ? 15_000 : false,
+  })
+
+// useTask hydrates one task (fls:task cards). Kept light — many cards can
+// mount at once, so a longer staleTime shares fetches across them.
+export const useTask = (
+  projectId: string | null,
+  taskId: string | null,
+): UseQueryResult<Task> =>
+  useQuery({
+    queryKey: ['task', projectId, taskId],
+    queryFn: () => api.taskGet(projectId!, taskId!),
+    enabled: !!projectId && !!taskId,
+    staleTime: 30_000,
+    retry: (failureCount, err) =>
+      // A deleted task's 404 is a designed terminal state, not a blip.
+      !(err instanceof ApiError && err.status === 404) && failureCount < 2,
+  })
+
+export const useMyTasks = (active: boolean): UseQueryResult<MyTasks> =>
+  useQuery({
+    queryKey: ['tasksMine'],
+    queryFn: () => api.myTasks(),
+    enabled: active,
+    staleTime: 10_000,
+    refetchInterval: active ? 30_000 : false,
+  })
+
+// useTaskMutations bundles the write paths for one project's tasks. Every
+// settled write refreshes the project list and the caller's cross-project
+// list; the returned task also lands in its own card cache immediately.
+export function useTaskMutations(projectId: string | null) {
+  const qc = useQueryClient()
+  const settle = (t?: Task) => {
+    if (t) qc.setQueryData(['task', projectId, t.id], t)
+    void qc.invalidateQueries({ queryKey: ['tasks', projectId] })
+    void qc.invalidateQueries({ queryKey: ['tasksMine'] })
+  }
+  const create = useMutation({
+    mutationFn: (body: TaskDraft) => api.taskCreate(projectId!, body),
+    onSuccess: (t) => settle(t),
+  })
+  const update = useMutation({
+    mutationFn: (args: { taskId: string; patch: TaskPatch }) =>
+      api.taskUpdate(projectId!, args.taskId, args.patch),
+    onSuccess: (t) => settle(t),
+  })
+  const remove = useMutation({
+    mutationFn: (taskId: string) => api.taskDelete(projectId!, taskId),
+    onSuccess: (_res, taskId) => {
+      qc.removeQueries({ queryKey: ['task', projectId, taskId] })
+      settle()
+    },
+  })
+  return { create, update, remove }
 }
 
 // useWikiPages lists a project's published wiki pages. Gated on the hub id and
