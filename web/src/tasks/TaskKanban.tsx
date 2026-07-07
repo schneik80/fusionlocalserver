@@ -7,6 +7,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -52,6 +53,7 @@ export function TaskKanban({
   const muts = useTaskMutations(projectId)
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [overColumn, setOverColumn] = useState<TaskStatus | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const canWrite = caps ? caps.write : true
 
@@ -61,28 +63,37 @@ export function TaskKanban({
 
   const activeTask = activeId ? tasks.find((t) => t.id === activeId) ?? null : null
 
+  // The over target resolves to either a column surface ("col:<status>") or
+  // a card; either way we want the column it belongs to. With cards present,
+  // closestCorners reports the card — not the column droppable — so a
+  // populated column's own isOver never fires. Resolving to the column here
+  // (and driving the highlight from it) is what makes every column light up.
+  function columnOf(overId: string | null): TaskStatus | null {
+    if (!overId) return null
+    if (overId.startsWith('col:')) return overId.slice(4) as TaskStatus
+    return tasks.find((t) => t.id === overId)?.status ?? null
+  }
+
   function handleDragStart(ev: DragStartEvent) {
     setActiveId(String(ev.active.id))
   }
 
+  function handleDragOver(ev: DragOverEvent) {
+    setOverColumn(columnOf(ev.over ? String(ev.over.id) : null))
+  }
+
   function handleDragEnd(ev: DragEndEvent) {
     setActiveId(null)
+    setOverColumn(null)
     const { active, over } = ev
     if (!over || active.id === over.id) return
     const task = tasks.find((t) => t.id === active.id)
     if (!task) return
 
     // The drop target is either a column surface ("col:<status>") or a card.
-    let status: TaskStatus
-    let overTaskId: string | null = null
-    if (String(over.id).startsWith('col:')) {
-      status = String(over.id).slice(4) as TaskStatus
-    } else {
-      const overTask = tasks.find((t) => t.id === over.id)
-      if (!overTask) return
-      status = overTask.status
-      overTaskId = overTask.id
-    }
+    const status = columnOf(String(over.id))
+    if (!status) return
+    const overTaskId = String(over.id).startsWith('col:') ? null : String(over.id)
 
     // Insertion point among the target column's cards (dragged card removed).
     const column = (byStatus.get(status) ?? []).filter((t) => t.id !== task.id)
@@ -138,8 +149,12 @@ export function TaskKanban({
         sensors={sensors}
         collisionDetection={closestCorners}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={() => {
+          setActiveId(null)
+          setOverColumn(null)
+        }}
       >
         <Box sx={{ flex: 1, minHeight: 0, display: 'flex', gap: 1, p: 1, overflowX: 'auto' }}>
           {STATUSES.map((status) => (
@@ -149,6 +164,7 @@ export function TaskKanban({
               tasks={byStatus.get(status) ?? []}
               disabled={!canWrite}
               loading={loading}
+              over={activeId !== null && overColumn === status}
               onOpen={setOpenTaskId}
             />
           ))}
@@ -174,15 +190,20 @@ function BoardColumn({
   tasks,
   disabled,
   loading,
+  over,
   onOpen,
 }: {
   status: TaskStatus
   tasks: Task[]
   disabled: boolean
   loading: boolean
+  // Resolved by the parent so a populated column highlights too — its own
+  // useDroppable().isOver never fires when closestCorners picks a card.
+  over: boolean
   onOpen: (id: string) => void
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `col:${status}` })
+  const { setNodeRef } = useDroppable({ id: `col:${status}` })
+  const isOver = over
   return (
     <Paper
       variant="outlined"
