@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
-import { faBuilding, faFolderTree, faGear, faStar } from '@fortawesome/free-solid-svg-icons'
+import { faBuilding, faFolderTree, faGear, faListCheck, faStar } from '@fortawesome/free-solid-svg-icons'
 import { Divider, IconButton, Paper, Stack, Tooltip } from '@mui/material'
 import { useNav } from '../state/nav'
 
@@ -31,7 +31,23 @@ export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps
       <Stack spacing={1.5}>
         <RailButton icon={faBuilding} label="Hubs" onClick={onOpenHubs} />
         <Divider flexItem sx={{ mx: 1 }} />
-        <RailButton icon={faFolderTree} label="Browser" active onClick={nav.clearProject} />
+        <RailButton
+          icon={faFolderTree}
+          label="Browser"
+          active={nav.app === 'browser'}
+          onClick={() => {
+            // Already browsing → back to the projects list (the old
+            // behaviour); from another app → return to the browser as-is.
+            if (nav.app === 'browser') nav.clearProject()
+            else nav.setApp('browser')
+          }}
+        />
+        <RailButton
+          icon={faListCheck}
+          label="Tasks"
+          active={nav.app === 'tasks'}
+          onClick={() => nav.setApp('tasks')}
+        />
         <Divider flexItem sx={{ mx: 1 }} />
         <RailButton icon={faStar} label="Pins" onClick={onOpenPins} />
         <RailButton icon={faGear} label="Settings" onClick={onOpenSettings} />

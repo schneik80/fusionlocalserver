@@ -37,11 +37,17 @@ function saveLastHub(id: string, name: string) {
   }
 }
 
+// The rail's top-level view: the document browser or the cross-project
+// Tasks screen. Both stay mounted (AppLayout display-toggles them) so
+// switching apps never loses browser drill-down or task-list state.
+export type AppKind = 'browser' | 'tasks'
+
 // Navigation state for the three-column browser. The hub is chosen from the
 // rail/switcher; project lives in the Projects column; folderStack is the
 // drill-down path inside the Contents column (mirrored by the breadcrumb);
 // selected is the document whose Details panel is shown.
 export interface NavState {
+  app: AppKind
   hubId: string | null
   hubName: string | null
   project: Item | null
@@ -54,6 +60,7 @@ export interface NavState {
 }
 
 const initialState: NavState = {
+  app: 'browser',
   hubId: null,
   hubName: null,
   project: null,
@@ -63,6 +70,7 @@ const initialState: NavState = {
 }
 
 type Action =
+  | { type: 'setApp'; app: AppKind }
   | { type: 'selectHub'; id: string; name: string }
   | { type: 'selectProject'; project: Item }
   | { type: 'enterFolder'; folder: Item }
@@ -80,9 +88,13 @@ type Action =
 
 function reducer(state: NavState, action: Action): NavState {
   switch (action.type) {
+    case 'setApp':
+      return state.app === action.app ? state : { ...state, app: action.app }
     case 'selectHub':
       if (action.id === state.hubId) return state
-      return { ...initialState, hubId: action.id, hubName: action.name }
+      // The Tasks screen is hub-independent (my-tasks spans every project on
+      // this server), so switching hubs keeps the current app.
+      return { ...initialState, app: state.app, hubId: action.id, hubName: action.name }
     case 'selectProject':
       return { ...state, project: action.project, folderStack: [], selected: null, selectedTab: null }
     case 'enterFolder':
@@ -107,8 +119,11 @@ function reducer(state: NavState, action: Action): NavState {
         selectedTab: null,
       }
     case 'navigate':
+      // Cross-document jumps (document cards, where-used, …) land in the
+      // browser regardless of which app issued them.
       return {
         ...state,
+        app: 'browser',
         project: action.project,
         folderStack: action.folderStack,
         selected: action.selected,
@@ -120,6 +135,7 @@ function reducer(state: NavState, action: Action): NavState {
 }
 
 interface NavCtx extends NavState {
+  setApp: (app: AppKind) => void
   selectHub: (id: string, name: string) => void
   selectProject: (project: Item) => void
   enterFolder: (folder: Item) => void
@@ -142,6 +158,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
     return {
       ...state,
       currentFolderId: top ? top.id : null,
+      setApp: (app) => dispatch({ type: 'setApp', app }),
       selectHub: (id, name) => {
         saveLastHub(id, name)
         dispatch({ type: 'selectHub', id, name })

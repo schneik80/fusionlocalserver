@@ -21,6 +21,7 @@ import { QUERY_CACHE_KEY } from '../queryPersist'
 import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { loadLastHub, useNav } from '../state/nav'
+import { TasksScreen } from '../tasks/TasksScreen'
 import { BreadcrumbBar } from './BreadcrumbBar'
 import { BrowserStage } from './BrowserStage'
 import { HubSwitcher } from './HubSwitcher'
@@ -132,9 +133,28 @@ export function AppLayout() {
           onOpenPins={() => setDialog('pins')}
           onOpenSettings={() => setDialog('settings')}
         />
-        <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+        {/* Both apps stay mounted (ProjectPanel philosophy): visiting Tasks
+            must not lose the browser's drill-down state, and vice versa. */}
+        <Box
+          sx={{
+            display: nav.app === 'browser' ? 'flex' : 'none',
+            flexDirection: 'column',
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           <BreadcrumbBar onOpenHubs={() => setDialog('hubs')} />
           <BrowserStage />
+        </Box>
+        <Box
+          sx={{
+            display: nav.app === 'tasks' ? 'flex' : 'none',
+            flexDirection: 'column',
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <TasksScreen active={nav.app === 'tasks'} />
         </Box>
       </Box>
 
