@@ -2,10 +2,12 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -27,6 +29,20 @@ import {
   type TaskList,
   type TaskStatus,
 } from './types'
+
+// Pointer-based collision detection. closestCorners (and closestCenter)
+// measure the DRAGGED card's corners against each column's, so once columns
+// are compressed narrower than the ~240px card, a middle column loses the
+// corner-distance contest to its neighbours and never registers as the drop
+// target (visible on narrow windows). pointerWithin keys off the cursor
+// position instead, so column width is irrelevant; rectIntersection is the
+// fallback for the gaps between droppables. A tightly-fitting card rect
+// sorts ahead of its enclosing column, so hovering a card still yields the
+// card (precise reorder) while empty column space yields the column.
+const collisionDetection: CollisionDetection = (args) => {
+  const pointer = pointerWithin(args)
+  return pointer.length > 0 ? pointer : rectIntersection(args)
+}
 
 // TaskKanban is the project tab's board view: one column per status, cards
 // ordered by rank. Drag between columns changes status; drag within a
@@ -147,7 +163,7 @@ export function TaskKanban({
     <>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
@@ -198,14 +214,17 @@ function BoardColumn({
   disabled: boolean
   loading: boolean
   // Resolved by the parent so a populated column highlights too — its own
-  // useDroppable().isOver never fires when closestCorners picks a card.
+  // useDroppable().isOver never fires when the pointer lands on a card.
   over: boolean
   onOpen: (id: string) => void
 }) {
+  // The droppable is the whole column (Paper), so the pointer test covers
+  // the header and padding, not just the card list.
   const { setNodeRef } = useDroppable({ id: `col:${status}` })
   const isOver = over
   return (
     <Paper
+      ref={setNodeRef}
       variant="outlined"
       sx={{
         width: 240,
@@ -227,7 +246,7 @@ function BoardColumn({
         </Typography>
       </Stack>
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-        <Box ref={setNodeRef} sx={{ flex: 1, minHeight: 60, overflowY: 'auto', px: 0.75, pb: 0.75 }}>
+        <Box sx={{ flex: 1, minHeight: 60, overflowY: 'auto', px: 0.75, pb: 0.75 }}>
           <Stack spacing={0.75}>
             {tasks.map((t) => (
               <BoardCard key={t.id} task={t} disabled={disabled} onOpen={() => onOpen(t.id)} />
