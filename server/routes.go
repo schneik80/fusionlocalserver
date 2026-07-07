@@ -90,6 +90,17 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/chat/typing", prot(s.handleChatTyping))
 	mux.HandleFunc("GET /api/chat/members", prot(s.handleChatMembers))
 
+	// Tasks (user-based project tasks; local store, chat-authz roles).
+	// /api/tasks/get is separate because GET /api/tasks is the project
+	// list (wiki/pages vs wiki/page precedent); /mine is the caller's
+	// cross-project task list.
+	mux.HandleFunc("GET /api/tasks", prot(s.handleTasksList))
+	mux.HandleFunc("POST /api/tasks", prot(s.handleTaskCreate))
+	mux.HandleFunc("PATCH /api/tasks", prot(s.handleTaskUpdate))
+	mux.HandleFunc("DELETE /api/tasks", prot(s.handleTaskDelete))
+	mux.HandleFunc("GET /api/tasks/get", prot(s.handleTaskGet))
+	mux.HandleFunc("GET /api/tasks/mine", prot(s.handleTasksMine))
+
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))

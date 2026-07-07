@@ -25,6 +25,7 @@ import (
 	"github.com/schneik80/fusionlocalserver/chat"
 	"github.com/schneik80/fusionlocalserver/config"
 	"github.com/schneik80/fusionlocalserver/pins"
+	"github.com/schneik80/fusionlocalserver/tasks"
 )
 
 // Options configures a server run. Config may be nil when CfgErr is set (no
@@ -118,6 +119,13 @@ type Server struct {
 	chatHub       *chat.Hub
 	chatKeepalive time.Duration
 
+	// tasks is the file-backed project task store (nil when the config dir
+	// is unavailable; task endpoints then reply 503). Authorization shares
+	// chatAuthz — the caller's APS project role, one roster cache for both
+	// features.
+	tasks     *tasks.Store
+	taskOpLim *chat.Limiter
+
 	// uploads tracks background file-upload jobs (per-session; see uploads.go).
 	uploads *uploadManager
 }
@@ -210,6 +218,18 @@ func Run(opts Options) error {
 	if s.chat != nil {
 		s.chatHub = chat.NewHub(s.chatAuthz, s.chat.EventEpoch)
 	}
+
+	// Task store (one tasks.json per project under <config>/tasks/).
+	// Mutations are limited to 2/s with burst 10 per session — generous
+	// enough for Kanban drags, tight enough to stop scripted floods.
+	if dir, derr := config.Dir(); derr != nil {
+		logger.Warn("tasks: disabled (config dir unavailable)", "err", derr)
+	} else if ts, terr := tasks.NewStore(filepath.Join(dir, "tasks")); terr != nil {
+		logger.Warn("tasks: disabled (store init failed)", "err", terr)
+	} else {
+		s.tasks = ts
+	}
+	s.taskOpLim = chat.NewLimiter(2, 10)
 
 	// Resolve TLS once, before the bind loop spans restarts. A self-signed
 	// cert is generated/cached when -tls is given without a cert pair.
