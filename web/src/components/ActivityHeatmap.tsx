@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box,
   Checkbox,
@@ -192,6 +192,25 @@ export default function ActivityHeatmap({
   const theme = useTheme()
   const [gran, setGran] = useState<Gran>('year')
 
+  // The isometric grid has a fixed aspect ratio (its viewBox), so to fill the
+  // pane's vertical space we measure the chart area's height and scale the SVG
+  // to it, letting the width grow proportionally and scroll horizontally.
+  // Where the host has no definite height (e.g. a dashboard widget), the chart
+  // box's minHeight pins a sensible size instead — the measurement settles
+  // there rather than collapsing.
+  const chartRef = useRef<HTMLDivElement | null>(null)
+  const [availH, setAvailH] = useState(0)
+  useEffect(() => {
+    const el = chartRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height ?? 0
+      setAvailH((prev) => (Math.abs(prev - h) > 0.5 ? h : prev))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const createdMs = report.createdOn ? Date.parse(report.createdOn) : Date.now()
   const lastMs = report.lastChange ? Date.parse(report.lastChange) : Date.now()
   // Anchor a point in time; the visible window is the window containing it,
@@ -343,8 +362,15 @@ export default function ActivityHeatmap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cells, gran, ramp, maxCount, theme.palette.background.paper, theme.palette.text.secondary])
 
+  const aspect = svg ? svg.w / svg.hgt : 1
+  // Height the SVG fills: the measured chart area (once observed), else its
+  // natural height for the first paint. `scale` lets the dashboard render a
+  // shorter chart.
+  const chartH = (availH > 0 ? availH : svg ? svg.hgt : 0) * scale
+  const chartW = chartH * aspect
+
   return (
-    <Stack spacing={1}>
+    <Stack spacing={1} sx={{ height: '100%', minHeight: 0 }}>
       {/* Current window + its change count (left) beside the granularity toggle. */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
         <Typography variant="body2">
@@ -453,13 +479,25 @@ export default function ActivityHeatmap({
         </Stack>
       </Box>
 
-      {/* Isometric grid (scrolls horizontally if wide) */}
-      <Box sx={{ overflowX: 'auto', overflowY: 'hidden', py: 1 }}>
-        {svg && (
+      {/* Isometric grid: fills the pane's remaining height (aspect preserved),
+          scrolling horizontally when the proportional width overflows. */}
+      <Box
+        ref={chartRef}
+        sx={{
+          // flex:1 fills a definite-height pane; minHeight keeps a sensible
+          // size where the host is content-sized (dashboard widget).
+          flex: 1,
+          minHeight: 160,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          py: 1,
+        }}
+      >
+        {svg && chartH > 0 && (
           <svg
             viewBox={svg.viewBox}
-            width={svg.w * scale}
-            height={svg.hgt * scale}
+            width={chartW}
+            height={chartH}
             style={{ maxWidth: 'none', display: 'block', margin: '0 auto', shapeRendering: 'geometricPrecision' }}
           >
             {svg.faces}
