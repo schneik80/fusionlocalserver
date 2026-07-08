@@ -66,6 +66,7 @@ export interface VersionSummary {
   rootComponentVersionId?: string // per-version cvId for the thumbnail
   isMilestone?: boolean // marks the "release" lane + a dev→release merge edge
   revision?: string // reserved: the "main"/release lane; no API source yet
+  publicShare?: boolean // marks the rust-orange "share" lane; no API source yet
 }
 
 export interface Details {

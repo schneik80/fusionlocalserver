@@ -54,6 +54,11 @@ type VersionSummary struct {
 	// Revision is the formal release revision (the "main" lane). RESERVED — no
 	// API source exists today, so this is always empty.
 	Revision string
+	// PublicShare marks this version as having a public share (the rust-orange
+	// "share" lane in the history graph). RESERVED — Fusion Team public shares
+	// live in a separate service the MDM GraphQL doesn't expose, so this is
+	// always false until a share source is wired in.
+	PublicShare bool
 }
 
 // GetItemDetails fetches rich metadata for a single item plus its version list.

@@ -5,16 +5,23 @@ import { thumbnailSrc } from '../api/thumbnails'
 import type { VersionSummary } from '../api/types'
 
 // HistoryGraph renders a design's version history as a horizontal, GitHub-style
-// branch graph. Three lanes, top → bottom (only drawn when populated):
+// branch graph. Lanes, top → bottom (only drawn when populated):
+//   • share (public shares) — versions with a public share  [reserved; no API source yet]
 //   • main (releases)    — versions carrying a revision  [reserved; no API source yet]
 //   • release (milestones) — versions flagged isMilestone
 //   • dev (saves)        — every version; always present
 // A milestone is a commit promoted from dev → release, drawn as a vertical merge
 // connector up to a release-lane dot; a release is promoted release → main the
-// same way. The date-time of each save is its "tag" under the dev dot, and each
-// column carries a tooltip with the version's thumbnail and metadata.
+// same way. A public share hangs a rust-orange dot on the top lane, connected
+// straight down to its save. The date-time of each save is its "tag" under the
+// dev dot, and each column carries a tooltip with the version's thumbnail and
+// metadata.
 
-type Lane = 'main' | 'release' | 'dev'
+type Lane = 'share' | 'main' | 'release' | 'dev'
+
+// SHARE_COLOR is the rust-orange used for the public-share lane and dot — set
+// apart from the primary-accent release/milestone lanes.
+const SHARE_COLOR = '#b7410e'
 
 const NODE_R = 7 // commit dot radius
 const COL_GAP = 38 // horizontal spacing between saves
@@ -54,6 +61,7 @@ export default function HistoryGraph({
     dev: theme.palette.text.secondary,
     release: accent,
     main: darken(accent, 0.25),
+    share: SHARE_COLOR,
   }
   const ringColor = theme.palette.background.paper
 
@@ -62,9 +70,11 @@ export default function HistoryGraph({
 
   const hasRelease = ordered.some((v) => v.isMilestone)
   const hasMain = ordered.some((v) => !!v.revision)
+  const hasShare = ordered.some((v) => !!v.publicShare)
 
   // Lanes present, top → bottom. dev is always the bottom lane.
   const lanes: Lane[] = []
+  if (hasShare) lanes.push('share')
   if (hasMain) lanes.push('main')
   if (hasRelease) lanes.push('release')
   lanes.push('dev')
@@ -87,6 +97,7 @@ export default function HistoryGraph({
   }
   const releaseRail = hasRelease ? railFor((v) => !!v.isMilestone) : null
   const mainRail = hasMain ? railFor((v) => !!v.revision) : null
+  const shareRail = hasShare ? railFor((v) => !!v.publicShare) : null
 
   return (
     <Stack spacing={1} sx={{ minHeight: 0 }}>
@@ -131,6 +142,34 @@ export default function HistoryGraph({
                 strokeWidth={3}
                 strokeLinecap="round"
               />
+            )}
+            {shareRail && shareRail[0] !== shareRail[1] && (
+              <line
+                x1={xOf(shareRail[0])}
+                y1={yOf('share')}
+                x2={xOf(shareRail[1])}
+                y2={yOf('share')}
+                stroke={alpha(laneColor.share, 0.5)}
+                strokeWidth={3}
+                strokeLinecap="round"
+              />
+            )}
+
+            {/* share connectors: a public share hangs straight down to its save */}
+            {ordered.map((v, i) =>
+              v.publicShare ? (
+                <line
+                  key={`s-${i}`}
+                  x1={xOf(i)}
+                  y1={yOf('share')}
+                  x2={xOf(i)}
+                  y2={devY}
+                  stroke={laneColor.share}
+                  strokeWidth={2}
+                  strokeOpacity={0.8}
+                  strokeDasharray="3 3"
+                />
+              ) : null,
             )}
 
             {/* merge connectors: dev → release at milestones, release → main at releases */}
@@ -197,6 +236,17 @@ export default function HistoryGraph({
                     strokeWidth={2}
                   />
                 )}
+                {/* public-share dot on the top lane */}
+                {v.publicShare && (
+                  <circle
+                    cx={xOf(i)}
+                    cy={yOf('share')}
+                    r={NODE_R}
+                    fill={laneColor.share}
+                    stroke={ringColor}
+                    strokeWidth={2}
+                  />
+                )}
               </g>
             ))}
 
@@ -248,6 +298,7 @@ export default function HistoryGraph({
         <LegendItem color={laneColor.dev} label="Saves" />
         {hasRelease && <LegendItem color={laneColor.release} label="Milestones" />}
         {hasMain && <LegendItem color={laneColor.main} label="Releases" />}
+        {hasShare && <LegendItem color={laneColor.share} label="Public shares" />}
       </Stack>
     </Stack>
   )
@@ -298,6 +349,11 @@ function VersionTooltip({ v }: { v: VersionSummary }) {
         {v.isMilestone ? ' · Milestone' : ''}
         {v.revision ? ` · Release ${v.revision}` : ''}
       </Typography>
+      {v.publicShare && (
+        <Typography variant="caption" sx={{ display: 'block', color: SHARE_COLOR, fontWeight: 600 }}>
+          Public share
+        </Typography>
+      )}
       <Typography variant="caption" sx={{ display: 'block', opacity: 0.85 }}>
         {fmtFull(v.createdOn)}
         {v.createdBy ? ` · ${v.createdBy}` : ''}

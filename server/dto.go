@@ -71,6 +71,7 @@ type VersionDTO struct {
 	RootComponentVersionID string `json:"rootComponentVersionId,omitempty"`
 	IsMilestone            bool   `json:"isMilestone"`
 	Revision               string `json:"revision,omitempty"`
+	PublicShare            bool   `json:"publicShare"`
 }
 
 // DetailsDTO mirrors api.ItemDetails — the rich metadata for one item.
@@ -288,6 +289,7 @@ func detailsDTO(d *api.ItemDetails) DetailsDTO {
 			RootComponentVersionID: v.RootComponentVersionID,
 			IsMilestone:            v.IsMilestone,
 			Revision:               v.Revision,
+			PublicShare:            v.PublicShare,
 		})
 	}
 	return dto
