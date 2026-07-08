@@ -17,7 +17,7 @@ import type { VersionSummary } from '../api/types'
 type Lane = 'main' | 'release' | 'dev'
 
 const NODE_R = 7 // commit dot radius
-const COL_GAP = 96 // horizontal spacing between saves
+const COL_GAP = 38 // horizontal spacing between saves
 const LANE_GAP = 56 // vertical spacing between lanes
 const PAD_X = COL_GAP / 2 + 12 // left/right padding (keeps edge columns in-bounds)
 const PAD_TOP = 24 // padding above the topmost lane
