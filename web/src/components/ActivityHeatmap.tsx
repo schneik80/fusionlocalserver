@@ -229,6 +229,23 @@ export default function ActivityHeatmap({
     [report.events],
   )
 
+  // Recent-change tallies for the totals caption — window-independent, always
+  // relative to now: "since yesterday" counts from the start of yesterday
+  // (UTC, matching the rest of this component's day boundaries); "this week"
+  // from the start of the current week.
+  const recent = useMemo(() => {
+    const now = Date.now()
+    const yesterdayStart = startOfDay(now) - DAY_MS
+    const weekStart = startOfWeek(now)
+    let sinceYesterday = 0
+    let thisWeek = 0
+    for (const t of timestamps) {
+      if (t >= yesterdayStart) sinceYesterday++
+      if (t >= weekStart) thisWeek++
+    }
+    return { sinceYesterday, thisWeek }
+  }, [timestamps])
+
   const { cells, maxCount, total, top, left } = useMemo(
     () => buildWindow(timestamps, gran, winStart),
     [timestamps, gran, winStart],
@@ -388,10 +405,11 @@ export default function ActivityHeatmap({
         </ToggleButtonGroup>
       </Stack>
 
-      {/* All-time totals as a compact caption. */}
+      {/* All-time totals plus recent-change tallies, as a compact caption. */}
       <Typography variant="caption" color="text.secondary">
         <b>{report.versionCount}</b> versions · <b>{report.contributorCount}</b>{' '}
-        {report.contributorCount === 1 ? 'contributor' : 'contributors'} · {report.totalEvents} total changes
+        {report.contributorCount === 1 ? 'contributor' : 'contributors'} · {report.totalEvents} total changes ·{' '}
+        <b>{recent.sinceYesterday}</b> since yesterday · <b>{recent.thisWeek}</b> this week
         {childCount ? (
           <>
             {' '}· <b>{childCount}</b> child {childCount === 1 ? 'document' : 'documents'}
