@@ -237,10 +237,16 @@ export function ProjectDashboard() {
   const currentLayer = permQ.data?.[permQ.data.length - 1]
 
   // Pins: all of the project's pins at the root, narrowed to the current folder
-  // once you drill in.
+  // once you drill in. Skip any pin that points at the container currently
+  // shown (the project at root, the drilled-in folder otherwise) — a
+  // self-referencing pin would just navigate to where you already are.
   const pinsQ = usePins(nav.hubId)
+  const containerId = nav.currentFolderId ?? project?.id ?? null
   const containerPins = (pinsQ.data ?? []).filter(
-    (p) => p.project_id === project?.id && (atRoot || pinContainerId(p) === nav.currentFolderId),
+    (p) =>
+      p.project_id === project?.id &&
+      p.id !== containerId &&
+      (atRoot || pinContainerId(p) === nav.currentFolderId),
   )
 
   // Classify the container's designs so the donut can split them into assemblies
