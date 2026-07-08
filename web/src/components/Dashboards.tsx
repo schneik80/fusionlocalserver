@@ -49,11 +49,17 @@ function DashboardShell({
   subtitle,
   stats,
   children,
+  fill,
 }: {
   title: string
   subtitle?: string
   stats?: Stat[]
   children?: ReactNode
+  // When true the content area is a full-height flex column and the children
+  // wrapper grows, so a widget marked to fill can consume the pane's leftover
+  // vertical space (the project activity chart). Off by default: the hub
+  // dashboard just flows and scrolls.
+  fill?: boolean
 }) {
   return (
     <Paper
@@ -71,7 +77,14 @@ function DashboardShell({
         overflow: 'hidden',
       }}
     >
-      <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+      <Box
+        sx={{
+          flex: 1,
+          overflowY: 'auto',
+          p: 2,
+          ...(fill ? { display: 'flex', flexDirection: 'column', minHeight: 0 } : {}),
+        }}
+      >
         <Typography variant="h6" noWrap title={title} sx={{ fontWeight: 600, lineHeight: 1.2 }}>
           {title}
         </Typography>
@@ -87,7 +100,16 @@ function DashboardShell({
             ))}
           </Stack>
         )}
-        {children && <Box sx={{ mt: 1.5 }}>{children}</Box>}
+        {children && (
+          <Box
+            sx={{
+              mt: 1.5,
+              ...(fill ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : {}),
+            }}
+          >
+            {children}
+          </Box>
+        )}
       </Box>
     </Paper>
   )
@@ -121,7 +143,19 @@ function StatCard({ label, value }: Stat) {
   )
 }
 
-function WidgetCard({ title, span, children }: { title: string; span?: boolean; children: ReactNode }) {
+function WidgetCard({
+  title,
+  span,
+  fill,
+  children,
+}: {
+  title: string
+  span?: boolean
+  // When true the card grows to fill its flex parent and its content area
+  // becomes a flex column, so a chart inside can fill the card's height.
+  fill?: boolean
+  children: ReactNode
+}) {
   return (
     <Box
       sx={{
@@ -130,12 +164,17 @@ function WidgetCard({ title, span, children }: { title: string; span?: boolean; 
         borderRadius: 1.5,
         p: 1.5,
         gridColumn: span ? '1 / -1' : undefined,
+        ...(fill ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : {}),
       }}
     >
       <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1, lineHeight: 1.4 }}>
         {title}
       </Typography>
-      {children}
+      {fill ? (
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{children}</Box>
+      ) : (
+        children
+      )}
     </Box>
   )
 }
@@ -250,12 +289,19 @@ export function ProjectDashboard() {
   )
 
   return (
-    <DashboardShell title={title} subtitle="Select a document to view its details.">
-      <Stack spacing={1.5}>
+    <DashboardShell title={title} subtitle="Select a document to view its details." fill>
+      <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0 }}>
         {/* The three small widgets get their own grid (no full-width siblings)
             so auto-fit collapses any empty track and they fill the row evenly
             (≈33% each) when they share it, wrapping to 2 / 1 as it narrows. */}
-        <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 1.5,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            flexShrink: 0,
+          }}
+        >
           <WidgetCard title="Document types">
             {contentsLoading ? <Hint>Loading…</Hint> : <TypeDonut data={typeCounts} />}
           </WidgetCard>
@@ -271,13 +317,13 @@ export function ProjectDashboard() {
             <PinsList pins={containerPins} loading={pinsQ.isLoading} onOpen={(p) => goTo({ itemId: p.id, name: p.name, kind: p.kind })} />
           </WidgetCard>
         </Box>
-        <WidgetCard title="Project activity">
+        <WidgetCard title="Project activity" fill>
           {designIds.length === 0 ? (
             <Hint>No design documents to chart activity for</Hint>
           ) : (
             <>
               {capped && (
-                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
+                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1, flexShrink: 0 }}>
                   <Typography variant="caption" color="text.secondary">
                     Aggregating the first {ACTIVITY_CAP} of {designIds.length} designs.
                   </Typography>
@@ -291,7 +337,11 @@ export function ProjectDashboard() {
               ) : rollupQ.error ? (
                 <Hint>Activity unavailable</Hint>
               ) : rollupQ.data ? (
-                <ActivityHeatmap report={rollupQ.data} scale={0.75} />
+                // Fill the card's leftover height so the heatmap (height:100%)
+                // uses the pane, matching the document Activity tab.
+                <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <ActivityHeatmap report={rollupQ.data} />
+                </Box>
               ) : (
                 <Hint>No activity recorded</Hint>
               )}
