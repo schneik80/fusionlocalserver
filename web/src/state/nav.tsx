@@ -1,11 +1,16 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
+  useRef,
   type ReactNode,
 } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { api } from '../api/client'
 import type { Item } from '../api/types'
+import { navToSearch, searchToNav, shouldPush } from './navUrl'
 
 // The last selected hub is remembered in localStorage (per browser) so a
 // reload/return lands back in the hub you were using. It is restored only after
@@ -70,6 +75,8 @@ const initialState: NavState = {
 }
 
 type Action =
+  | { type: 'hydrate'; state: NavState }
+  | { type: 'patchProject'; project: Item }
   | { type: 'setApp'; app: AppKind }
   | { type: 'selectHub'; id: string; name: string }
   | { type: 'selectProject'; project: Item }
@@ -88,6 +95,16 @@ type Action =
 
 function reducer(state: NavState, action: Action): NavState {
   switch (action.type) {
+    case 'hydrate':
+      // Atomic replace from a parsed URL (cold load / back-forward). One action
+      // so no intermediate reset (selectHub-style) fires mid-hydration.
+      return action.state
+    case 'patchProject':
+      // Swap in the fully-resolved project object (adds altId) without
+      // disturbing the folder stack or selection — a backstop for a permalink
+      // whose project came from name hints only.
+      if (!state.project || state.project.id !== action.project.id) return state
+      return { ...state, project: action.project }
     case 'setApp':
       return state.app === action.app ? state : { ...state, app: action.app }
     case 'selectHub':
@@ -150,8 +167,129 @@ interface NavCtx extends NavState {
 
 const Ctx = createContext<NavCtx | null>(null)
 
+// initFromUrl seeds nav state from the current URL so a cold load / shared
+// permalink paints the right place immediately (from the encoded name hints).
+// Backstops in NavProvider then reconcile ids → full items (altId, real names).
+function initFromUrl(): NavState {
+  if (typeof window === 'undefined') return initialState
+  const p = searchToNav(window.location.search)
+  return {
+    app: p.app,
+    hubId: p.hubId,
+    hubName: p.hubName,
+    project: p.project,
+    folderStack: p.folderStack,
+    selected: p.selected,
+    selectedTab: p.selectedTab,
+  }
+}
+
 export function NavProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+  const [state, dispatch] = useReducer(reducer, undefined, initFromUrl)
+  const qc = useQueryClient()
+  const prevRef = useRef(state)
+
+  // state → URL. Push a new history entry when the location changes; replace on
+  // in-place refinements (tab, a backstop-corrected name). Comparing against the
+  // live URL makes hydration/popstate self-cancel: the search we'd write already
+  // matches, so nothing is pushed.
+  useEffect(() => {
+    const search = navToSearch(state)
+    const current = window.location.search.replace(/^\?/, '')
+    if (search !== current) {
+      const url = search ? `?${search}` : window.location.pathname
+      if (shouldPush(prevRef.current, state)) window.history.pushState(null, '', url)
+      else window.history.replaceState(null, '', url)
+    }
+    prevRef.current = state
+  }, [state])
+
+  // URL → state on back/forward. The browser already moved history, so sync
+  // prevRef first to keep the serialize effect from re-pushing.
+  useEffect(() => {
+    const onPop = () => {
+      const next = initFromUrl()
+      prevRef.current = next
+      dispatch({ type: 'hydrate', state: next })
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // Backstop A — a selected document resolves its own project + folder path
+  // (and the project's altId, needed by contents/wiki) from just its id, the
+  // same resolver useGoToDocument uses. Runs until the project is fully filled.
+  const selId = state.selected?.id ?? null
+  const projAltId = state.project?.altId
+  const reconciledSelRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!state.hubId || !selId || projAltId) return
+    if (reconciledSelRef.current === selId) return // already resolved (even if it had no altId)
+    const hubId = state.hubId
+    let cancelled = false
+    qc.fetchQuery({
+      queryKey: ['location', hubId, selId],
+      queryFn: () => api.itemLocation(hubId, selId),
+      staleTime: 5 * 60 * 1000,
+    })
+      .then((loc) => {
+        if (cancelled) return
+        reconciledSelRef.current = selId
+        const project: Item = {
+          id: loc.projectId,
+          name: loc.projectName,
+          kind: 'project',
+          altId: loc.projectAltId,
+          isContainer: true,
+        }
+        const folderStack: Item[] = loc.folderPath.map((f) => ({
+          id: f.id,
+          name: f.name,
+          kind: 'folder',
+          isContainer: true,
+        }))
+        dispatch({
+          type: 'navigate',
+          project,
+          folderStack,
+          // Keep the selected item itself (its name/kind hint); only its
+          // location needed resolving.
+          selected: state.selected,
+          tab: state.selectedTab ?? undefined,
+        })
+      })
+      .catch(() => {
+        /* no access / deleted — keep the hint-based state */
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.hubId, selId, projAltId])
+
+  // Backstop B — a project/folder permalink with no selected doc fills
+  // project.altId from the projects-list cache (contents/wiki need it).
+  const projId = state.project?.id ?? null
+  useEffect(() => {
+    if (!state.hubId || !projId || projAltId || selId) return
+    const hubId = state.hubId
+    let cancelled = false
+    qc.fetchQuery({
+      queryKey: ['projects', hubId],
+      queryFn: () => api.projects(hubId),
+      staleTime: 5 * 60 * 1000,
+    })
+      .then((list) => {
+        if (cancelled) return
+        const full = list.find((pr) => pr.id === projId)
+        if (full?.altId) dispatch({ type: 'patchProject', project: full })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.hubId, projId, projAltId, selId])
 
   const value = useMemo<NavCtx>(() => {
     const top = state.folderStack[state.folderStack.length - 1]
