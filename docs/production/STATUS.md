@@ -62,6 +62,26 @@ of the plan it started from.
 - `DocSourceButton` supplies a document from **the hub** or **an upload**;
   `PinnedDocChip` renders a pin with its exact version badge and jumps to the
   document via `useGoToDocument`.
+
+### Where uploads land
+
+Production files its own uploads rather than dropping them in the project root:
+
+```
+<project>/Jobs/<job name>/                  plan documents (step editor)
+<project>/Jobs/<job name>/<batch name>/     fulfillments + as-run artifacts
+```
+
+Each level is created on demand and **reused if it already exists**
+(`api.EnsureFolderPath` → `ensureSubfolder`, which matches case-insensitively,
+so a hand-made `jobs` folder is adopted rather than duplicated). Job and batch
+names are free text, so `folderSafe()` strips the characters Windows and the DM
+API reject before they become folder names.
+
+This is opt-in per upload: `POST /api/uploads` takes `ensureFolders=true`.
+Browsing uploads leave it unset and keep the must-exist behaviour, where a
+missing folder means the client sent a stale path and inventing one would hide
+the mistake.
 - `ProductionScreen` — the cross-project rail screen (`app=production`): runs in
   flight across every project, and jobs you own.
 
@@ -143,8 +163,6 @@ PATCHes on every node release; text saves on every blur):
 
 ## Known gaps / next
 
-- Uploaded fulfillments land in the **project root**; a `Production/<Job>/<Batch>`
-  folder tree needs DM folder creation (`api/wiki_publish.go` has the primitives).
 - Pins always freeze the **tip**; pinning an arbitrary historical version is not
   exposed.
 - `SnapshotDocVersion` does two independent lookups with no cross-check — a save

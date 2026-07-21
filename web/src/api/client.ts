@@ -586,6 +586,8 @@ export const api = {
       projectId?: string
       folderId?: string
       folderPath: string[]
+      /** create folderPath if missing (reusing existing folders) instead of requiring it */
+      ensureFolders?: boolean
     },
     file: File,
   ) => {
@@ -595,6 +597,7 @@ export const api = {
     if (fields.projectId) fd.set('projectId', fields.projectId)
     if (fields.folderId) fd.set('folderId', fields.folderId)
     fd.set('folderPath', JSON.stringify(fields.folderPath))
+    if (fields.ensureFolders) fd.set('ensureFolders', 'true')
     fd.set('file', file) // last: the server stops reading parts after the file
     return request<UploadJob>('/api/uploads', { method: 'POST', body: fd })
   },

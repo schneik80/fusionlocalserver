@@ -56,6 +56,11 @@ type uploadJob struct {
 	HubID       string   // GraphQL hub id (resolved to the DM hub id at run time)
 	DMProjectID string   // project altId (DM id space)
 	FolderPath  []string // folder display names from project root; empty = root
+	// EnsureFolders makes FolderPath create-or-reuse rather than must-exist.
+	// Set by features that file their own uploads (Production → Jobs/<job>/…);
+	// a browsing upload leaves it false so a stale path surfaces as an error
+	// instead of silently creating a folder.
+	EnsureFolders bool
 	// Client-side echoes, passed back verbatim so the SPA can invalidate the
 	// right react-query caches when the job lands.
 	ProjectID string
@@ -248,7 +253,11 @@ func (s *Server) uploadJobRun(ctx context.Context, tokenFn api.TokenSource, job 
 	if err != nil {
 		return "", "", err
 	}
-	folderID, err := api.ResolveFolderPath(ctx, token, dmHubID, job.DMProjectID, job.FolderPath)
+	resolve := api.ResolveFolderPath
+	if job.EnsureFolders {
+		resolve = api.EnsureFolderPath
+	}
+	folderID, err := resolve(ctx, token, dmHubID, job.DMProjectID, job.FolderPath)
 	if err != nil {
 		return "", "", err
 	}
