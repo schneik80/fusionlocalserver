@@ -3,49 +3,58 @@
  *
  * Everything else is styled through MUI's `sx` (see CLAUDE.md), but tldraw is a
  * CSS-variable-themed component: its chrome can only be reskinned from CSS.
- * Rather than fight that, this file is scoped to `.fls-tldraw` so nothing here
- * can leak into the rest of the UI, and it only overrides presentation — never
- * layout or behaviour, which tldraw's own stylesheet owns.
+ * Scoped to `.fls-tldraw` so nothing here leaks into the rest of the UI.
  *
- * Values mirror web/src/theme.ts: Montserrat, the Fusion-blue accent (#0696d7),
- * and a 6px radius. tldraw ships light and dark variable sets; the editor is
- * told which to use from the app's colour mode (see WhiteboardCanvas), so this
- * only needs to restate the brand bits that differ.
+ * The variable names below are tldraw's own (`--tl-color-*`, defined on
+ * `.tl-theme__light` / `.tl-theme__dark` in tldraw/tldraw.css) — do not invent
+ * names here: an unrecognised custom property is a silent no-op, so a typo
+ * looks exactly like a style that "didn't apply".
+ *
+ * Only presentation is overridden, never layout: tldraw measures its own
+ * container, so positioning it from here breaks its sizing.
  */
 
-.fls-tldraw {
-  position: absolute;
-  inset: 0;
-}
-
-/* Type: tldraw defaults to its own UI stack; match the app's. */
-.fls-tldraw .tl-container,
-.fls-tldraw .tlui-button,
-.fls-tldraw .tlui-menu,
-.fls-tldraw .tlui-toolbar {
+/* Type: match the app's stack rather than tldraw's UI default. */
+.fls-tldraw,
+.fls-tldraw .tl-container {
   font-family: 'Montserrat', Helvetica, Arial, sans-serif;
 }
 
-/* Accent: selection, focus rings and the active tool pick up the app's blue.
-   Unrecognised custom properties are simply ignored, so this stays safe across
-   tldraw versions rather than depending on any one internal class name. */
-.fls-tldraw {
-  --color-selected: #0696d7;
-  --color-selected-contrast: #ffffff;
-  --color-focus: #0696d7;
-  --color-accent: #0696d7;
+/* Selection + focus take the app's Fusion-blue accent in both themes. */
+.fls-tldraw .tl-theme__light,
+.fls-tldraw .tl-theme__dark {
   --tl-color-selected: #0696d7;
+  --tl-color-selection-stroke: #0696d7;
+  --tl-color-focus: #0696d7;
 }
 
-/* Chrome: soften tldraw's panels to the app's radius. */
+/* Dark mode: tldraw's own dark palette is near-black, which reads as a hole
+   next to the app's lighter panels. Pull the canvas and chrome onto the
+   theme's surfaces (theme.ts: bgPrimary #2A3442, bgPanel #323E50, border
+   #4a5568, textSecondary #a0aec0) so the board sits in the app rather than
+   punching through it — and so body text keeps real contrast. */
+.fls-tldraw .tl-theme__dark {
+  --tl-color-background: #2a3442;
+  --tl-color-panel: #323e50;
+  --tl-color-panel-contrast: #3b4859;
+  --tl-color-divider: #4a5568;
+  --tl-color-text: #e6edf3;
+  --tl-color-muted-1: #a0aec0;
+  --tl-color-muted-2: #8494a8;
+  --tl-color-low: #3b4859;
+  --tl-color-low-border: #4a5568;
+  --tl-color-grid: #4a5568;
+}
+
+/* Chrome: the app's 6px radius. */
 .fls-tldraw .tlui-panel,
-.fls-tldraw .tlui-toolbar__tools,
-.fls-tldraw .tlui-menu {
+.fls-tldraw .tlui-menu,
+.fls-tldraw .tlui-toolbar__tools {
   border-radius: 6px;
 }
 
-/* An app card sitting on the canvas is content, not a tldraw shape: keep its
-   own borders and shadows rather than inheriting the shape chrome. */
+/* An app card on the canvas brings its own border and shadow; don't let the
+   shape container paint a surface behind it. */
 .fls-tldraw .tl-html-container {
   background: transparent;
 }
