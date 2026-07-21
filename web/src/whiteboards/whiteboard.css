@@ -11,7 +11,8 @@
  * substituted colours no longer had a designed contrast relationship with the
  * ones left alone — text on recoloured panels came out unreadable. tldraw's own
  * light and dark themes are internally consistent, so they are left to do their
- * job; only type and the accent are ours.
+ * job; only type, the accent and the canvas background are ours, and each is a
+ * like-for-like swap made per theme.
  *
  * Two rules if this is ever extended:
  *   1. Use tldraw's real variable names (`--tl-color-*`, see tldraw/tldraw.css).
@@ -34,6 +35,24 @@
 .fls-tldraw .tl-theme__dark {
   --tl-color-selected: #0696d7;
   --tl-color-selection-stroke: #0696d7;
+}
+
+/* Canvas: paint it the app's own page background so the board reads as part of
+   the app rather than a panel dropped into it. These two values are
+   `dark.bgPrimary` / `light.bgPrimary` from src/theme.ts — keep them in step if
+   that palette moves.
+
+   Scoped per theme on purpose. `--tl-color-background` is a *canvas* colour:
+   tldraw also derives the halo behind canvas text from it, and its light theme
+   draws near-black strokes that assume a near-white canvas. Setting one dark
+   value for both themes would reproduce the unreadable-text regression this
+   file's header warns about. */
+.fls-tldraw .tl-theme__dark {
+  --tl-color-background: #2a3442;
+}
+
+.fls-tldraw .tl-theme__light {
+  --tl-color-background: #f4f4f4;
 }
 
 /* An app card on the canvas brings its own border and shadow; don't let the
