@@ -140,6 +140,7 @@ export function BatchesView({
             key={selected.id}
             projectId={projectId}
             jobId={jobId}
+            jobName={job.name}
             batch={selected}
             canWrite={canWrite}
             canModerate={canModerate}

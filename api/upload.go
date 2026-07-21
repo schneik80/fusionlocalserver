@@ -56,6 +56,38 @@ func ResolveFolderPath(ctx context.Context, token, dmHubID, dmProjectID string, 
 	return cur, nil
 }
 
+// EnsureFolderPath is ResolveFolderPath for callers that own their destination
+// and want it to exist: it walks the same display-name path from the project
+// root but CREATES each missing level instead of failing, reusing any folder
+// that is already there (ensureSubfolder matches case-insensitively, so a
+// hand-made "jobs" is adopted rather than duplicated).
+//
+// Used by features that file their own uploads — Production drops documents
+// into Jobs/<job>/<batch> — so the user does not have to pre-create the tree.
+// Browsing uploads keep using ResolveFolderPath: there, a missing folder means
+// the client sent a stale path and inventing one would hide the mistake.
+func EnsureFolderPath(ctx context.Context, token, dmHubID, dmProjectID string, names []string) (string, error) {
+	tops, err := dmTopFolders(ctx, token, dmHubID, dmProjectID)
+	if err != nil {
+		return "", err
+	}
+	if len(tops) == 0 {
+		return "", fmt.Errorf("project has no root folder")
+	}
+	cur := tops[0].ID
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		id, err := ensureSubfolder(ctx, token, dmProjectID, cur, name)
+		if err != nil {
+			return "", fmt.Errorf("ensuring folder %q: %w", name, err)
+		}
+		cur = id
+	}
+	return cur, nil
+}
+
 // UploadFileToFolder uploads size bytes from src into folderID as filename. A
 // same-named item in the folder gains a new version (matching Fusion Team's own
 // upload semantics); otherwise a new item is created. progress, when non-nil,

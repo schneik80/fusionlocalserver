@@ -36,7 +36,7 @@ func (s *Server) reqSession(w http.ResponseWriter, r *http.Request) (*Session, b
 // before the bytes stream in; the file is spooled to a temp file (never RAM)
 // and the response returns as soon as the spool completes — the APS transfer
 // then proceeds asynchronously and is observed via GET /api/uploads.
-// POST /api/uploads  (multipart: hubId, dmProjectId, projectId?, folderId?, folderPath, file)
+// POST /api/uploads  (multipart: hubId, dmProjectId, projectId?, folderId?, folderPath, ensureFolders?, file)
 func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.reqSession(w, r)
 	if !ok {
@@ -130,11 +130,14 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 		HubID:       hubID,
 		DMProjectID: dmProjectID,
 		FolderPath:  folderPath,
-		ProjectID:   fields["projectId"],
-		FolderID:    fields["folderId"],
-		CreatedAt:   time.Now(),
-		tmpPath:     tmpPath,
-		status:      uploadQueued,
+		// Opt-in: create the folderPath if it doesn't exist yet (Production
+		// files its uploads under Jobs/<job>/…). Absent → must-exist.
+		EnsureFolders: fields["ensureFolders"] == "true",
+		ProjectID:     fields["projectId"],
+		FolderID:      fields["folderId"],
+		CreatedAt:     time.Now(),
+		tmpPath:       tmpPath,
+		status:        uploadQueued,
 	}
 	s.uploads.add(job)
 	go s.runUpload(job, sess)

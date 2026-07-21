@@ -36,11 +36,18 @@ export function DocSourceButton({
   label,
   icon,
   variant = 'outlined',
+  folderPath,
   onPin,
 }: {
   label: string
   icon?: IconDefinition
   variant?: 'text' | 'outlined' | 'contained'
+  /**
+   * Destination for uploaded files, as folder display names from the project
+   * root (e.g. ['Jobs', 'Bracket', 'Batch 2']). Created on demand, reusing any
+   * level that already exists. Omitted → the project root.
+   */
+  folderPath?: string[]
   onPin: (pin: DocPin, source: 'hub' | 'upload') => void
 }) {
   const nav = useNav()
@@ -60,12 +67,16 @@ export function DocSourceButton({
     setUploadingName(file.name)
     setError(null)
     try {
+      const path = (folderPath ?? []).map(folderSafe).filter(Boolean)
       const job = await api.uploadFile(
         {
           hubId: nav.hubId,
           dmProjectId: nav.project.altId,
           projectId: nav.project.id,
-          folderPath: [], // project root; the server resolves it
+          folderPath: path,
+          // Production files its own uploads, so the destination is created on
+          // demand rather than having to pre-exist.
+          ensureFolders: path.length > 0,
         },
         file,
       )
@@ -187,6 +198,19 @@ export function DocSourceButton({
       />
     </>
   )
+}
+
+// folderSafe makes a free-text job/batch name usable as a Data Management
+// folder name: strips the characters Windows and the DM API reject, collapses
+// whitespace, and bounds the length. Names are matched case-insensitively when
+// reusing an existing folder, so casing differences never fork the tree.
+export function folderSafe(name: string): string {
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '') // trailing dots/spaces are invalid on Windows
+  return cleaned.slice(0, 120)
 }
 
 // kindHint maps an uploaded filename to an Item kind for the thumbnail/icon.

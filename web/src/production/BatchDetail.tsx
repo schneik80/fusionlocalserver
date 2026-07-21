@@ -42,6 +42,7 @@ export const PRODUCTION_ACCENT = '#b7410e'
 export function BatchDetail({
   projectId,
   jobId,
+  jobName,
   batch,
   canWrite,
   canModerate,
@@ -50,6 +51,8 @@ export function BatchDetail({
 }: {
   projectId: string
   jobId: string
+  /** owning job, for filing uploads under Jobs/<job>/<batch> */
+  jobName: string
   batch: ProdBatch
   canWrite: boolean
   canModerate: boolean
@@ -273,6 +276,7 @@ export function BatchDetail({
                               />
                             ) : canWrite ? (
                               <DocSourceButton
+                                folderPath={['Jobs', jobName, batch.name]}
                                 label="Supply"
                                 icon={faPlus}
                                 onPin={(pin, source) =>
@@ -317,6 +321,7 @@ export function BatchDetail({
                   {canWrite && (
                     <Box sx={{ mt: 0.75 }}>
                       <DocSourceButton
+                        folderPath={['Jobs', jobName, batch.name]}
                         label="Add as-run artifact"
                         icon={faPlus}
                         variant="text"

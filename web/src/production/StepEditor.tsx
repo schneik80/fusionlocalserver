@@ -27,11 +27,14 @@ type Graph = ReturnType<typeof useJobGraphMutations>
 // too once P3 lands.
 export function StepEditor({
   step,
+  jobName,
   canWrite,
   graph,
   onClose,
 }: {
   step: ProdStep | null
+  /** owning job, for filing uploads under Jobs/<job> */
+  jobName: string
   canWrite: boolean
   graph: Graph
   onClose: () => void
@@ -182,6 +185,7 @@ export function StepEditor({
             </Stack>
             {canWrite && (
               <DocSourceButton
+                folderPath={['Jobs', jobName]}
                 label="Attach a document"
                 icon={faPaperclip}
                 onPin={(pin) => graph.addPlanDoc.mutate({ stepId: step.id, body: pin })}

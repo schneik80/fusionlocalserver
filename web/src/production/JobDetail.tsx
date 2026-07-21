@@ -210,6 +210,7 @@ export function JobDetail({
           />
           <StepEditor
             step={job.steps.find((s) => s.id === selectedStepId) ?? null}
+            jobName={job.name}
             canWrite={canWrite}
             graph={g}
             onClose={() => setSelectedStepId(null)}
