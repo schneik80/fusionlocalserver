@@ -25,6 +25,7 @@ import { encodeTaskRef, taskRefFromTask } from '../components/taskcard/taskref'
 import { useNav } from '../state/nav'
 import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
 import { DocSourceButton } from './DocSourceButton'
+import { StepNumBadge } from './chips'
 import { PinnedDocChip } from './PinnedDocChip'
 import { BATCH_STATUSES } from './types'
 import type { ProdBatch } from './types'
@@ -230,21 +231,7 @@ export function BatchDetail({
             return (
               <Paper key={step.stepId} variant="outlined" sx={{ p: 1.25, borderRadius: 1.5 }}>
                 <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                  <Box
-                    sx={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: '50%',
-                      display: 'grid',
-                      placeItems: 'center',
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: 'primary.contrastText',
-                      bgcolor: 'primary.main',
-                    }}
-                  >
-                    {step.num}
-                  </Box>
+                  <StepNumBadge num={step.num} size={20} />
                   <Typography variant="body2" fontWeight={600}>
                     {step.title}
                   </Typography>

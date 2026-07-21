@@ -127,11 +127,55 @@ type ProdCapsDTO struct {
 	Moderate bool `json:"moderate"`
 }
 
-// ProdJobListDTO is GET /api/production/jobs. Listed jobs carry the full graph
-// (one mapping path); the list view uses only the summary fields.
+// ProdJobSummaryDTO is a job WITHOUT its graph — counts instead of the steps,
+// edges and batches. The project list polls every 15s while the tab is open and
+// only ever renders these fields; shipping each job's full batch history
+// (frozen plan snapshots and all) on every poll, alongside the selected job's
+// own fetch, was pure duplicate bandwidth, parse and server-side marshal work.
+type ProdJobSummaryDTO struct {
+	ID               string      `json:"id"`
+	Num              int64       `json:"num"`
+	ProjectID        string      `json:"projectId"`
+	HubID            string      `json:"hubId"`
+	ProjectName      string      `json:"projectName"`
+	Name             string      `json:"name"`
+	Description      string      `json:"description,omitempty"`
+	StepCount        int         `json:"stepCount"`
+	BatchCount       int         `json:"batchCount"`
+	ActiveBatchCount int         `json:"activeBatchCount"` // planned | running
+	CreatedBy        ProdUserDTO `json:"createdBy"`
+	CreatedAt        string      `json:"createdAt"`
+	UpdatedAt        string      `json:"updatedAt"`
+}
+
+// ProdJobListDTO is GET /api/production/jobs.
 type ProdJobListDTO struct {
-	Jobs         []ProdJobDTO `json:"jobs"`
-	Capabilities ProdCapsDTO  `json:"capabilities"`
+	Jobs         []ProdJobSummaryDTO `json:"jobs"`
+	Capabilities ProdCapsDTO         `json:"capabilities"`
+}
+
+func prodJobSummaryDTO(j production.Job, projectID, hubID, projectName string) ProdJobSummaryDTO {
+	active := 0
+	for _, b := range j.Batches {
+		if b.Status == "planned" || b.Status == "running" {
+			active++
+		}
+	}
+	return ProdJobSummaryDTO{
+		ID:               j.ID,
+		Num:              j.Num,
+		ProjectID:        projectID,
+		HubID:            hubID,
+		ProjectName:      projectName,
+		Name:             j.Name,
+		Description:      j.Description,
+		StepCount:        len(j.Steps),
+		BatchCount:       len(j.Batches),
+		ActiveBatchCount: active,
+		CreatedBy:        prodUserDTO(j.CreatedBy),
+		CreatedAt:        fmtTime(j.CreatedAt),
+		UpdatedAt:        fmtTime(j.UpdatedAt),
+	}
 }
 
 // MyProductionDTO is GET /api/production/mine — the caller's jobs across every

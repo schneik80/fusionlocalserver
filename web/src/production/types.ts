@@ -113,8 +113,28 @@ export interface ProdCaps {
   moderate: boolean
 }
 
+// JobSummary is a job WITHOUT its graph — what GET /api/production/jobs returns.
+// The list polls while the tab is open, so it ships counts rather than every
+// job's steps and batch history; the selected job's full graph comes from
+// useJob. Keep in sync with server ProdJobSummaryDTO.
+export interface JobSummary {
+  id: string
+  num: number
+  projectId: string
+  hubId: string
+  projectName: string
+  name: string
+  description?: string
+  stepCount: number
+  batchCount: number
+  activeBatchCount: number
+  createdBy: ProdUser
+  createdAt: string
+  updatedAt: string
+}
+
 export interface JobList {
-  jobs: Job[]
+  jobs: JobSummary[]
   capabilities: ProdCaps
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, IconButton, Tooltip, Typography } from '@mui/material'
+import { Box, Tooltip, Typography } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
 import { useQuery } from '@tanstack/react-query'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -11,6 +11,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/client'
 import { thumbnailSrc } from '../api/thumbnails'
+import { ToolBtn } from './canvas/ToolBtn'
 import { useNav } from '../state/nav'
 import { iconForItem } from './icons'
 import type { Item } from '../api/types'
@@ -224,20 +225,6 @@ export default function RelationGraph({
   )
 }
 
-function ToolBtn({ label, icon, onClick }: { label: string; icon: typeof faArrowsToDot; onClick: () => void }) {
-  return (
-    <Tooltip title={label}>
-      <IconButton
-        size="small"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={onClick}
-        sx={{ bgcolor: 'background.paper', border: 1, borderColor: 'divider', '&:hover': { bgcolor: 'background.paper' } }}
-      >
-        <FontAwesomeIcon icon={icon} style={{ fontSize: 12 }} />
-      </IconButton>
-    </Tooltip>
-  )
-}
 
 type Placed = GraphNode & { isFocus: boolean; x: number; y: number }
 

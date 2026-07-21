@@ -7,8 +7,10 @@ import {
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { useJobGraphMutations } from '../api/queries'
+import { ToolBtn } from '../components/canvas/ToolBtn'
+import { StepNumBadge } from './chips'
 import type { Job, ProdStep } from './types'
 
 // JobCanvas is the interactive flow editor: a pan/zoom SVG canvas (the engine
@@ -212,19 +214,82 @@ export function JobCanvas({
     )
   }
 
-  const edges = job.edges
-    .map((e) => {
-      const from = job.steps.find((s) => s.id === e.from)
-      const to = job.steps.find((s) => s.id === e.to)
-      if (!from || !to) return null
-      const fp = posOf(from)
-      const tp = posOf(to)
-      return {
+  // Node event handlers are hoisted out of the render loop and made identity-
+  // stable, so memo(StepNode) actually holds: with per-node closures every node
+  // re-rendered on every mousemove (N x MUI sx + Tooltip work per frame just to
+  // move one). They read live state through refs instead of closing over it.
+  const liveRef = useRef({ job, dragPos, scale: view.scale, canWrite, onSelectStep })
+  liveRef.current = { job, dragPos, scale: view.scale, canWrite, onSelectStep }
+
+  const handleBodyDown = useCallback((e: React.MouseEvent, stepId: string) => {
+    e.stopPropagation()
+    const { job: j, dragPos: dp, scale, canWrite: cw, onSelectStep: sel } = liveRef.current
+    if (!cw) {
+      sel(stepId)
+      return
+    }
+    const st = j.steps.find((s) => s.id === stepId)
+    if (!st) return
+    const p = dp?.id === stepId ? dp : { x: st.x, y: st.y }
+    nodeDrag.current = {
+      id: stepId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: p.x,
+      origY: p.y,
+      scale, // captured at drag start; see onMouseMove
+      moved: false,
+    }
+  }, [])
+
+  const handleBodyUp = useCallback((_e: React.MouseEvent, stepId: string) => {
+    // A press that didn't move is a select/open.
+    if (nodeDrag.current && !nodeDrag.current.moved) liveRef.current.onSelectStep(stepId)
+  }, [])
+
+  const handlePortDown = useCallback((e: React.MouseEvent, stepId: string) => {
+    e.stopPropagation()
+    const rect = vpRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setView((v) => {
+      // Read the current view without depending on it: setView's updater gives
+      // us the live value, and we only use it to seed the preview endpoint.
+      setEdgeDraw({
+        from: stepId,
+        lx: (e.clientX - rect.left - v.tx) / v.scale,
+        ly: (e.clientY - rect.top - v.ty) / v.scale,
+      })
+      return v
+    })
+  }, [])
+
+  const handleEnter = useCallback((stepId: string) => {
+    hoverNode.current = stepId
+  }, [])
+  const handleLeave = useCallback((stepId: string) => {
+    if (hoverNode.current === stepId) hoverNode.current = null
+  }, [])
+
+  // Edge geometry, rebuilt only when something that moves it changes. Endpoints
+  // resolve through a Map rather than a linear find per edge — at the caps
+  // (400 edges x 200 steps) the naive version is ~160k comparisons, re-run on
+  // every mousemove-driven render.
+  const edges = useMemo(() => {
+    const byId = new Map(job.steps.map((s) => [s.id, s]))
+    const out: { id: string; d: string }[] = []
+    for (const e of job.edges) {
+      const from = byId.get(e.from)
+      const to = byId.get(e.to)
+      if (!from || !to) continue
+      const fp = dragPos?.id === from.id ? dragPos : { x: from.x, y: from.y }
+      const tp = dragPos?.id === to.id ? dragPos : { x: to.x, y: to.y }
+      out.push({
         id: e.id,
         d: edgePath(fp.x + W + ox, fp.y + H / 2 + oy, tp.x + ox, tp.y + H / 2 + oy),
-      }
-    })
-    .filter(Boolean) as { id: string; d: string }[]
+      })
+    }
+    return out
+  }, [job.steps, job.edges, dragPos, ox, oy])
 
   return (
     <Box
@@ -295,35 +360,11 @@ export function JobCanvas({
               accent={accent}
               selected={st.id === selectedStepId}
               canWrite={canWrite}
-              onBodyDown={(e) => {
-                e.stopPropagation()
-                if (!canWrite) {
-                  onSelectStep(st.id)
-                  return
-                }
-                nodeDrag.current = {
-                  id: st.id,
-                  startX: e.clientX,
-                  startY: e.clientY,
-                  origX: p.x,
-                  origY: p.y,
-                  scale: view.scale,
-                  moved: false,
-                }
-              }}
-              onBodyUp={() => {
-                // A press that didn't move is a select/open.
-                if (nodeDrag.current && !nodeDrag.current.moved) onSelectStep(st.id)
-              }}
-              onPortDown={(e) => {
-                e.stopPropagation()
-                const { lx, ly } = toLayer(e.clientX, e.clientY)
-                setEdgeDraw({ from: st.id, lx, ly })
-              }}
-              onEnter={() => (hoverNode.current = st.id)}
-              onLeave={() => {
-                if (hoverNode.current === st.id) hoverNode.current = null
-              }}
+              onBodyDown={handleBodyDown}
+              onBodyUp={handleBodyUp}
+              onPortDown={handlePortDown}
+              onEnter={handleEnter}
+              onLeave={handleLeave}
             />
           )
         })}
@@ -373,22 +414,12 @@ export function JobCanvas({
   )
 }
 
-function ToolBtn({ label, icon, onClick }: { label: string; icon: typeof faArrowsToDot; onClick: () => void }) {
-  return (
-    <Tooltip title={label}>
-      <IconButton
-        size="small"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={onClick}
-        sx={{ bgcolor: 'background.paper', border: 1, borderColor: 'divider', '&:hover': { bgcolor: 'background.paper' } }}
-      >
-        <FontAwesomeIcon icon={icon} style={{ fontSize: 12 }} />
-      </IconButton>
-    </Tooltip>
-  )
-}
 
-function StepNode({
+// memo matters here: pan and node-drag set state on every mousemove, so without
+// it every node in the job re-runs MUI's sx pipeline and its Tooltip ~60x/sec.
+// The handler props are identity-stable (see liveRef above), so the only nodes
+// that actually re-render are the ones whose position/selection changed.
+const StepNode = memo(function StepNode({
   step,
   left,
   top,
@@ -407,11 +438,11 @@ function StepNode({
   accent: string
   selected: boolean
   canWrite: boolean
-  onBodyDown: (e: React.MouseEvent) => void
-  onBodyUp: (e: React.MouseEvent) => void
-  onPortDown: (e: React.MouseEvent) => void
-  onEnter: () => void
-  onLeave: () => void
+  onBodyDown: (e: React.MouseEvent, stepId: string) => void
+  onBodyUp: (e: React.MouseEvent, stepId: string) => void
+  onPortDown: (e: React.MouseEvent, stepId: string) => void
+  onEnter: (stepId: string) => void
+  onLeave: (stepId: string) => void
 }) {
   const [hovered, setHovered] = useState(false)
   const docCount = step.planDocs.length
@@ -421,14 +452,14 @@ function StepNode({
     <Box
       onMouseEnter={() => {
         setHovered(true)
-        onEnter()
+        onEnter(step.id)
       }}
       onMouseLeave={() => {
         setHovered(false)
-        onLeave()
+        onLeave(step.id)
       }}
-      onMouseDown={onBodyDown}
-      onMouseUp={onBodyUp}
+      onMouseDown={(e) => onBodyDown(e, step.id)}
+      onMouseUp={(e) => onBodyUp(e, step.id)}
       sx={{
         position: 'absolute',
         left,
@@ -450,22 +481,7 @@ function StepNode({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-        <Box
-          sx={{
-            width: 20,
-            height: 20,
-            borderRadius: '50%',
-            flexShrink: 0,
-            display: 'grid',
-            placeItems: 'center',
-            fontSize: 10,
-            fontWeight: 700,
-            color: 'primary.contrastText',
-            bgcolor: 'primary.main',
-          }}
-        >
-          {step.num}
-        </Box>
+        <StepNumBadge num={step.num} size={20} />
         <Typography variant="body2" fontWeight={600} noWrap sx={{ flex: 1, minWidth: 0 }} title={step.title}>
           {step.title}
         </Typography>
@@ -478,7 +494,7 @@ function StepNode({
       {canWrite && (
         <Tooltip title="Drag to connect" placement="right">
           <Box
-            onMouseDown={onPortDown}
+            onMouseDown={(e) => onPortDown(e, step.id)}
             sx={{
               position: 'absolute',
               right: -PORT_R,
@@ -498,4 +514,4 @@ function StepNode({
       )}
     </Box>
   )
-}
+})

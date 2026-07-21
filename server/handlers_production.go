@@ -161,16 +161,28 @@ func (s *Server) handleProdJobsList(w http.ResponseWriter, r *http.Request) {
 		s.prodError(w, r, err)
 		return
 	}
+	// Probe the caller's write capabilities so the SPA can disable affordances
+	// rather than let a write bounce off a 403. A probe FAILURE is not "no
+	// permission" — silently reporting false would render the whole tab
+	// read-only with no error shown, and flip back on the next poll. Fail the
+	// request instead, matching prodCan's posture; these hit the same cached
+	// roster the CapRead check above just populated, so an error here is real.
 	caps := ProdCapsDTO{}
-	if v, cerr := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapPost); cerr == nil {
-		caps.Write = v
+	write, err := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapPost)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	if v, cerr := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapModerate); cerr == nil {
-		caps.Moderate = v
+	caps.Write = write
+	moderate, err := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapModerate)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	out := ProdJobListDTO{Jobs: make([]ProdJobDTO, 0, len(jobs)), Capabilities: caps}
+	caps.Moderate = moderate
+	out := ProdJobListDTO{Jobs: make([]ProdJobSummaryDTO, 0, len(jobs)), Capabilities: caps}
 	for _, j := range jobs {
-		out.Jobs = append(out.Jobs, prodJobDTO(j, c.projectID, hubID, projectName))
+		out.Jobs = append(out.Jobs, prodJobSummaryDTO(j, c.projectID, hubID, projectName))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

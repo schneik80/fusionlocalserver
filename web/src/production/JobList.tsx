@@ -13,7 +13,7 @@ import {
 import { alpha } from '@mui/material/styles'
 import { useState } from 'react'
 import { useProductionMutations } from '../api/queries'
-import type { Job, ProdCaps } from './types'
+import type { JobSummary, ProdCaps } from './types'
 import { jobDisplayId } from './types'
 
 // JobList is the left rail: the project's jobs plus an inline create form.
@@ -33,7 +33,7 @@ export function JobList({
   projectId: string
   hubId: string
   projectName: string
-  jobs: Job[]
+  jobs: JobSummary[]
   caps?: ProdCaps
   loading: boolean
   error: Error | null
@@ -174,8 +174,9 @@ export function JobList({
                   {j.name}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {jobDisplayId(j)} · {j.steps.length} step{j.steps.length === 1 ? '' : 's'} ·{' '}
-                  {j.batches.length} batch{j.batches.length === 1 ? '' : 'es'}
+                  {jobDisplayId(j)} · {j.stepCount} step{j.stepCount === 1 ? '' : 's'} ·{' '}
+                  {j.batchCount} batch{j.batchCount === 1 ? '' : 'es'}
+                  {j.activeBatchCount > 0 ? ` · ${j.activeBatchCount} in flight` : ''}
                 </Typography>
               </ListItemButton>
             ))}
