@@ -24,10 +24,10 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import { alpha } from '@mui/material/styles'
 import { useState } from 'react'
 import { useAuthMe, useJob, useJobGraphMutations, useProductionMutations } from '../api/queries'
 import { BatchesView } from './BatchesView'
+import { PlaceholderChip, StepNumBadge } from './chips'
 import { JobCanvas } from './JobCanvas'
 import { StepEditor } from './StepEditor'
 import type { ProdStep } from './types'
@@ -336,22 +336,7 @@ function StepCard({
   return (
     <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 1.5 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
-        <Box
-          sx={{
-            width: 22,
-            height: 22,
-            borderRadius: '50%',
-            flexShrink: 0,
-            display: 'grid',
-            placeItems: 'center',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'primary.contrastText',
-            bgcolor: 'primary.main',
-          }}
-        >
-          {step.num}
-        </Box>
+        <StepNumBadge num={step.num} />
         {canWrite ? (
           <TextField
             variant="standard"
@@ -408,21 +393,14 @@ function StepCard({
         </Typography>
         <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75 }}>
           {step.placeholders.map((ph) => (
-            <Chip
+            <PlaceholderChip
               key={ph.id}
-              size="small"
-              label={ph.label}
-              variant="outlined"
+              placeholder={ph}
               onDelete={
                 canWrite
                   ? () => graph.removePlaceholder.mutate({ stepId: step.id, placeholderId: ph.id })
                   : undefined
               }
-              sx={{
-                borderStyle: 'dashed',
-                fontSize: 11,
-                borderColor: (t) => alpha(t.palette.text.primary, 0.3),
-              }}
             />
           ))}
           {step.placeholders.length === 0 && (

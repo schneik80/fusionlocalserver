@@ -3,7 +3,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   Box,
   Button,
-  Chip,
   Divider,
   Drawer,
   IconButton,
@@ -12,11 +11,11 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import { alpha } from '@mui/material/styles'
 import { useEffect, useState } from 'react'
 import type { useJobGraphMutations } from '../api/queries'
 import { DocSourceButton } from './DocSourceButton'
 import { PinnedDocChip } from './PinnedDocChip'
+import { PlaceholderChip, StepNumBadge } from './chips'
 import type { ProdStep } from './types'
 
 type Graph = ReturnType<typeof useJobGraphMutations>
@@ -90,21 +89,7 @@ export function StepEditor({
             spacing={1}
             sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}
           >
-            <Box
-              sx={{
-                width: 22,
-                height: 22,
-                borderRadius: '50%',
-                display: 'grid',
-                placeItems: 'center',
-                fontSize: 11,
-                fontWeight: 700,
-                color: 'primary.contrastText',
-                bgcolor: 'primary.main',
-              }}
-            >
-              {step.num}
-            </Box>
+            <StepNumBadge num={step.num} />
             <Typography variant="subtitle2" sx={{ flex: 1 }}>
               Step
             </Typography>
@@ -144,21 +129,14 @@ export function StepEditor({
             </Typography>
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
               {step.placeholders.map((ph) => (
-                <Chip
+                <PlaceholderChip
                   key={ph.id}
-                  size="small"
-                  label={ph.label}
-                  variant="outlined"
+                  placeholder={ph}
                   onDelete={
                     canWrite
                       ? () => graph.removePlaceholder.mutate({ stepId: step.id, placeholderId: ph.id })
                       : undefined
                   }
-                  sx={{
-                    borderStyle: 'dashed',
-                    fontSize: 11,
-                    borderColor: (t) => alpha(t.palette.text.primary, 0.3),
-                  }}
                 />
               ))}
               {step.placeholders.length === 0 && (

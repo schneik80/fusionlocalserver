@@ -18,6 +18,7 @@ package production
 
 import (
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -63,17 +64,8 @@ var BatchKinds = []string{"prove", "production"}
 // BatchStatuses track a run's lifecycle.
 var BatchStatuses = []string{"planned", "running", "complete"}
 
-func validBatchKind(k string) bool   { return contains(BatchKinds, k) }
-func validBatchStatus(s string) bool { return contains(BatchStatuses, s) }
-
-func contains(set []string, v string) bool {
-	for _, s := range set {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
+func validBatchKind(k string) bool   { return slices.Contains(BatchKinds, k) }
+func validBatchStatus(s string) bool { return slices.Contains(BatchStatuses, s) }
 
 // UserRef identifies a project member the way tasks/chat do: by OIDC sub, with
 // name/email captured at write time for display without an APS round-trip.

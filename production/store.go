@@ -184,10 +184,14 @@ func (s *Store) ProjectInfo(projectID string) (hubID, projectName string, err er
 
 // ---- mutation plumbing ----
 
-// mutate runs fn under the project lock with a clone/rollback guard: any error
-// from fn or from the save restores the pre-mutation state. fn must both
-// validate and apply; validating before touching pf keeps a failed mutation
-// side-effect free even before the rollback.
+// mutate runs fn under the project lock with a whole-file clone/rollback guard:
+// any error from fn or from the save restores the pre-mutation state. fn must
+// both validate and apply; validating before touching pf keeps a failed
+// mutation side-effect free even before the rollback.
+//
+// Reserved for mutations that restructure the file itself — creating or
+// deleting a job — which are human-paced and rare. Everything job-internal uses
+// mutateJob, whose rollback snapshot is scoped to the one job it touches.
 func (s *Store) mutate(projectID string, fn func(pf *projectFile) error) error {
 	ps, err := s.project(projectID)
 	if err != nil {
@@ -266,26 +270,17 @@ func (s *Store) UpdateJob(projectID, jobID string, p JobPatch) (Job, error) {
 			return Job{}, err
 		}
 	}
-	var updated *Job
-	err := s.mutate(projectID, func(pf *projectFile) error {
-		j := findJob(pf, jobID)
-		if j == nil {
-			return fmt.Errorf("%w: job %q", ErrNotFound, jobID)
-		}
+	// Job-scoped (the name/description save on every blur), so it takes the
+	// cheap rollback path rather than cloning the whole project file.
+	return s.jobMutation(projectID, jobID, func(j *Job) error {
 		if p.Name != nil {
 			j.Name = *p.Name
 		}
 		if p.Description != nil {
 			j.Description = *p.Description
 		}
-		j.UpdatedAt = time.Now().UTC()
-		updated = copyJob(j) // copy under lock; see jobMutation
 		return nil
 	})
-	if err != nil {
-		return Job{}, err
-	}
-	return *updated, nil
 }
 
 // DeleteJob removes a job and everything under it.
@@ -883,24 +878,54 @@ func validateRefToken(token string) error {
 	return nil
 }
 
-// jobMutation runs fn against a job, returning a fresh copy of the job on
-// success. It bumps the job's UpdatedAt so any change touches the job's clock.
-// The copy is taken inside the project lock (before the save returns) so the
-// caller never observes a concurrently-mutated job.
+// mutateJob runs fn against one job under the project lock, with the
+// clone/rollback guard scoped to THAT job. Every step/edge/placeholder/plan-doc/
+// batch/fulfillment/ref write goes through here, and those are the hot paths —
+// a canvas drag PATCHes on every node release, a description saves on every
+// blur. Cloning the whole project file for each of those would be O(project)
+// (all jobs x their batches x snapshots x fulfillments) to undo a single-field
+// change, so only the touched job is snapshotted; on failure its slot in the
+// Jobs slice is restored. fn is expected to validate before it mutates.
+//
+// It bumps UpdatedAt so any change touches the job's clock, and takes the
+// caller's copy inside the lock so nobody observes a concurrently-mutated job.
+func (s *Store) mutateJob(projectID, jobID string, fn func(j *Job) error) (*Job, error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	idx := -1
+	for i, j := range ps.file.Jobs {
+		if j.ID == jobID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, fmt.Errorf("%w: job %q", ErrNotFound, jobID)
+	}
+	j := ps.file.Jobs[idx]
+	prev := copyJob(j) // rollback snapshot: this job only
+
+	if err := fn(j); err != nil {
+		ps.file.Jobs[idx] = prev
+		return nil, err
+	}
+	j.UpdatedAt = time.Now().UTC()
+	snapshot := copyJob(j)
+	if err := s.saveFile(projectID, ps.file); err != nil {
+		ps.file.Jobs[idx] = prev
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+// jobMutation runs fn against a job and returns a fresh copy of it.
 func (s *Store) jobMutation(projectID, jobID string, fn func(j *Job) error) (Job, error) {
-	var snapshot *Job
-	err := s.mutate(projectID, func(pf *projectFile) error {
-		j := findJob(pf, jobID)
-		if j == nil {
-			return fmt.Errorf("%w: job %q", ErrNotFound, jobID)
-		}
-		if err := fn(j); err != nil {
-			return err
-		}
-		j.UpdatedAt = time.Now().UTC()
-		snapshot = copyJob(j)
-		return nil
-	})
+	snapshot, err := s.mutateJob(projectID, jobID, fn)
 	if err != nil {
 		return Job{}, err
 	}
@@ -910,17 +935,8 @@ func (s *Store) jobMutation(projectID, jobID string, fn func(j *Job) error) (Job
 // jobMutationErr is jobMutation for callers that return something other than
 // the job (batches): it runs fn against the job and only reports the error.
 func (s *Store) jobMutationErr(projectID, jobID string, fn func(j *Job) error) error {
-	return s.mutate(projectID, func(pf *projectFile) error {
-		j := findJob(pf, jobID)
-		if j == nil {
-			return fmt.Errorf("%w: job %q", ErrNotFound, jobID)
-		}
-		if err := fn(j); err != nil {
-			return err
-		}
-		j.UpdatedAt = time.Now().UTC()
-		return nil
-	})
+	_, err := s.mutateJob(projectID, jobID, fn)
+	return err
 }
 
 // ---- validation ----

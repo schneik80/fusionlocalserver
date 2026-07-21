@@ -120,7 +120,26 @@ return the **affected batch**.
   P4 upload-to-fulfill + timeline + completeness, P5 cross-project screen.
 - A `/code-review` pass at high effort; all 10 reported findings fixed (notably a
   copy-outside-the-lock data race in `CreateJob`/`UpdateJob`, the live-plan batch
-  record, tip-following pins on uploads, and `v0` on plain files).
+  record, tip-following pins on uploads, and `v0` on plain files), plus the
+  follow-up sweep: job-scoped rollback, summary list DTO, canvas memoization,
+  capability probes that no longer swallow errors into a silent read-only tab,
+  and shared `ToolBtn` / `StepNumBadge` / `PlaceholderChip`.
+
+## Performance notes
+
+Three things are deliberately shaped for the interaction pattern (a canvas drag
+PATCHes on every node release; text saves on every blur):
+
+- **Rollback is job-scoped.** `mutateJob` snapshots only the job being written,
+  not the whole project file. The whole-file clone remains only for create/delete
+  job, which are rare.
+- **The jobs list ships counts, not graphs.** `GET /api/production/jobs` returns
+  `ProdJobSummaryDTO` (step/batch/active counts); the selected job's full graph
+  comes from `GET /api/production/job`. Previously both polled the same full
+  payload every 15s.
+- **The canvas memoizes.** `StepNode` is `memo`'d with identity-stable handlers
+  (they read live state through a ref), and edge geometry is a `useMemo` over a
+  step `Map` — so a pan or drag re-renders the moving node, not all of them.
 
 ## Known gaps / next
 
@@ -128,12 +147,12 @@ return the **affected batch**.
   folder tree needs DM folder creation (`api/wiki_publish.go` has the primitives).
 - Pins always freeze the **tip**; pinning an arbitrary historical version is not
   exposed.
-- `Placeholder.Kind` and `Fulfillment.Source` are unvalidated for length.
-- `SnapshotDocVersion` does two independent calls with no consistency check — a
-  save landing between them can pin a mismatched number/thumbnail.
-- Efficiency: every mutation deep-clones the whole project file for rollback; the
-  canvas re-renders all nodes per mousemove; the jobs list and the selected job
-  poll the same payload separately.
+- `SnapshotDocVersion` does two independent lookups with no cross-check — a save
+  landing between them can pin a version whose thumbnail cvId is skewed. The
+  number itself is safe (it comes from the pinned urn), and a mismatched details
+  tip is discarded rather than borrowed.
+- The cross-project screen (`/mine`) skips per-project roster checks by design;
+  a user removed from a project keeps seeing their old jobs there until deleted.
 
 ## Verifying
 

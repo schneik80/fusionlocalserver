@@ -442,6 +442,53 @@ func TestConcurrentMutations(t *testing.T) {
 	<-done
 }
 
+// A rejected mutation must leave the touched job exactly as it was — and must
+// not disturb its neighbours. Guards the job-scoped rollback in mutateJob.
+func TestRejectedMutationRollsBackOnlyTouchedJob(t *testing.T) {
+	s := newStore(t)
+	a := mustJob(t, s, "A")
+	b := mustJob(t, s, "B")
+	s1 := mustStep(t, s, a.ID, "one")
+	s2 := mustStep(t, s, a.ID, "two")
+	if _, err := s.AddEdge(testProject, a.ID, s1.ID, s2.ID); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if _, err := s.CreateStep(testProject, b.ID, StepDraft{Title: "b-step"}); err != nil {
+		t.Fatalf("CreateStep b: %v", err)
+	}
+
+	before, _ := s.GetJob(testProject, a.ID)
+	otherBefore, _ := s.GetJob(testProject, b.ID)
+
+	// Rejected: would close a cycle.
+	if _, err := s.AddEdge(testProject, a.ID, s2.ID, s1.ID); err == nil {
+		t.Fatalf("expected cycle rejection")
+	}
+	// Rejected: unknown step.
+	if _, err := s.AddPlaceholder(testProject, a.ID, "s999", PlaceholderDraft{Label: "x"}); err == nil {
+		t.Fatalf("expected unknown-step rejection")
+	}
+
+	after, _ := s.GetJob(testProject, a.ID)
+	if len(after.Edges) != len(before.Edges) || len(after.Steps) != len(before.Steps) {
+		t.Fatalf("touched job mutated by a rejected write: before %d edges/%d steps, after %d/%d",
+			len(before.Edges), len(before.Steps), len(after.Edges), len(after.Steps))
+	}
+	otherAfter, _ := s.GetJob(testProject, b.ID)
+	if len(otherAfter.Steps) != len(otherBefore.Steps) || otherAfter.Name != otherBefore.Name {
+		t.Fatalf("neighbouring job disturbed: %+v vs %+v", otherBefore, otherAfter)
+	}
+
+	// And the file on disk still agrees after a reload.
+	if _, err := s.AddEdge(testProject, a.ID, s2.ID, s1.ID); err == nil {
+		t.Fatalf("expected cycle rejection on retry")
+	}
+	reloaded, _ := s.GetJob(testProject, a.ID)
+	if len(reloaded.Edges) != len(before.Edges) {
+		t.Fatalf("edge count drifted across retries: %d vs %d", len(reloaded.Edges), len(before.Edges))
+	}
+}
+
 func TestMine(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := NewStore(dir)
