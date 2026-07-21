@@ -9,7 +9,11 @@ references (uses / where-used / drawings), thumbnails, BOM, and pins.
 - `auth/` — 3-legged PKCE OAuth against APS; per-session in-memory tokens (auto-refresh). **Never persist tokens.**
 - `api/` — APS clients: Manufacturing Data Model **GraphQL** (`client.go`, `queries.go`, `details.go`, `refs.go`, …). **Design activity** is GraphQL-sourced (`activity_graphql.go` → `activity_report.go`); `activity.go` keeps the shared types + `HubSlug` (the notifications feed it once used is first-party-gated — removed).
 - `server/` — Go 1.22 `net/http.ServeMux`; routes in `routes.go`; handlers `handlers_*.go`; DTOs in `dto*.go`; session/auth middleware (`fls_session` cookie).
-- `web/` — React 18 + Vite + TypeScript + MUI v6 + @tanstack/react-query (+ recharts). API wrapper `src/api/client.ts`, hooks `src/api/queries.ts`.
+- **Local per-project stores** — features whose data is ours, not APS's. All share one posture: one JSON/JSONL file per project under `config.Dir()`, atomic temp+rename writes, a per-project mutex, `.bak` on corruption, a future-version guard, and authorization delegated to `chat.Authorizer` (APS project role → capability) rather than a parallel permission system.
+  - `chat/` — append-only channel logs + the shared `Authorizer` / `Limiter`.
+  - `tasks/` — `tasks.json` per project (Kanban tasks).
+  - `production/` — `production.json` per project (jobs, step DAG, version-pinned documents, batches). See `docs/production/STATUS.md`.
+- `web/` — React 18 + Vite + TypeScript + MUI v6 + @tanstack/react-query (+ recharts). API wrapper `src/api/client.ts`, hooks `src/api/queries.ts`. Project apps live one folder each (`src/tasks/`, `src/wiki/`, `src/chat/`, `src/production/`) and mount as tabs in `components/ProjectPanel.tsx` under the contract `({ active }: { active?: boolean })` — every tab stays mounted and gates its fetching on `active`.
 - `config/` — `APS_CLIENT_ID` / `APS_CLIENT_SECRET` / `APS_REGION` (env or `~/.config/fusionlocalserver/config.json`). Build-time `config.Default{ClientID,Region,PublicURL}` are injected via ldflags from `.aps-client-id` / `.aps-region` / `.aps-public-url` (git-ignored); `DefaultPublicURL` bakes in the canonical OAuth callback host so the binary needs no `-public-url` flag.
 
 ## Build / test / run
@@ -25,13 +29,25 @@ make run                                 # build UI + binary, serve over HTTPS (
 
 ## Conventions
 - Go: `gofmt`; handlers use `reqParam` / `s.reqCtx` / `s.token` / `s.fail` / `writeJSON`; DTOs camelCase with `fmtTime`, slices never nil.
-- Web: typed `request()` wrapper, react-query hooks (bump the persist `buster` in `main.tsx` when query shapes change).
+- **IDs ride in query params, never path segments** — URNs contain `:` and `/`.
+- Web: typed `request()` wrapper, react-query hooks (bump the persist `buster` in `main.tsx` when query shapes change). Realtime/per-user query keys (`chat*`, `task*`, `prod*`) are excluded from localStorage persistence — see the dehydrate filter in `main.tsx`.
+- **Visualizations are hand-drawn inline SVG** — there is no graph/chart library beyond one recharts donut, no framer-motion, and no CSS files. Motion is MUI `<Slide>` plus short (100–120 ms) `sx` transitions. `RelationGraph.tsx` (pan/zoom + bezier edges), `HistoryGraph.tsx` (lanes) and `ActivityHeatmap.tsx` (isometric) are the reference implementations.
+- **Card tokens** — `fls:doc` / `fls:task` / `fls:job` / `fls:batch` are compact pseudo-URL tokens stored inline in chat/wiki/task bodies and unfurled at render time. `components/RefCard.tsx` maps every scheme to its renderer; `components/reftokens.ts` splits them out of plain text.
 - Commit/push only when asked.
 
 ## Active work
-**Design activity** on branch `feature/activity-reports`. Shipped as a per-design
-**Activity tab** (`web/src/components/ActivityHeatmap.tsx`) — an isometric heat map
-with Day/Week/Month/Year windows + a prev/next stepper, off the GraphQL design
-report (`/api/activity/report?scope=design&hubId=…&id=…`). The hub/project/folder
-dashboard was **removed** (the notifications feed it relied on is first-party-gated).
-See **`docs/activity-reports/STATUS.md`**.
+**Production** on branch `Production` — a light MES / product tracker, the fourth
+project app beside Tasks, Wiki and Chat. A **Job** is a graph of **Steps** carrying
+version-pinned plan documents and placeholder slots; a **Batch** is a dated run
+that *freezes* the plan (steps, pinned versions, placeholders are deep-copied), so
+later plan edits can never rewrite what a run recorded. Documents are supplied by
+browsing the hub or uploading, and every pin resolves its version server-side
+(`api/production_snapshot.go`). UI in `web/src/production/`: a pan/zoom SVG flow
+canvas, a list view, batches with a prove/production timeline, plus a cross-project
+screen on the nav rail. See **`docs/production/STATUS.md`**.
+
+Previously: **Design activity** (branch `feature/activity-reports`) — a per-design
+**Activity tab** (`web/src/components/ActivityHeatmap.tsx`), an isometric heat map
+off the GraphQL design report (`/api/activity/report?scope=design&hubId=…&id=…`).
+The hub/project/folder dashboard was **removed** (the notifications feed it relied
+on is first-party-gated). See **`docs/activity-reports/STATUS.md`**.

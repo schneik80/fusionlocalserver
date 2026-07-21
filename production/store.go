@@ -92,6 +92,84 @@ func (s *Store) GetBatch(projectID, jobID, batchID string) (Batch, error) {
 	return *copyBatch(b), nil
 }
 
+// Mine scans every project directory and returns the jobs this user is involved
+// in — ones they created, or that carry a batch they created — annotated with
+// their project. The production analogue of tasks.Mine, and the reason the
+// project file self-describes hubId/projectName: the directory slug is not
+// reversible to a URN, so a cross-project listing must be navigable without any
+// APS call. Reads go straight to disk (mutations persist before returning and
+// rewrites are atomic renames, so a concurrent read sees the old or the new
+// file, never a torn one); unreadable, corrupt, or future-versioned files are
+// skipped rather than failing the whole listing.
+//
+// Same policy as tasks: no per-project roster check (N projects would mean N
+// APS calls). Work you created is always visible to you. The residual is that a
+// user removed from a project keeps seeing their old jobs until those are
+// deleted; every mutation still goes through per-project write authz.
+func (s *Store) Mine(userID, email string) ([]ProjectJob, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []ProjectJob{}, nil
+		}
+		return nil, fmt.Errorf("production: scanning store dir: %w", err)
+	}
+	out := []ProjectJob{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, e.Name(), "production.json"))
+		if err != nil {
+			continue
+		}
+		var pf projectFile
+		if err := json.Unmarshal(data, &pf); err != nil || pf.Version > fileVersion {
+			continue
+		}
+		for _, j := range pf.Jobs {
+			if j == nil || !jobInvolvesUser(j, userID, email) {
+				continue
+			}
+			out = append(out, ProjectJob{
+				Job:         copyJob(j),
+				ProjectID:   pf.ProjectID,
+				HubID:       pf.HubID,
+				ProjectName: pf.ProjectName,
+			})
+		}
+	}
+	sort.Slice(out, func(i, k int) bool {
+		if out[i].ProjectName != out[k].ProjectName {
+			return out[i].ProjectName < out[k].ProjectName
+		}
+		return out[i].Num > out[k].Num // newest job first within a project
+	})
+	return out, nil
+}
+
+// jobInvolvesUser reports whether the user created the job or any of its runs.
+func jobInvolvesUser(j *Job, userID, email string) bool {
+	if matchesRef(j.CreatedBy, userID, email) {
+		return true
+	}
+	for _, b := range j.Batches {
+		if b != nil && matchesRef(b.CreatedBy, userID, email) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesRef matches by OIDC sub first, falling back to a case-insensitive
+// email for sessions predating the sub claim — the same rule as tasks/chat.
+func matchesRef(ref UserRef, userID, email string) bool {
+	if ref.ID != "" && ref.ID == userID {
+		return true
+	}
+	return ref.Email != "" && email != "" && strings.EqualFold(ref.Email, email)
+}
+
 // ProjectInfo returns the hub id and name stored for a project (so handlers
 // can resolve a job's hub without trusting the client).
 func (s *Store) ProjectInfo(projectID string) (hubID, projectName string, err error) {

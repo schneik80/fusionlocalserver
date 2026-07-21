@@ -118,6 +118,12 @@ export interface JobList {
   capabilities: ProdCaps
 }
 
+// MyProduction is GET /api/production/mine — cross-project, so each job carries
+// its own projectId/hubId/projectName.
+export interface MyProduction {
+  jobs: Job[]
+}
+
 // ---- request payloads ----
 
 export interface JobDraft {

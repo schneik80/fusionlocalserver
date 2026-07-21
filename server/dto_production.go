@@ -134,6 +134,13 @@ type ProdJobListDTO struct {
 	Capabilities ProdCapsDTO  `json:"capabilities"`
 }
 
+// MyProductionDTO is GET /api/production/mine — the caller's jobs across every
+// project on this server. Each job carries its own projectId/hubId/projectName,
+// so the cross-project screen can act on one without extra lookups.
+type MyProductionDTO struct {
+	Jobs []ProdJobDTO `json:"jobs"`
+}
+
 func prodUserDTO(r production.UserRef) ProdUserDTO {
 	return ProdUserDTO{ID: r.ID, Name: r.Name, Email: r.Email}
 }

@@ -43,6 +43,7 @@ import type {
   JobDraft,
   JobList,
   JobPatch,
+  MyProduction,
   PlaceholderDraft,
   StepDraft,
   StepPatch,
@@ -653,6 +654,17 @@ export const useJobs = (
     enabled: active && !!projectId,
     staleTime: 10_000,
     refetchInterval: active ? 15_000 : false,
+  })
+
+// useMyProduction backs the cross-project Production screen. Like useMyTasks it
+// is volatile (never persisted) and polls only while the screen is visible.
+export const useMyProduction = (active: boolean): UseQueryResult<MyProduction> =>
+  useQuery({
+    queryKey: ['prodMine'],
+    queryFn: () => api.myProduction(),
+    enabled: active,
+    staleTime: 10_000,
+    refetchInterval: active ? 30_000 : false,
   })
 
 export const useJob = (

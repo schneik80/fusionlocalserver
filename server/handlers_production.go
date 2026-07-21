@@ -175,6 +175,27 @@ func (s *Server) handleProdJobsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleProdMine lists the caller's jobs across every project on this server —
+// jobs they created, or that carry a run they created. Like /api/tasks/mine it
+// deliberately skips per-project roster checks (N projects would mean N APS
+// calls); see the Store.Mine policy note.
+func (s *Server) handleProdMine(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.prodSession(w, r)
+	if !ok {
+		return
+	}
+	mine, err := s.production.Mine(c.id.UserID, c.id.Email)
+	if err != nil {
+		s.prodError(w, r, err)
+		return
+	}
+	out := MyProductionDTO{Jobs: make([]ProdJobDTO, 0, len(mine))}
+	for _, pj := range mine {
+		out.Jobs = append(out.Jobs, prodJobDTO(*pj.Job, pj.ProjectID, pj.HubID, pj.ProjectName))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleProdJobGet returns one job with its full graph.
 func (s *Server) handleProdJobGet(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.prodReq(w, r)

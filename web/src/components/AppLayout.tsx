@@ -21,6 +21,7 @@ import { QUERY_CACHE_KEY } from '../queryPersist'
 import { useAuthMe, useHubs, useMeta } from '../api/queries'
 import { useColorMode } from '../state/colorMode'
 import { loadLastHub, useNav } from '../state/nav'
+import { ProductionScreen } from '../production/ProductionScreen'
 import { TasksScreen } from '../tasks/TasksScreen'
 import { BreadcrumbBar } from './BreadcrumbBar'
 import { BrowserStage } from './BrowserStage'
@@ -155,6 +156,16 @@ export function AppLayout() {
           }}
         >
           <TasksScreen active={nav.app === 'tasks'} />
+        </Box>
+        <Box
+          sx={{
+            display: nav.app === 'production' ? 'flex' : 'none',
+            flexDirection: 'column',
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <ProductionScreen active={nav.app === 'production'} />
         </Box>
       </Box>
 

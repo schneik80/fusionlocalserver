@@ -42,10 +42,10 @@ function saveLastHub(id: string, name: string) {
   }
 }
 
-// The rail's top-level view: the document browser or the cross-project
-// Tasks screen. Both stay mounted (AppLayout display-toggles them) so
-// switching apps never loses browser drill-down or task-list state.
-export type AppKind = 'browser' | 'tasks'
+// The rail's top-level view: the document browser, or one of the cross-project
+// screens (Tasks, Production). All stay mounted (AppLayout display-toggles
+// them) so switching apps never loses browser drill-down or list state.
+export type AppKind = 'browser' | 'tasks' | 'production'
 
 // Navigation state for the three-column browser. The hub is chosen from the
 // rail/switcher; project lives in the Projects column; folderStack is the
@@ -109,8 +109,8 @@ function reducer(state: NavState, action: Action): NavState {
       return state.app === action.app ? state : { ...state, app: action.app }
     case 'selectHub':
       if (action.id === state.hubId) return state
-      // The Tasks screen is hub-independent (my-tasks spans every project on
-      // this server), so switching hubs keeps the current app.
+      // The cross-project screens are hub-independent (they span every project
+      // on this server), so switching hubs keeps the current app.
       return { ...initialState, app: state.app, hubId: action.id, hubName: action.name }
     case 'selectProject':
       return { ...state, project: action.project, folderStack: [], selected: null, selectedTab: null }

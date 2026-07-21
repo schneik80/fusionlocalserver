@@ -111,6 +111,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PATCH /api/production/jobs", prot(s.handleProdJobUpdate))
 	mux.HandleFunc("DELETE /api/production/jobs", prot(s.handleProdJobDelete))
 	mux.HandleFunc("GET /api/production/job", prot(s.handleProdJobGet))
+	mux.HandleFunc("GET /api/production/mine", prot(s.handleProdMine))
 	mux.HandleFunc("POST /api/production/steps", prot(s.handleProdStepCreate))
 	mux.HandleFunc("PATCH /api/production/steps", prot(s.handleProdStepUpdate))
 	mux.HandleFunc("DELETE /api/production/steps", prot(s.handleProdStepDelete))

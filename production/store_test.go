@@ -442,6 +442,70 @@ func TestConcurrentMutations(t *testing.T) {
 	<-done
 }
 
+func TestMine(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewStore(dir)
+	other := UserRef{ID: "sub-2", Name: "Bob", Email: "bob@example.com"}
+
+	// Project A: one job by me, one by someone else.
+	mineJob, err := s.CreateJob(testProject, testHub, "Alpha", JobDraft{Name: "Mine"}, user())
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	theirs, err := s.CreateJob(testProject, testHub, "Alpha", JobDraft{Name: "Theirs"}, other)
+	if err != nil {
+		t.Fatalf("CreateJob other: %v", err)
+	}
+	// Project B: a job by someone else, but with a run I created — still mine.
+	const projB = "urn:adsk.wipprod:dm.folder:proj/bbb"
+	viaBatch, err := s.CreateJob(projB, testHub, "Beta", JobDraft{Name: "ViaBatch"}, other)
+	if err != nil {
+		t.Fatalf("CreateJob projB: %v", err)
+	}
+	if _, err := s.CreateBatch(projB, viaBatch.ID, BatchDraft{Name: "Run 1"}, user()); err != nil {
+		t.Fatalf("CreateBatch: %v", err)
+	}
+
+	got, err := s.Mine(user().ID, user().Email)
+	if err != nil {
+		t.Fatalf("Mine: %v", err)
+	}
+	ids := map[string]string{} // jobID -> projectName
+	for _, pj := range got {
+		ids[pj.ID] = pj.ProjectName
+	}
+	if _, ok := ids[mineJob.ID]; !ok {
+		t.Fatalf("job I created missing from Mine: %+v", got)
+	}
+	if _, ok := ids[viaBatch.ID]; !ok {
+		t.Fatalf("job with my batch missing from Mine: %+v", got)
+	}
+	if _, ok := ids[theirs.ID]; ok {
+		t.Fatalf("someone else's job leaked into Mine: %+v", got)
+	}
+	// Self-describing project annotation must survive the directory-slug scan.
+	if ids[viaBatch.ID] != "Beta" {
+		t.Fatalf("expected projectName Beta, got %q", ids[viaBatch.ID])
+	}
+
+	// Email fallback matches when the OIDC sub is absent.
+	byEmail, err := s.Mine("", user().Email)
+	if err != nil || len(byEmail) != len(got) {
+		t.Fatalf("email fallback mismatch: %d vs %d (err %v)", len(byEmail), len(got), err)
+	}
+
+	// A stranger sees nothing of mine.
+	none, err := s.Mine("sub-9", "nobody@example.com")
+	if err != nil {
+		t.Fatalf("Mine stranger: %v", err)
+	}
+	for _, pj := range none {
+		if pj.ID == mineJob.ID {
+			t.Fatalf("stranger saw my job")
+		}
+	}
+}
+
 func TestCorruptRecovery(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := NewStore(dir)

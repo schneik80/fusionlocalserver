@@ -1,6 +1,13 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
-import { faBuilding, faFolderTree, faGear, faListCheck, faStar } from '@fortawesome/free-solid-svg-icons'
+import {
+  faBuilding,
+  faDiagramProject,
+  faFolderTree,
+  faGear,
+  faListCheck,
+  faStar,
+} from '@fortawesome/free-solid-svg-icons'
 import { Divider, IconButton, Paper, Stack, Tooltip } from '@mui/material'
 import { useNav } from '../state/nav'
 
@@ -41,6 +48,12 @@ export function NavRail({ onOpenHubs, onOpenPins, onOpenSettings }: NavRailProps
             if (nav.app === 'browser') nav.clearProject()
             else nav.setApp('browser')
           }}
+        />
+        <RailButton
+          icon={faDiagramProject}
+          label="Production"
+          active={nav.app === 'production'}
+          onClick={() => nav.setApp('production')}
         />
         <RailButton
           icon={faListCheck}

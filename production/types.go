@@ -209,9 +209,9 @@ type Job struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
-// ProjectJob is a job annotated with its project, for potential cross-project
-// listings where the caller has no project context (parity with tasks'
-// ProjectTask; not yet exposed via an endpoint).
+// ProjectJob is a job annotated with its project, for the cross-project
+// listing where the caller has no project context (Store.Mine →
+// GET /api/production/mine). Parity with tasks' ProjectTask.
 type ProjectJob struct {
 	*Job
 	ProjectID   string `json:"projectId"`

@@ -47,6 +47,7 @@ import type {
   JobDraft,
   JobList,
   JobPatch,
+  MyProduction,
   PlaceholderDraft,
   PlaceholderPatch,
   ProdBatch,
@@ -395,6 +396,10 @@ export const api = {
 
   prodJob: (projectId: string, jobId: string) =>
     request<Job>(`/api/production/job${qs({ projectId, jobId })}`),
+
+  // myProduction is the caller's jobs across every project on this server —
+  // ones they created, or that carry a run they created.
+  myProduction: () => request<MyProduction>('/api/production/mine'),
 
   prodJobCreate: (projectId: string, body: JobDraft) =>
     request<Job>(`/api/production/jobs${qs({ projectId })}`, {
