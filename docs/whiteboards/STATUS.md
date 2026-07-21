@@ -15,11 +15,30 @@ development*; production requires a licence:
 - **Hobby** (non-commercial only) — free, but the "made with tldraw" watermark
   must remain visible on the canvas.
 
-This integration ships **no licence key**, which is the compliant
-development/hobby path and leaves the watermark in place. If this app is used
-commercially, a licence must be purchased and the key supplied to the `Tldraw`
-component — that is a business decision, not a code change we should make
-silently. See https://tldraw.dev/community/license.
+A key **is now supplied**. It lives in `web/.env.local`
+(git-ignored — see `web/.env.example`) as `VITE_TLDRAW_LICENSE_KEY`, and
+`WhiteboardCanvas` passes it to `<Tldraw licenseKey=…>` per
+https://tldraw.dev/installation#License. Vite inlines it into the whiteboard
+chunk at build time, so **rebuild the web app after changing it**.
+
+The key is deliberately not committed: its host list is `["*"]`, so anyone who
+copied it out of the repo could use it on any domain. It is, however, inlined
+into the shipped bundle — that is inherent to a client-validated licence, not
+something to try to hide.
+
+> ### ⏰ This is an EVALUATION licence — it expires **2026-10-29**
+>
+> Decoded, the key is `id=JldYTJ-1, hosts=["*"], flags=16 (EVALUATION),
+> expiry=2026-10-29`. While valid, `getLicenseState` returns `"licensed"`: no
+> gate, and no watermark (the `WITH_WATERMARK` flag is not set).
+>
+> **On expiry it returns `"expired"`, which is also in
+> `shouldHideEditorAfterDelay` — so the whiteboard will start silently vanishing
+> again, exactly as it did before the key.** If that happens after
+> 2026-10-29, this is why. Renew, or expect to rediscover the section below the
+> hard way.
+
+See https://tldraw.dev/community/license.
 
 ## Assets, CSP and the watermark
 
@@ -34,18 +53,20 @@ Fixed by resolving the assets through the bundler
 Vite emits them as same-origin files. **The CSP was not weakened**, and the
 whiteboard now works offline like the rest of this local-first app.
 
-One CDN call remains and is still blocked: the **unlicensed watermark**. Without
-a licence key tldraw fetches its watermark image and pings a tracking URL. That
-ping carries the full page URL — which for this app includes the hub and project
-URNs and the project's name. Leaking internal project names to a third party is
-a poor trade for a local engineering tool, so the CSP deliberately still blocks
-it. The cost is a console warning and an unhandled rejection from tldraw's
-tracker, plus the licensing wrinkle below.
+One CDN call remains and is still blocked: tldraw's **licence tracking ping**.
+`getTrackType` fires it for an evaluation licence just as it did for no licence
+at all (only the `license_type` parameter changes, `unlicensed` → `evaluation`),
+because this page is not classified as development. That ping carries the full
+page URL — which for this app includes the hub and project URNs and the
+project's name. Leaking internal project names to a third party is a poor trade
+for a local engineering tool, so the CSP deliberately still blocks it. The cost
+is a console warning and an unhandled rejection from tldraw's tracker.
+
+No watermark image is fetched: the key's flags don't include `WITH_WATERMARK`.
 
 If that trade should go the other way, allow `https://cdn.tldraw.com` in
 `connect-src` and `img-src` in `securityHeaders` (`server/middleware.go`) — but
-see the privacy note above first. Buying a commercial licence removes the
-watermark, the ping and the question.
+see the privacy note above first.
 
 The tracker ping is **inert**, despite the scary console output.
 `LicenseManager.maybeTrack` (`@tldraw/editor/.../license/LicenseManager.js:126`)
@@ -55,6 +76,9 @@ unhandled rejection in the console. It is **not** why the board disappears; see
 below.
 
 ## The board vanishes after ~5s — tldraw's licence gate, not a bug
+
+**Resolved by supplying a licence key** (above). Kept because the symptom is so
+misleading, and because it returns verbatim if the key expires or goes missing.
 
 Symptom: the canvas mounts and works, then a few seconds later silently
 disappears, with **no error, no React crash and nothing for an ErrorBoundary to
@@ -81,10 +105,10 @@ loopback clause and the gate never fires — **but** the OAuth callback host mus
 match the APS app registration, so changing the host breaks login unless that
 callback is registered too (see the redirect_uri gotcha).
 
-There is no code fix here. The options are: buy a licence key and pass it to
-`<Tldraw licenseKey=…>`, use the app over loopback where that genuinely is
-hobby/development use, or drop the feature. Serving whiteboards to other
-machines on the network is production use and needs a licence.
+There was no code fix for this — only a licence key (now supplied), running over
+loopback where that genuinely is hobby/development use, or dropping the feature.
+Note the loopback route has its own catch: the OAuth callback host is baked from
+`.aps-public-url`, and APS fails login when it doesn't match the registration.
 
 ## Model
 

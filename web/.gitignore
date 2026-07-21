@@ -1,3 +1,9 @@
+# Build secrets — the tldraw licence key lives in .env.local. Same posture as
+# the root .aps-* files: never committed, supplied per machine.
+.env
+.env.*
+!.env.example
+
 # Logs
 logs
 *.log

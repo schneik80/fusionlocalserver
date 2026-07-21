@@ -36,6 +36,14 @@ import './whiteboard.css'
 // Built once at module scope: tldraw requires this object be stable.
 const ASSET_URLS = getAssetUrlsByMetaUrl()
 
+// tldraw's SDK licence key, inlined at build time from web/.env.local (see
+// web/.env.example). Without it tldraw treats any HTTPS page on a non-loopback
+// hostname as an unlicensed production deployment and, five seconds after the
+// editor mounts, swaps it for a `display: none` div — no error, no exception,
+// the board simply vanishes. This app is served over HTTPS on a LAN hostname,
+// so that is exactly what happened before the key was supplied.
+const LICENSE_KEY = import.meta.env.VITE_TLDRAW_LICENSE_KEY
+
 // How long the canvas sits idle before persisting. Long enough that a stroke or
 // a drag isn't a request each, short enough that a closed tab loses little.
 const SAVE_DEBOUNCE_MS = 1500
@@ -229,6 +237,7 @@ export function WhiteboardCanvas({
         ) : (
           <Tldraw
             store={store}
+            licenseKey={LICENSE_KEY}
             assetUrls={ASSET_URLS}
             shapeUtils={[FlsCardShapeUtil]}
             onMount={(editor) => {
