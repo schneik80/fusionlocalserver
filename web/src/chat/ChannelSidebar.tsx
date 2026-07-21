@@ -1,4 +1,4 @@
-import { faHashtag, faLock, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faHashtag, faLock } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   Autocomplete,
@@ -10,18 +10,17 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
-  IconButton,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material'
 import { useState } from 'react'
 import { useAuthMe, useChatMembers, useCreateChatChannel } from '../api/queries'
 import { APP_RAIL_WIDTH } from '../components/Column'
+import { RailHeader } from '../components/RailHeader'
 import type { ChatCaps, ChatChannel, ChatMember } from './types'
 
 // ChannelSidebar lists the channels the server says this user can see and
@@ -58,18 +57,12 @@ export function ChannelSidebar({
         minHeight: 0,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', px: 1.5, py: 0.75 }}>
-        <Typography variant="overline" sx={{ flex: 1, lineHeight: 2 }}>
-          Channels
-        </Typography>
-        {caps.createChannel && (
-          <Tooltip title="New channel">
-            <IconButton size="small" onClick={() => setCreateOpen(true)} aria-label="new channel">
-              <FontAwesomeIcon icon={faPlus} size="xs" />
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
+      <RailHeader
+        title="Channels"
+        onNew={() => setCreateOpen(true)}
+        newDisabled={!caps.createChannel}
+        newDisabledReason="Your project role can't create channels — this needs Editor access"
+      />
       <List dense disablePadding sx={{ flex: 1, overflowY: 'auto' }}>
         {channels.map((ch) => {
           const count = unread.get(ch.id) ?? 0

@@ -1,5 +1,3 @@
-import { faPlus } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   Box,
   Button,
@@ -7,13 +5,13 @@ import {
   ListItemButton,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { useState } from 'react'
 import { useProductionMutations } from '../api/queries'
 import { APP_RAIL_WIDTH } from '../components/Column'
+import { RailHeader } from '../components/RailHeader'
 import type { JobSummary, ProdCaps } from './types'
 import { jobDisplayId } from './types'
 
@@ -73,35 +71,14 @@ export function JobList({
         minHeight: 0,
       }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        sx={{ px: 1, py: 0.75, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}
-      >
-        <Typography variant="subtitle2" sx={{ flex: 1, pl: 0.5 }}>
-          Jobs
-        </Typography>
-        <Tooltip
-          title={
-            canWrite || loading
-              ? ''
-              : 'Your project role is read-only — creating jobs needs Editor access'
-          }
-        >
-          <span>
-            <Button
-              size="small"
-              variant="contained"
-              disabled={!canWrite}
-              startIcon={<FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />}
-              onClick={() => setAdding((v) => !v)}
-              sx={{ py: 0.25, textTransform: 'none' }}
-            >
-              New
-            </Button>
-          </span>
-        </Tooltip>
-      </Stack>
+      <RailHeader
+        title="Jobs"
+        onNew={() => setAdding((v) => !v)}
+        newDisabled={!canWrite}
+        newDisabledReason={
+          loading ? '' : 'Your project role is read-only — creating jobs needs Editor access'
+        }
+      />
 
       {adding && (
         <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider' }}>

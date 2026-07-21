@@ -1,17 +1,15 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileLines, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faFileLines } from '@fortawesome/free-solid-svg-icons'
 import {
   Box,
-  Button,
   Chip,
   CircularProgress,
   List,
   ListItemButton,
-  Stack,
-  TextField,
   Typography,
 } from '@mui/material'
 import { APP_RAIL_WIDTH } from '../components/Column'
+import { RailHeader } from '../components/RailHeader'
 import type { DraftStatus } from './draftStore'
 
 // A sidebar entry is either a published page (remote), or a local draft — which
@@ -74,24 +72,11 @@ export function WikiSidebar({
         minHeight: 0,
       }}
     >
-      <Stack spacing={1} sx={{ p: 1 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={<FontAwesomeIcon icon={faPlus} style={{ fontSize: 12 }} />}
-          onClick={onNew}
-          fullWidth
-        >
-          New page
-        </Button>
-        <TextField
-          size="small"
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search pages"
-          fullWidth
-        />
-      </Stack>
+      <RailHeader
+        title="Pages"
+        onNew={onNew}
+        search={{ value: query, onChange: onQuery, placeholder: 'Search pages' }}
+      />
 
       <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {loading ? (

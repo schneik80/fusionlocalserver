@@ -60,6 +60,10 @@ export function TasksApp({ active = true }: { active?: boolean }) {
           </ToggleButton>
         </ToggleButtonGroup>
         <Box sx={{ flex: 1 }} />
+        {/* Matches RailHeader's action (same size/variant/icon/label) but lives
+            here rather than in the rail: the Board view has no rail, and
+            TaskKanban carries no create affordance, so a rail-only button would
+            be unreachable there. */}
         <Tooltip
           title={
             canWrite || tasksQ.isLoading
@@ -72,10 +76,11 @@ export function TasksApp({ active = true }: { active?: boolean }) {
               size="small"
               variant="contained"
               disabled={!canWrite}
-              startIcon={<FontAwesomeIcon icon={faPlus} style={{ fontSize: 12 }} />}
+              startIcon={<FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />}
               onClick={() => setCreateOpen(true)}
+              sx={{ py: 0.25, textTransform: 'none' }}
             >
-              New task
+              New
             </Button>
           </span>
         </Tooltip>
