@@ -21,6 +21,7 @@ import {
 } from '@mui/material'
 import { useState } from 'react'
 import { useAuthMe, useChatMembers, useCreateChatChannel } from '../api/queries'
+import { APP_RAIL_WIDTH } from '../components/Column'
 import type { ChatCaps, ChatChannel, ChatMember } from './types'
 
 // ChannelSidebar lists the channels the server says this user can see and
@@ -48,7 +49,7 @@ export function ChannelSidebar({
   return (
     <Box
       sx={{
-        width: 200,
+        width: APP_RAIL_WIDTH,
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',

@@ -7,9 +7,10 @@ import {
 } from '@mui/material'
 import type { ReactNode } from 'react'
 
-// The width of a project app's left-hand list rail — Tasks, Wiki, Production and
-// Whiteboards. They had drifted to 320/240/260/240, so the pane jumped whenever
-// you changed tab. Defined once so it can only ever drift on purpose.
+// The width of a project app's left-hand list rail — every tab in ProjectPanel
+// that has one: Tasks, Wiki, Production, Whiteboards and Chat. They had drifted
+// to 320/240/260/240/200, so the pane jumped whenever you changed tab. Defined
+// once so it can only ever drift on purpose.
 //
 // 260 is the middle of that range: wide enough for the densest rows (a task's
 // "id · status · assignee · due" meta line), narrow enough to leave the detail
