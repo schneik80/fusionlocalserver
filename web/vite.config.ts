@@ -13,6 +13,14 @@ export default defineConfig({
   build: {
     outDir: '../server/webdist',
     emptyOutDir: true,
+    // Never inline .json assets as `data:` URLs. Vite inlines small assets by
+    // default, but tldraw *fetches* its translation files — and the app's CSP
+    // is `connect-src 'self'`, which blocks fetching a data: URL. A 4-byte
+    // `{}` translation file was being inlined and then failing to load, with
+    // the rejection surfacing inside React's commit phase. Emitting them as
+    // real same-origin files keeps the strict CSP intact. Returning undefined
+    // for everything else leaves Vite's default behaviour alone.
+    assetsInlineLimit: (filePath: string) => (filePath.endsWith('.json') ? false : undefined),
   },
   server: {
     port: 5173,
