@@ -328,8 +328,13 @@ func validateFields(title, desc, status, priority, due string, docRefs []string)
 		return fmt.Errorf("%w: at most %d attached documents", ErrInvalid, MaxDocRefs)
 	}
 	for _, ref := range docRefs {
-		if !strings.HasPrefix(ref, "fls:doc?") || len(ref) > MaxDocRefLen {
-			return fmt.Errorf("%w: attached documents must be fls:doc tokens", ErrInvalid)
+		// Attachments are document cards plus production cross-links (a task can
+		// reference a job or a batch). All are compact fls: card tokens.
+		ok := strings.HasPrefix(ref, "fls:doc?") ||
+			strings.HasPrefix(ref, "fls:job?") ||
+			strings.HasPrefix(ref, "fls:batch?")
+		if !ok || len(ref) > MaxDocRefLen {
+			return fmt.Errorf("%w: attachments must be fls:doc, fls:job or fls:batch tokens", ErrInvalid)
 		}
 	}
 	return nil

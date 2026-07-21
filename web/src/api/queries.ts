@@ -34,6 +34,20 @@ import type {
   ChatUnreadList,
 } from '../chat/types'
 import type { MyTasks, Task, TaskDraft, TaskList, TaskPatch } from '../tasks/types'
+import type {
+  BatchDraft,
+  BatchPatch,
+  DocPin,
+  FulfillInput,
+  Job,
+  JobDraft,
+  JobList,
+  JobPatch,
+  MyProduction,
+  PlaceholderDraft,
+  StepDraft,
+  StepPatch,
+} from '../production/types'
 import {
   appendPendingMessage,
   applyUnread,
@@ -621,6 +635,186 @@ export function useTaskMutations(projectId: string | null) {
     },
   })
   return { create, update, remove }
+}
+
+// ---- production (jobs & batches) ----
+//
+// Like tasks: volatile (no localStorage persistence), no SSE; a modest
+// interval keeps other users' edits fresh while a job view is visible. Every
+// step/edge/placeholder mutation returns the whole updated job, so writes drop
+// straight into the job cache.
+
+export const useJobs = (
+  projectId: string | null,
+  active: boolean,
+): UseQueryResult<JobList> =>
+  useQuery({
+    queryKey: ['prodJobs', projectId],
+    queryFn: () => api.prodJobs(projectId!),
+    enabled: active && !!projectId,
+    staleTime: 10_000,
+    refetchInterval: active ? 15_000 : false,
+  })
+
+// useMyProduction backs the cross-project Production screen. Like useMyTasks it
+// is volatile (never persisted) and polls only while the screen is visible.
+export const useMyProduction = (active: boolean): UseQueryResult<MyProduction> =>
+  useQuery({
+    queryKey: ['prodMine'],
+    queryFn: () => api.myProduction(),
+    enabled: active,
+    staleTime: 10_000,
+    refetchInterval: active ? 30_000 : false,
+  })
+
+export const useJob = (
+  projectId: string | null,
+  jobId: string | null,
+  active: boolean,
+): UseQueryResult<Job> =>
+  useQuery({
+    queryKey: ['prodJob', projectId, jobId],
+    queryFn: () => api.prodJob(projectId!, jobId!),
+    enabled: active && !!projectId && !!jobId,
+    staleTime: 10_000,
+    refetchInterval: active ? 15_000 : false,
+    retry: (failureCount, err) =>
+      // A deleted job's 404 is terminal, not a blip.
+      !(err instanceof ApiError && err.status === 404) && failureCount < 2,
+  })
+
+// useProductionMutations bundles the write paths for one project's jobs. The
+// graph mutations (step/edge/placeholder) return the updated job, so they land
+// directly in the ['prodJob', …] cache; job create/delete refresh the list.
+export function useProductionMutations(projectId: string | null) {
+  const qc = useQueryClient()
+  const settleJob = (j?: Job) => {
+    if (j) qc.setQueryData(['prodJob', projectId, j.id], j)
+    void qc.invalidateQueries({ queryKey: ['prodJobs', projectId] })
+  }
+  const createJob = useMutation({
+    mutationFn: (body: JobDraft) => api.prodJobCreate(projectId!, body),
+    onSuccess: (j) => settleJob(j),
+  })
+  const updateJob = useMutation({
+    mutationFn: (args: { jobId: string; patch: JobPatch }) =>
+      api.prodJobUpdate(projectId!, args.jobId, args.patch),
+    onSuccess: (j) => settleJob(j),
+  })
+  const removeJob = useMutation({
+    mutationFn: (jobId: string) => api.prodJobDelete(projectId!, jobId),
+    onSuccess: (_res, jobId) => {
+      qc.removeQueries({ queryKey: ['prodJob', projectId, jobId] })
+      settleJob()
+    },
+  })
+  return { createJob, updateJob, removeJob }
+}
+
+// useJobGraphMutations bundles the in-place graph edits for one job (steps,
+// edges, placeholders). Each returns the whole updated job, which drops
+// straight into the ['prodJob', …] cache and refreshes the list.
+export function useJobGraphMutations(projectId: string | null, jobId: string | null) {
+  const qc = useQueryClient()
+  const settle = (j: Job) => {
+    qc.setQueryData(['prodJob', projectId, j.id], j)
+    void qc.invalidateQueries({ queryKey: ['prodJobs', projectId] })
+  }
+  const addStep = useMutation({
+    mutationFn: (body: StepDraft) => api.prodStepCreate(projectId!, jobId!, body),
+    onSuccess: settle,
+  })
+  const updateStep = useMutation({
+    mutationFn: (args: { stepId: string; patch: StepPatch }) =>
+      api.prodStepUpdate(projectId!, jobId!, args.stepId, args.patch),
+    onSuccess: settle,
+  })
+  const removeStep = useMutation({
+    mutationFn: (stepId: string) => api.prodStepDelete(projectId!, jobId!, stepId),
+    onSuccess: settle,
+  })
+  const addEdge = useMutation({
+    mutationFn: (args: { from: string; to: string }) =>
+      api.prodEdgeCreate(projectId!, jobId!, args.from, args.to),
+    onSuccess: settle,
+  })
+  const removeEdge = useMutation({
+    mutationFn: (edgeId: string) => api.prodEdgeDelete(projectId!, jobId!, edgeId),
+    onSuccess: settle,
+  })
+  const addPlaceholder = useMutation({
+    mutationFn: (args: { stepId: string; body: PlaceholderDraft }) =>
+      api.prodPlaceholderCreate(projectId!, jobId!, args.stepId, args.body),
+    onSuccess: settle,
+  })
+  const removePlaceholder = useMutation({
+    mutationFn: (args: { stepId: string; placeholderId: string }) =>
+      api.prodPlaceholderDelete(projectId!, jobId!, args.stepId, args.placeholderId),
+    onSuccess: settle,
+  })
+  const addPlanDoc = useMutation({
+    mutationFn: (args: { stepId: string; body: DocPin }) =>
+      api.prodPlanDocCreate(projectId!, jobId!, args.stepId, args.body),
+    onSuccess: settle,
+  })
+  const removePlanDoc = useMutation({
+    mutationFn: (args: { stepId: string; planDocId: string }) =>
+      api.prodPlanDocDelete(projectId!, jobId!, args.stepId, args.planDocId),
+    onSuccess: settle,
+  })
+  return {
+    addStep,
+    updateStep,
+    removeStep,
+    addEdge,
+    removeEdge,
+    addPlaceholder,
+    removePlaceholder,
+    addPlanDoc,
+    removePlanDoc,
+  }
+}
+
+// useBatchMutations bundles a job's batch and fulfillment writes. Each returns
+// the affected batch; since GET /api/production/job already hydrates full
+// batches, we just invalidate the job query to refresh its batches array.
+export function useBatchMutations(projectId: string | null, jobId: string | null) {
+  const qc = useQueryClient()
+  const settle = () => void qc.invalidateQueries({ queryKey: ['prodJob', projectId, jobId] })
+  const createBatch = useMutation({
+    mutationFn: (body: BatchDraft) => api.prodBatchCreate(projectId!, jobId!, body),
+    onSuccess: settle,
+  })
+  const updateBatch = useMutation({
+    mutationFn: (args: { batchId: string; patch: BatchPatch }) =>
+      api.prodBatchUpdate(projectId!, jobId!, args.batchId, args.patch),
+    onSuccess: settle,
+  })
+  const removeBatch = useMutation({
+    mutationFn: (batchId: string) => api.prodBatchDelete(projectId!, jobId!, batchId),
+    onSuccess: settle,
+  })
+  const addFulfillment = useMutation({
+    mutationFn: (args: { batchId: string; body: FulfillInput }) =>
+      api.prodFulfillmentCreate(projectId!, jobId!, args.batchId, args.body),
+    onSuccess: settle,
+  })
+  const removeFulfillment = useMutation({
+    mutationFn: (args: { batchId: string; fulfillmentId: string }) =>
+      api.prodFulfillmentDelete(projectId!, jobId!, args.batchId, args.fulfillmentId),
+    onSuccess: settle,
+  })
+  const addRef = useMutation({
+    mutationFn: (args: { batchId: string; token: string }) =>
+      api.prodBatchRefAdd(projectId!, jobId!, args.batchId, args.token),
+    onSuccess: settle,
+  })
+  const removeRef = useMutation({
+    mutationFn: (args: { batchId: string; token: string }) =>
+      api.prodBatchRefDelete(projectId!, jobId!, args.batchId, args.token),
+    onSuccess: settle,
+  })
+  return { createBatch, updateBatch, removeBatch, addFulfillment, removeFulfillment, addRef, removeRef }
 }
 
 // useWikiPages lists a project's published wiki pages. Gated on the hub id and

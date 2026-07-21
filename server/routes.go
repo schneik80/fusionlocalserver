@@ -101,6 +101,38 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tasks/get", prot(s.handleTaskGet))
 	mux.HandleFunc("GET /api/tasks/mine", prot(s.handleTasksMine))
 
+	// Production (light MES job & batch tracker; local store, chat-authz
+	// roles). GET /api/production/job (singular) is one job's full graph;
+	// GET /api/production/jobs is the project list. Steps, edges, and
+	// placeholders mutate a job in place. IDs ride in query params (URNs
+	// contain ':'/'/').
+	mux.HandleFunc("GET /api/production/jobs", prot(s.handleProdJobsList))
+	mux.HandleFunc("POST /api/production/jobs", prot(s.handleProdJobCreate))
+	mux.HandleFunc("PATCH /api/production/jobs", prot(s.handleProdJobUpdate))
+	mux.HandleFunc("DELETE /api/production/jobs", prot(s.handleProdJobDelete))
+	mux.HandleFunc("GET /api/production/job", prot(s.handleProdJobGet))
+	mux.HandleFunc("GET /api/production/mine", prot(s.handleProdMine))
+	mux.HandleFunc("POST /api/production/steps", prot(s.handleProdStepCreate))
+	mux.HandleFunc("PATCH /api/production/steps", prot(s.handleProdStepUpdate))
+	mux.HandleFunc("DELETE /api/production/steps", prot(s.handleProdStepDelete))
+	mux.HandleFunc("POST /api/production/edges", prot(s.handleProdEdgeCreate))
+	mux.HandleFunc("DELETE /api/production/edges", prot(s.handleProdEdgeDelete))
+	mux.HandleFunc("POST /api/production/placeholders", prot(s.handleProdPlaceholderCreate))
+	mux.HandleFunc("PATCH /api/production/placeholders", prot(s.handleProdPlaceholderUpdate))
+	mux.HandleFunc("DELETE /api/production/placeholders", prot(s.handleProdPlaceholderDelete))
+	// Plan documents (version-pinned at attach), batches (freeze on create),
+	// and fulfillments (version-pinned supplied documents).
+	mux.HandleFunc("POST /api/production/plandocs", prot(s.handleProdPlanDocCreate))
+	mux.HandleFunc("DELETE /api/production/plandocs", prot(s.handleProdPlanDocDelete))
+	mux.HandleFunc("POST /api/production/batches", prot(s.handleProdBatchCreate))
+	mux.HandleFunc("GET /api/production/batch", prot(s.handleProdBatchGet))
+	mux.HandleFunc("PATCH /api/production/batches", prot(s.handleProdBatchUpdate))
+	mux.HandleFunc("DELETE /api/production/batches", prot(s.handleProdBatchDelete))
+	mux.HandleFunc("POST /api/production/fulfillments", prot(s.handleProdFulfillmentCreate))
+	mux.HandleFunc("DELETE /api/production/fulfillments", prot(s.handleProdFulfillmentDelete))
+	mux.HandleFunc("POST /api/production/batchrefs", prot(s.handleProdBatchRefAdd))
+	mux.HandleFunc("DELETE /api/production/batchrefs", prot(s.handleProdBatchRefDelete))
+
 	// Pins.
 	mux.HandleFunc("GET /api/pins", prot(s.handlePinsList))
 	mux.HandleFunc("POST /api/pins", prot(s.handlePinsAdd))

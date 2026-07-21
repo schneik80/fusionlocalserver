@@ -330,6 +330,7 @@ export interface UploadJob {
   dmProjectId?: string
   folderPath: string[]
   itemId?: string
+  versionId?: string
   createdOn?: string
 }
 

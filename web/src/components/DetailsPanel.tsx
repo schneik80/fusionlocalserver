@@ -82,14 +82,21 @@ const TAB_LABEL: Record<TabKey, string> = {
 // get Uses (the source design). Permissions (the project's groups + roles)
 // applies to any document. Uploaded (non-native) files lead with a Preview tab —
 // image/pdf/video/text viewers, or a download fallback — since they have no
-// design data; everything else is History only.
+// design data.
+//
+// Every other kind (schematic/pcb/ecad, and any kind added server-side that this
+// build predates) keeps History as its default but still offers Preview, so a
+// document is never stranded on a single tab just because its kind isn't
+// enumerated here. Preview is second, not first: those kinds have real version
+// history, while their extensions match no viewer (see viewers/kind.ts), so
+// leading with a download fallback would bury the useful tab.
 function tabsFor(kind: string): TabKey[] {
   if (kind === 'design')
     return ['history', 'activity', 'properties', 'bom', 'uses', 'whereUsed', 'drawings', 'permissions']
   if (kind === 'configured') return ['history', 'activity', 'properties', 'bom', 'permissions']
   if (kind === 'drawing') return ['history', 'activity', 'uses', 'permissions']
   if (kind === 'unknown') return ['preview', 'history']
-  return ['history']
+  return ['history', 'preview']
 }
 
 export function DetailsPanel() {

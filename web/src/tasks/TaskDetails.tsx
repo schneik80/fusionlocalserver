@@ -1,4 +1,4 @@
-import { faPaperclip, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faDiagramProject, faPaperclip, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   Alert,
@@ -12,9 +12,10 @@ import {
 } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { useAuthMe, useTaskMutations } from '../api/queries'
-import { docRefFromItem, encodeDocRef, parseDocRef } from '../components/doccard/docref'
-import { DocumentCard } from '../components/doccard/DocumentCard'
+import { docRefFromItem, encodeDocRef } from '../components/doccard/docref'
 import { HubBrowserDialog } from '../components/hubbrowser/HubBrowserDialog'
+import { RefCard } from '../components/RefCard'
+import { ProductionRefDialog } from '../production/ProductionRefDialog'
 import { Markdown } from '../wiki/Markdown'
 import { fmtChatTime } from '../chat/fmt'
 import { PriorityChip, StatusChip, fmtDue, isOverdue } from './chips'
@@ -41,6 +42,12 @@ export function TaskDetails({
   const muts = useTaskMutations(task.projectId)
   const [editOpen, setEditOpen] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
+  const [prodPickOpen, setProdPickOpen] = useState(false)
+
+  const addRefToken = (token: string) => {
+    if (task.docRefs.includes(token)) return
+    muts.update.mutate({ taskId: task.id, patch: { docRefs: [...task.docRefs, token] } })
+  }
 
   const canWrite = caps ? caps.write : true
   const canDelete = (caps?.moderate ?? false) || (!!me && me.id === task.createdBy.id)
@@ -139,43 +146,49 @@ export function TaskDetails({
             Attached documents
           </Typography>
           {canWrite && (
-            <Button
-              size="small"
-              startIcon={<FontAwesomeIcon icon={faPaperclip} style={{ fontSize: 12 }} />}
-              onClick={() => setAttachOpen(true)}
-              disabled={muts.update.isPending}
-            >
-              Attach
-            </Button>
+            <>
+              <Button
+                size="small"
+                startIcon={<FontAwesomeIcon icon={faPaperclip} style={{ fontSize: 12 }} />}
+                onClick={() => setAttachOpen(true)}
+                disabled={muts.update.isPending}
+              >
+                Attach
+              </Button>
+              <Button
+                size="small"
+                startIcon={<FontAwesomeIcon icon={faDiagramProject} style={{ fontSize: 12 }} />}
+                onClick={() => setProdPickOpen(true)}
+                disabled={muts.update.isPending}
+              >
+                Link job/batch
+              </Button>
+            </>
           )}
         </Stack>
         {task.docRefs.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No documents attached.
+            Nothing attached.
           </Typography>
         ) : (
           <Stack spacing={0.5} alignItems="flex-start">
-            {task.docRefs.map((token) => {
-              const ref = parseDocRef(token)
-              if (!ref) return null
-              return (
-                <Stack key={token} direction="row" alignItems="center" spacing={0.5} sx={{ maxWidth: '100%' }}>
-                  <DocumentCard docRef={ref} />
-                  {canWrite && (
-                    <Tooltip title="Remove attachment">
-                      <IconButton
-                        size="small"
-                        onClick={() => removeDoc(token)}
-                        disabled={muts.update.isPending}
-                        aria-label="Remove attachment"
-                      >
-                        <FontAwesomeIcon icon={faTrash} style={{ fontSize: 12 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </Stack>
-              )
-            })}
+            {task.docRefs.map((token) => (
+              <Stack key={token} direction="row" alignItems="center" spacing={0.5} sx={{ maxWidth: '100%' }}>
+                <RefCard token={token} />
+                {canWrite && (
+                  <Tooltip title="Remove attachment">
+                    <IconButton
+                      size="small"
+                      onClick={() => removeDoc(token)}
+                      disabled={muts.update.isPending}
+                      aria-label="Remove attachment"
+                    >
+                      <FontAwesomeIcon icon={faTrash} style={{ fontSize: 12 }} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Stack>
+            ))}
           </Stack>
         )}
       </Box>
@@ -200,10 +213,18 @@ export function TaskDetails({
           onPick={(pick) => {
             setAttachOpen(false)
             if (!pick.item) return
-            const token = encodeDocRef(docRefFromItem(pick.hubId, pick.item))
-            if (task.docRefs.includes(token)) return
-            muts.update.mutate({ taskId: task.id, patch: { docRefs: [...task.docRefs, token] } })
+            addRefToken(encodeDocRef(docRefFromItem(pick.hubId, pick.item)))
           }}
+        />
+      )}
+      {prodPickOpen && (
+        <ProductionRefDialog
+          open={prodPickOpen}
+          projectId={task.projectId}
+          hubId={task.hubId}
+          projectName={task.projectName}
+          onClose={() => setProdPickOpen(false)}
+          onPick={(token) => addRefToken(token)}
         />
       )}
     </Box>

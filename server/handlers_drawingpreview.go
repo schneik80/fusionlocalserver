@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	drawingPreviewCache = sync.Map{}        // itemId -> previewCacheEntry
+	drawingPreviewCache  = sync.Map{}       // itemId -> previewCacheEntry
 	drawingPreviewFlight singleflight.Group // deduplicate concurrent requests
 )
 

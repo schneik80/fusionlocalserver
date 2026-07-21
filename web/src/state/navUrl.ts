@@ -5,7 +5,7 @@
 //
 // Field layout (all values encodeURIComponent'd, "~"-joined — URNs never
 // contain "~"):
-//   app=tasks                         (tasks screen; hub-independent, no other params)
+//   app=tasks|production              (cross-project screen; hub-independent, no other params)
 //   hub=<hubId>~<hubName>
 //   proj=<projectId>~<projectName>
 //   f=<folderId>~<folderName>         (repeated, in drill order)
@@ -37,8 +37,8 @@ function dec(s: string): string[] {
 // navToSearch renders nav state as a URL search string (no leading "?").
 export function navToSearch(s: NavState): string {
   const p = new URLSearchParams()
-  if (s.app === 'tasks') {
-    p.set('app', 'tasks') // the Tasks screen spans all projects — nothing else to carry
+  if (s.app === 'tasks' || s.app === 'production') {
+    p.set('app', s.app) // cross-project screens span all projects — nothing else to carry
     return p.toString()
   }
   if (s.hubId) p.set('hub', enc(s.hubId, s.hubName ?? ''))
@@ -70,7 +70,8 @@ export interface ParsedNav {
 export function searchToNav(search: string): ParsedNav {
   const p = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
 
-  const app: AppKind = p.get('app') === 'tasks' ? 'tasks' : 'browser'
+  const appRaw = p.get('app')
+  const app: AppKind = appRaw === 'tasks' || appRaw === 'production' ? appRaw : 'browser'
 
   const hubRaw = p.get('hub')
   const [hubId, hubName] = hubRaw ? dec(hubRaw) : [undefined, undefined]
