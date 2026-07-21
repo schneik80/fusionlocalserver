@@ -1,5 +1,5 @@
-import { Box, Paper, Stack, Tab, Tabs } from '@mui/material'
-import { useState } from 'react'
+import { Box, Paper, Slide, Stack, Tab, Tabs } from '@mui/material'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useChatUnreads } from '../api/queries'
 import { ChatApp } from '../chat/ChatApp'
 import { useChatEvents } from '../chat/useChatEvents'
@@ -18,15 +18,29 @@ import { ProjectDashboard } from './Dashboards'
 // left-bordered Paper frame the dashboard used, so the slide swap to a
 // document's DetailsPanel stays seamless.
 //
-// All tabs stay mounted (hidden via display) so switching preserves the
-// dashboard's scroll, the wiki editor's in-progress state, and the chat
-// scroll/draft. Every tab therefore takes `active`, which gates its fetching
-// (and, for the dashboard, its rendering) to the visible tab — otherwise a
-// hidden tab keeps spending APS quota and, in the dashboard's case, keeps
-// measuring charts inside a zero-sized box. The chat SSE stream (below) lives
-// regardless of the tab, keeping the chat caches warm from any tab.
+// All tabs stay mounted (hidden ones are slid off-screen) so switching preserves
+// the dashboard's scroll, the wiki editor's in-progress state, and the chat
+// scroll/draft. Every tab therefore takes `active`, which gates its fetching to
+// the visible tab — otherwise a hidden tab keeps spending APS quota. The chat
+// SSE stream (below) lives regardless of the tab, keeping the chat caches warm
+// from any tab.
+//
+// Changing tab cross-slides the content region, borrowing BrowserStage's idiom
+// one level down: a clipped slot holds every pane absolutely positioned, and
+// panes slide off-screen rather than unmounting, so "stays mounted" still holds.
+// MUI marks a fully-exited pane `visibility: hidden`, which keeps off-screen
+// panes out of paint, the a11y tree and the tab order — the job `display: none`
+// used to do.
 
 type ProjectTab = 'dashboard' | 'wiki' | 'chat' | 'tasks' | 'production' | 'whiteboards'
+
+// Left-to-right order of the tab strip below; the slide direction is just the
+// sign of the change in index, so this MUST match the <Tab> render order.
+const TAB_ORDER: ProjectTab[] = ['dashboard', 'production', 'tasks', 'whiteboards', 'wiki', 'chat']
+
+// Shorter than MUI's 225/195 default: a tab switch is a far more frequent
+// gesture than a drill-down, and the ask was for something subtle.
+const SLIDE_TIMEOUT = { enter: 180, exit: 150 }
 
 export function ProjectPanel() {
   const nav = useNav()
@@ -47,6 +61,40 @@ export function ProjectPanel() {
   // returning to the project root lands back where the user was.
   const atRoot = nav.folderStack.length === 0
   const effectiveTab: ProjectTab = atRoot ? tab : 'dashboard'
+
+  // Moving rightwards along the strip slides content left (the new pane enters
+  // from the right); moving leftwards reverses it. Compared against the previous
+  // tab — read during render, committed after — exactly as BrowserStage derives
+  // its drill-down direction.
+  const index = TAB_ORDER.indexOf(effectiveTab)
+  const prevIndex = useRef(index)
+  const forward = index >= prevIndex.current
+  useEffect(() => {
+    prevIndex.current = index
+  }, [index])
+
+  // The slot node lives in state, not a ref, so each Slide's `container` (which
+  // sets how far a pane travels off-screen) is defined on the first transition.
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null)
+
+  // MUI's direction is the direction of travel: "left" = enter from the right.
+  const dir = (show: boolean): 'left' | 'right' =>
+    forward ? (show ? 'left' : 'right') : show ? 'right' : 'left'
+
+  const pane = (name: ProjectTab, node: ReactNode) => (
+    <Slide
+      key={name}
+      direction={dir(effectiveTab === name)}
+      in={effectiveTab === name}
+      container={slot}
+      appear={false}
+      mountOnEnter={false}
+      unmountOnExit={false}
+      timeout={SLIDE_TIMEOUT}
+    >
+      <Box sx={{ position: 'absolute', inset: 0, display: 'flex' }}>{node}</Box>
+    </Slide>
+  )
 
   return (
     <Paper
@@ -110,23 +158,13 @@ export function ProjectPanel() {
           />
         )}
       </Tabs>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'dashboard' ? 'flex' : 'none' }}>
-        <ProjectDashboard active={effectiveTab === 'dashboard'} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'production' ? 'flex' : 'none' }}>
-        <ProductionApp active={effectiveTab === 'production'} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'tasks' ? 'flex' : 'none' }}>
-        <TasksApp active={effectiveTab === 'tasks'} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'whiteboards' ? 'flex' : 'none' }}>
-        <WhiteboardsApp active={effectiveTab === 'whiteboards'} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'wiki' ? 'flex' : 'none' }}>
-        <WikiApp active={effectiveTab === 'wiki'} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'chat' ? 'flex' : 'none' }}>
-        <ChatApp active={effectiveTab === 'chat'} live={live} />
+      <Box ref={setSlot} sx={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+        {pane('dashboard', <ProjectDashboard active={effectiveTab === 'dashboard'} />)}
+        {pane('production', <ProductionApp active={effectiveTab === 'production'} />)}
+        {pane('tasks', <TasksApp active={effectiveTab === 'tasks'} />)}
+        {pane('whiteboards', <WhiteboardsApp active={effectiveTab === 'whiteboards'} />)}
+        {pane('wiki', <WikiApp active={effectiveTab === 'wiki'} />)}
+        {pane('chat', <ChatApp active={effectiveTab === 'chat'} live={live} />)}
       </Box>
     </Paper>
   )

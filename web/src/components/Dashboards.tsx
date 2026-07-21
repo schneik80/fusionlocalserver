@@ -214,10 +214,16 @@ export function HubDashboard() {
 
 // ── project dashboard ──────────────────────────────────────────────
 // `active` follows the same contract as the other project tabs (see
-// ProjectPanel): ProjectPanel keeps every tab mounted and hides them with
-// `display: none`, so without this the dashboard kept fetching — and kept
-// rendering its charts into a 0x0 box, which made recharts log a
-// "width(0) and height(0)" warning on every re-render from any other tab.
+// ProjectPanel): every tab stays mounted, so without this the dashboard kept
+// spending APS quota — the permissions path, the classify fan-out and the
+// rollup activity query all running from a tab nobody was looking at.
+//
+// It gates fetching only, never rendering. The panes cross-slide on tab change,
+// so the dashboard has to keep drawing itself on the way out or it would blank
+// mid-transition. That is also why its charts are safe to render while hidden:
+// a slid pane is inset:0 of a sized slot, so recharts always measures real
+// dimensions — the 0x0 box that made it log "width(0) and height(0)" was an
+// artefact of the `display: none` this replaced.
 export function ProjectDashboard({ active = true }: { active?: boolean }) {
   const nav = useNav()
   const project = nav.project
@@ -299,12 +305,6 @@ export function ProjectDashboard({ active = true }: { active?: boolean }) {
     activityIds.slice(1),
     activityIds.length > 0 && active,
   )
-
-  // Render nothing while another tab is showing. This must come after every
-  // hook (rules of hooks) and deliberately returns rather than unmounting: the
-  // component stays alive, so `loadAll` and the query caches survive a tab
-  // switch, exactly as the always-mounted tab shell intends.
-  if (!active) return null
 
   return (
     <DashboardShell title={title} subtitle="Select a document to view its details." fill>
