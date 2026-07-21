@@ -130,6 +130,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/production/batches", prot(s.handleProdBatchDelete))
 	mux.HandleFunc("POST /api/production/fulfillments", prot(s.handleProdFulfillmentCreate))
 	mux.HandleFunc("DELETE /api/production/fulfillments", prot(s.handleProdFulfillmentDelete))
+	// Whiteboards (tldraw boards; local store, chat-authz roles). The document
+	// endpoints are separate from the metadata ones so listing boards never
+	// ships their shapes.
+	mux.HandleFunc("GET /api/whiteboards", prot(s.handleWhiteboardsList))
+	mux.HandleFunc("POST /api/whiteboards", prot(s.handleWhiteboardCreate))
+	mux.HandleFunc("PATCH /api/whiteboards", prot(s.handleWhiteboardUpdate))
+	mux.HandleFunc("DELETE /api/whiteboards", prot(s.handleWhiteboardDelete))
+	mux.HandleFunc("GET /api/whiteboards/doc", prot(s.handleWhiteboardDocGet))
+	mux.HandleFunc("PUT /api/whiteboards/doc", prot(s.handleWhiteboardDocPut))
+
 	mux.HandleFunc("POST /api/production/batchrefs", prot(s.handleProdBatchRefAdd))
 	mux.HandleFunc("DELETE /api/production/batchrefs", prot(s.handleProdBatchRefDelete))
 

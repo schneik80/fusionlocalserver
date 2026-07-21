@@ -1,0 +1,417 @@
+package whiteboards
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+)
+
+// Store owns all whiteboard persistence. One Store per server; all mutation of
+// a project's data happens under that project's mutex, so the single process is
+// the only writer (multi-process servers sharing a config dir are a documented
+// non-goal).
+type Store struct {
+	dir string // root, e.g. ~/.config/fusionlocalserver/whiteboards
+
+	mu       sync.Mutex // guards projects map
+	projects map[string]*projectState
+}
+
+// projectState is the in-memory copy of one project's whiteboards.json. mu
+// serialises every read and write for the project — including the document
+// files, so a board can't be deleted while its snapshot is being written.
+type projectState struct {
+	mu   sync.Mutex
+	file *projectFile
+}
+
+// NewStore returns a Store rooted at dir, creating it if needed.
+func NewStore(dir string) (*Store, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("whiteboards: creating store dir: %w", err)
+	}
+	return &Store{dir: dir, projects: make(map[string]*projectState)}, nil
+}
+
+// ---- reads ----
+
+// List returns copies of a project's board metadata, newest first. It never
+// touches the document files, so listing stays cheap however large the boards.
+func (s *Store) List(projectID string) ([]Board, error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	out := make([]Board, 0, len(ps.file.Boards))
+	for _, b := range ps.file.Boards {
+		out = append(out, *b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Num > out[j].Num })
+	return out, nil
+}
+
+// Get returns one board's metadata.
+func (s *Store) Get(projectID, boardID string) (Board, error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return Board{}, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	b := findBoard(ps.file, boardID)
+	if b == nil {
+		return Board{}, fmt.Errorf("%w: whiteboard %q", ErrNotFound, boardID)
+	}
+	return *b, nil
+}
+
+// ProjectInfo returns the hub id and name stored for a project.
+func (s *Store) ProjectInfo(projectID string) (hubID, projectName string, err error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return "", "", err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.file.HubID, ps.file.ProjectName, nil
+}
+
+// Snapshot returns a board's stored tldraw document. A board that has never
+// been saved returns nil with no error — the client then starts an empty
+// canvas, which is the correct initial state rather than an error case.
+func (s *Store) Snapshot(projectID, boardID string) ([]byte, error) {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if findBoard(ps.file, boardID) == nil {
+		return nil, fmt.Errorf("%w: whiteboard %q", ErrNotFound, boardID)
+	}
+	data, err := os.ReadFile(s.snapshotPath(projectID, boardID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("whiteboards: reading document: %w", err)
+	}
+	return data, nil
+}
+
+// ---- mutations ----
+
+// Create adds a board. hubID/projectName self-describe the file, refreshed on
+// every create so renames converge (the tasks precedent).
+func (s *Store) Create(projectID, hubID, projectName string, d Draft, createdBy UserRef) (Board, error) {
+	d.Name = strings.TrimSpace(d.Name)
+	if err := validateName(d.Name); err != nil {
+		return Board{}, err
+	}
+	ps, err := s.project(projectID)
+	if err != nil {
+		return Board{}, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if len(ps.file.Boards) >= MaxBoardsPerProject {
+		return Board{}, fmt.Errorf("%w: project already has %d whiteboards", ErrInvalid, MaxBoardsPerProject)
+	}
+	prev := cloneFile(ps.file)
+	now := time.Now().UTC()
+	b := &Board{
+		ID:        fmt.Sprintf("w%d", ps.file.NextBoardID),
+		Num:       ps.file.NextBoardID,
+		Name:      d.Name,
+		CreatedBy: createdBy,
+		CreatedAt: now,
+		UpdatedAt: now,
+		UpdatedBy: createdBy,
+	}
+	ps.file.NextBoardID++
+	ps.file.HubID = hubID
+	ps.file.ProjectName = projectName
+	ps.file.Boards = append(ps.file.Boards, b)
+	if err := s.saveFile(projectID, ps.file); err != nil {
+		ps.file = prev
+		return Board{}, err
+	}
+	return *b, nil
+}
+
+// Update renames a board.
+func (s *Store) Update(projectID, boardID string, p Patch) (Board, error) {
+	if p.Name != nil {
+		*p.Name = strings.TrimSpace(*p.Name)
+		if err := validateName(*p.Name); err != nil {
+			return Board{}, err
+		}
+	}
+	ps, err := s.project(projectID)
+	if err != nil {
+		return Board{}, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	b := findBoard(ps.file, boardID)
+	if b == nil {
+		return Board{}, fmt.Errorf("%w: whiteboard %q", ErrNotFound, boardID)
+	}
+	prev := cloneFile(ps.file)
+	if p.Name != nil {
+		b.Name = *p.Name
+	}
+	b.UpdatedAt = time.Now().UTC()
+	if err := s.saveFile(projectID, ps.file); err != nil {
+		ps.file = prev
+		return Board{}, err
+	}
+	return *b, nil
+}
+
+// Delete removes a board and its document. The metadata write happens first:
+// if the document file can't be removed we still return success, since an
+// orphaned document nobody can reach is harmless, whereas leaving the board
+// listed after the user deleted it is not.
+func (s *Store) Delete(projectID, boardID string) error {
+	ps, err := s.project(projectID)
+	if err != nil {
+		return err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	idx := -1
+	for i, b := range ps.file.Boards {
+		if b.ID == boardID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("%w: whiteboard %q", ErrNotFound, boardID)
+	}
+	prev := cloneFile(ps.file)
+	ps.file.Boards = append(ps.file.Boards[:idx], ps.file.Boards[idx+1:]...)
+	if err := s.saveFile(projectID, ps.file); err != nil {
+		ps.file = prev
+		return err
+	}
+	_ = os.Remove(s.snapshotPath(projectID, boardID))
+	return nil
+}
+
+// SaveSnapshot writes a board's tldraw document and stamps the board's
+// updated-by/at. The document is written atomically (temp + rename) like every
+// other file here, so an autosave interrupted mid-write can never truncate the
+// user's board.
+func (s *Store) SaveSnapshot(projectID, boardID string, doc []byte, by UserRef) (Board, error) {
+	if len(doc) == 0 {
+		return Board{}, fmt.Errorf("%w: empty document", ErrInvalid)
+	}
+	if len(doc) > MaxSnapshotBytes {
+		return Board{}, fmt.Errorf("%w: document exceeds %d bytes", ErrInvalid, MaxSnapshotBytes)
+	}
+	if !json.Valid(doc) {
+		return Board{}, fmt.Errorf("%w: document is not valid JSON", ErrInvalid)
+	}
+	ps, err := s.project(projectID)
+	if err != nil {
+		return Board{}, err
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	b := findBoard(ps.file, boardID)
+	if b == nil {
+		return Board{}, fmt.Errorf("%w: whiteboard %q", ErrNotFound, boardID)
+	}
+	if err := s.writeSnapshot(projectID, boardID, doc); err != nil {
+		return Board{}, err
+	}
+	prev := cloneFile(ps.file)
+	b.UpdatedAt = time.Now().UTC()
+	b.UpdatedBy = by
+	b.SnapshotBytes = int64(len(doc))
+	if err := s.saveFile(projectID, ps.file); err != nil {
+		ps.file = prev
+		return Board{}, err
+	}
+	return *b, nil
+}
+
+// ---- validation ----
+
+func validateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%w: name is empty", ErrInvalid)
+	}
+	if utf8.RuneCountInString(name) > MaxNameRunes {
+		return fmt.Errorf("%w: name exceeds %d characters", ErrInvalid, MaxNameRunes)
+	}
+	return nil
+}
+
+func findBoard(pf *projectFile, boardID string) *Board {
+	for _, b := range pf.Boards {
+		if b.ID == boardID {
+			return b
+		}
+	}
+	return nil
+}
+
+func cloneFile(pf *projectFile) *projectFile {
+	out := *pf
+	out.Boards = make([]*Board, len(pf.Boards))
+	for i, b := range pf.Boards {
+		c := *b
+		out.Boards[i] = &c
+	}
+	return &out
+}
+
+// ---- persistence ----
+
+func (s *Store) project(projectID string) (*projectState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ps, ok := s.projects[projectID]; ok {
+		return ps, nil
+	}
+	pf, err := s.loadFile(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ps := &projectState{file: pf}
+	s.projects[projectID] = ps
+	return ps, nil
+}
+
+func (s *Store) projectDir(projectID string) string {
+	return filepath.Join(s.dir, sanitizeID(projectID))
+}
+
+func (s *Store) filePath(projectID string) string {
+	return filepath.Join(s.projectDir(projectID), "whiteboards.json")
+}
+
+// snapshotPath is one board's document. boardID is server-generated ("w<n>")
+// and sanitised anyway, so it can never escape the project directory.
+func (s *Store) snapshotPath(projectID, boardID string) string {
+	return filepath.Join(s.projectDir(projectID), "doc-"+sanitizeID(boardID)+".json")
+}
+
+// loadFile reads whiteboards.json. Absent → fresh. Newer version →
+// ErrFutureVersion (never rewrite what we don't understand). Corrupt → rename
+// to .bak and start clean, so one bad file doesn't block the whole project.
+func (s *Store) loadFile(projectID string) (*projectFile, error) {
+	path := s.filePath(projectID)
+	fresh := &projectFile{
+		Version:     fileVersion,
+		ProjectID:   projectID,
+		NextBoardID: 1,
+		Boards:      []*Board{},
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fresh, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("whiteboards: reading %s: %w", path, err)
+	}
+	var pf projectFile
+	if err := json.Unmarshal(data, &pf); err != nil {
+		_ = os.Rename(path, path+".bak")
+		return fresh, nil
+	}
+	if pf.Version > fileVersion {
+		return nil, fmt.Errorf("%w: whiteboards.json v%d > v%d", ErrFutureVersion, pf.Version, fileVersion)
+	}
+	if pf.Boards == nil {
+		pf.Boards = []*Board{}
+	}
+	if pf.NextBoardID < 1 {
+		pf.NextBoardID = 1
+	}
+	return &pf, nil
+}
+
+func (s *Store) saveFile(projectID string, pf *projectFile) error {
+	data, err := json.MarshalIndent(pf, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.writeAtomic(projectID, s.filePath(projectID), "whiteboards-*.tmp", data)
+}
+
+func (s *Store) writeSnapshot(projectID, boardID string, doc []byte) error {
+	return s.writeAtomic(projectID, s.snapshotPath(projectID, boardID), "doc-*.tmp", doc)
+}
+
+// writeAtomic writes via a temp file + rename (0600), so a crash mid-write can
+// never leave a half-written file behind — the difference between a whiteboard
+// and a truncated whiteboard.
+func (s *Store) writeAtomic(projectID, path, pattern string, data []byte) error {
+	dir := s.projectDir(projectID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("whiteboards: creating project dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+// sanitizeID maps a URN-format identifier to a filesystem-safe slug — copied
+// verbatim from tasks/chat/production so all four stores age identically on
+// disk.
+func sanitizeID(id string) string {
+	if id == "" {
+		return "_unset"
+	}
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'A' && r <= 'Z',
+			r >= 'a' && r <= 'z',
+			r >= '0' && r <= '9',
+			r == '_', r == '.', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if len(out) > 120 {
+		out = out[:120]
+	}
+	return out
+}

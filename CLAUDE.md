@@ -13,6 +13,7 @@ references (uses / where-used / drawings), thumbnails, BOM, and pins.
   - `chat/` — append-only channel logs + the shared `Authorizer` / `Limiter`.
   - `tasks/` — `tasks.json` per project (Kanban tasks).
   - `production/` — `production.json` per project (jobs, step DAG, version-pinned documents, batches). See `docs/production/STATUS.md`.
+  - `whiteboards/` — tldraw boards: `whiteboards.json` metadata per project plus one `doc-<id>.json` per board, since a document is megabytes and is rewritten on every autosave. See `docs/whiteboards/STATUS.md`.
 - `web/` — React 18 + Vite + TypeScript + MUI v6 + @tanstack/react-query (+ recharts). API wrapper `src/api/client.ts`, hooks `src/api/queries.ts`. Project apps live one folder each (`src/tasks/`, `src/wiki/`, `src/chat/`, `src/production/`) and mount as tabs in `components/ProjectPanel.tsx` under the contract `({ active }: { active?: boolean })` — every tab stays mounted and gates its fetching on `active`.
 - `config/` — `APS_CLIENT_ID` / `APS_CLIENT_SECRET` / `APS_REGION` (env or `~/.config/fusionlocalserver/config.json`). Build-time `config.Default{ClientID,Region,PublicURL}` are injected via ldflags from `.aps-client-id` / `.aps-region` / `.aps-public-url` (git-ignored); `DefaultPublicURL` bakes in the canonical OAuth callback host so the binary needs no `-public-url` flag.
 
@@ -31,12 +32,21 @@ make run                                 # build UI + binary, serve over HTTPS (
 - Go: `gofmt`; handlers use `reqParam` / `s.reqCtx` / `s.token` / `s.fail` / `writeJSON`; DTOs camelCase with `fmtTime`, slices never nil.
 - **IDs ride in query params, never path segments** — URNs contain `:` and `/`.
 - Web: typed `request()` wrapper, react-query hooks (bump the persist `buster` in `main.tsx` when query shapes change). Realtime/per-user query keys (`chat*`, `task*`, `prod*`) are excluded from localStorage persistence — see the dehydrate filter in `main.tsx`.
+- **One stylesheet, one exception.** There are no CSS files except `web/src/whiteboards/whiteboard.css`, which reskins tldraw (a CSS-variable-themed component that cannot be styled through `sx`). It is scoped to `.fls-tldraw`. Everything else is MUI `sx`.
 - **Visualizations are hand-drawn inline SVG** — there is no graph/chart library beyond one recharts donut, no framer-motion, and no CSS files. Motion is MUI `<Slide>` plus short (100–120 ms) `sx` transitions. `RelationGraph.tsx` (pan/zoom + bezier edges), `HistoryGraph.tsx` (lanes) and `ActivityHeatmap.tsx` (isometric) are the reference implementations.
 - **Card tokens** — `fls:doc` / `fls:task` / `fls:job` / `fls:batch` are compact pseudo-URL tokens stored inline in chat/wiki/task bodies and unfurled at render time. `components/RefCard.tsx` maps every scheme to its renderer; `components/reftokens.ts` splits them out of plain text.
 - Commit/push only when asked.
 
 ## Active work
-**Production** on branch `Production` — a light MES / product tracker, the fourth
+**Whiteboards** on branch `feat/whiteboards` — a per-project tldraw board (fifth
+project app). Draw freely and drop **live app cards** (`fls:doc` / `fls:task` /
+`fls:job` / `fls:batch`) onto the canvas: the custom `fls-card` shape stores only
+the token and renders it through the shared `components/RefCard.tsx`, so a card
+is the real task/batch, not a screenshot. tldraw is lazy-loaded (~1.7 MB) so it
+stays out of the entry bundle. **Note its licence is development/hobby-only
+without a paid key** — see `docs/whiteboards/STATUS.md`.
+
+Previously: **Production** on branch `Production` — a light MES / product tracker, the fourth
 project app beside Tasks, Wiki and Chat. A **Job** is a graph of **Steps** carrying
 version-pinned plan documents and placeholder slots; a **Batch** is a dated run
 that *freezes* the plan (steps, pinned versions, placeholders are deep-copied), so

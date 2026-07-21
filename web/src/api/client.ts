@@ -54,6 +54,12 @@ import type {
   StepDraft,
   StepPatch,
 } from '../production/types'
+import type {
+  Whiteboard,
+  WhiteboardDraft,
+  WhiteboardList,
+  WhiteboardPatch,
+} from '../whiteboards/types'
 
 export class ApiError extends Error {
   status: number
@@ -521,6 +527,39 @@ export const api = {
   prodBatchRefDelete: (projectId: string, jobId: string, batchId: string, token: string) =>
     request<ProdBatch>(`/api/production/batchrefs${qs({ projectId, jobId, batchId, token })}`, {
       method: 'DELETE',
+    }),
+
+  // Whiteboards: tldraw boards on the local store, chat-authz roles. The
+  // document lives on its own endpoint so listing boards never ships shapes.
+  whiteboards: (projectId: string) =>
+    request<WhiteboardList>(`/api/whiteboards${qs({ projectId })}`),
+
+  whiteboardCreate: (projectId: string, body: WhiteboardDraft) =>
+    request<Whiteboard>(`/api/whiteboards${qs({ projectId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  whiteboardUpdate: (projectId: string, boardId: string, body: WhiteboardPatch) =>
+    request<Whiteboard>(`/api/whiteboards${qs({ projectId, boardId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  whiteboardDelete: (projectId: string, boardId: string) =>
+    request<{ deleted: boolean }>(`/api/whiteboards${qs({ projectId, boardId })}`, {
+      method: 'DELETE',
+    }),
+
+  // The document is opaque tldraw JSON: fetched whole when a board opens,
+  // replaced whole by the debounced autosave. null = never saved (empty canvas).
+  whiteboardDoc: (projectId: string, boardId: string) =>
+    request<unknown | null>(`/api/whiteboards/doc${qs({ projectId, boardId })}`),
+
+  whiteboardDocSave: (projectId: string, boardId: string, doc: unknown) =>
+    request<Whiteboard>(`/api/whiteboards/doc${qs({ projectId, boardId })}`, {
+      method: 'PUT',
+      body: JSON.stringify(doc),
     }),
 
   // Wiki: published markdown pages in a project's root "Wiki" folder. hubId is

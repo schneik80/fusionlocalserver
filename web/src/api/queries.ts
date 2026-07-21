@@ -48,6 +48,7 @@ import type {
   StepDraft,
   StepPatch,
 } from '../production/types'
+import type { WhiteboardDraft, WhiteboardList, WhiteboardPatch } from '../whiteboards/types'
 import {
   appendPendingMessage,
   applyUnread,
@@ -815,6 +816,43 @@ export function useBatchMutations(projectId: string | null, jobId: string | null
     onSuccess: settle,
   })
   return { createBatch, updateBatch, removeBatch, addFulfillment, removeFulfillment, addRef, removeRef }
+}
+
+// ---- whiteboards ----
+//
+// Volatile like tasks/production (never persisted — see the dehydrate filter in
+// main.tsx). The list polls while the tab is visible; a board's document is NOT
+// a query — the canvas owns it, loading once on open and autosaving.
+
+export const useWhiteboards = (
+  projectId: string | null,
+  active: boolean,
+): UseQueryResult<WhiteboardList> =>
+  useQuery({
+    queryKey: ['whiteboards', projectId],
+    queryFn: () => api.whiteboards(projectId!),
+    enabled: active && !!projectId,
+    staleTime: 10_000,
+    refetchInterval: active ? 15_000 : false,
+  })
+
+export function useWhiteboardMutations(projectId: string | null) {
+  const qc = useQueryClient()
+  const settle = () => void qc.invalidateQueries({ queryKey: ['whiteboards', projectId] })
+  const create = useMutation({
+    mutationFn: (body: WhiteboardDraft) => api.whiteboardCreate(projectId!, body),
+    onSuccess: settle,
+  })
+  const rename = useMutation({
+    mutationFn: (args: { boardId: string; patch: WhiteboardPatch }) =>
+      api.whiteboardUpdate(projectId!, args.boardId, args.patch),
+    onSuccess: settle,
+  })
+  const remove = useMutation({
+    mutationFn: (boardId: string) => api.whiteboardDelete(projectId!, boardId),
+    onSuccess: settle,
+  })
+  return { create, rename, remove }
 }
 
 // useWikiPages lists a project's published wiki pages. Gated on the hub id and
