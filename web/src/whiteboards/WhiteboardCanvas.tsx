@@ -2,7 +2,15 @@ import { faDiagramProject, faListCheck, faPaperclip } from '@fortawesome/free-so
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Tldraw, createTLStore, getSnapshot, loadSnapshot, type Editor } from 'tldraw'
+import {
+  Tldraw,
+  createTLStore,
+  defaultBindingUtils,
+  defaultShapeUtils,
+  getSnapshot,
+  loadSnapshot,
+  type Editor,
+} from 'tldraw'
 import 'tldraw/tldraw.css'
 import { api } from '../api/client'
 import { useColorMode } from '../state/colorMode'
@@ -39,7 +47,16 @@ export function WhiteboardCanvas({
 }) {
   const nav = useNav()
   const { mode } = useColorMode()
-  const [store] = useState(() => createTLStore({ shapeUtils: [FlsCardShapeUtil] }))
+  // The store's schema must know EVERY shape the editor can create, not just
+  // ours: building it from the custom util alone leaves out draw/geo/arrow/text
+  // and the binding utils, so the default tools write records the schema
+  // rejects — which surfaces as the whole editor failing to mount.
+  const [store] = useState(() =>
+    createTLStore({
+      shapeUtils: [...defaultShapeUtils, FlsCardShapeUtil],
+      bindingUtils: [...defaultBindingUtils],
+    }),
+  )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -61,7 +78,9 @@ export function WhiteboardCanvas({
       .whiteboardDoc(projectId, boardId)
       .then((doc) => {
         if (cancelled) return
-        if (doc) loadSnapshot(store, doc as Parameters<typeof loadSnapshot>[1])
+        // We store only the document scope, so restore it as such — session
+        // state (camera, selection) stays per-user and is never persisted.
+        if (doc) loadSnapshot(store, { document: doc as never })
       })
       .catch((e) => {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : 'could not load this whiteboard')

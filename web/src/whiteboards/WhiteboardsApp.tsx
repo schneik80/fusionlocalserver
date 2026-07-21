@@ -15,6 +15,7 @@ import {
 import { alpha } from '@mui/material/styles'
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useAuthMe, useWhiteboardMutations, useWhiteboards } from '../api/queries'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useNav } from '../state/nav'
 import { boardDisplayId } from './types'
 import type { Whiteboard } from './types'
@@ -69,20 +70,22 @@ export function WhiteboardsApp({ active = true }: { active?: boolean }) {
       />
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', position: 'relative' }}>
         {selected ? (
-          <Suspense
-            fallback={
-              <Box sx={{ flex: 1, display: 'grid', placeItems: 'center' }}>
-                <CircularProgress size={22} />
-              </Box>
-            }
-          >
-            <WhiteboardCanvas
-              key={selected.id}
-              projectId={projectId}
-              boardId={selected.id}
-              canWrite={canWrite}
-            />
-          </Suspense>
+          <ErrorBoundary label="whiteboard" resetKey={selected.id}>
+            <Suspense
+              fallback={
+                <Box sx={{ flex: 1, display: 'grid', placeItems: 'center' }}>
+                  <CircularProgress size={22} />
+                </Box>
+              }
+            >
+              <WhiteboardCanvas
+                key={selected.id}
+                projectId={projectId}
+                boardId={selected.id}
+                canWrite={canWrite}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : (
           <Box
             sx={{
