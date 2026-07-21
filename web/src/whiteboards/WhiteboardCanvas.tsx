@@ -12,6 +12,7 @@ import {
   type Editor,
 } from 'tldraw'
 import 'tldraw/tldraw.css'
+import { getAssetUrlsByMetaUrl } from '@tldraw/assets/urls'
 import { api } from '../api/client'
 import { useColorMode } from '../state/colorMode'
 import { useNav } from '../state/nav'
@@ -22,6 +23,18 @@ import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
 import { ProductionRefDialog } from '../production/ProductionRefDialog'
 import { CARD_H, CARD_W, FLS_CARD_TYPE, FlsCardShapeUtil } from './cardshape'
 import './whiteboard.css'
+
+// tldraw loads its fonts, icons and translations from cdn.tldraw.com by
+// default. This app ships a strict CSP (default-src 'self'), so every one of
+// those requests was blocked: the fonts never arrived (unreadable canvas text)
+// and the blocked translations fetch rejected inside React's commit phase,
+// which is what killed the board a few seconds after it opened.
+//
+// Resolving the assets through the bundler instead makes Vite emit them as
+// same-origin files, so nothing is fetched cross-origin, the CSP stays strict,
+// and the whiteboard works offline like the rest of this local-first app.
+// Built once at module scope: tldraw requires this object be stable.
+const ASSET_URLS = getAssetUrlsByMetaUrl()
 
 // How long the canvas sits idle before persisting. Long enough that a stroke or
 // a drag isn't a request each, short enough that a closed tab loses little.
@@ -216,6 +229,7 @@ export function WhiteboardCanvas({
         ) : (
           <Tldraw
             store={store}
+            assetUrls={ASSET_URLS}
             shapeUtils={[FlsCardShapeUtil]}
             onMount={(editor) => {
               editorRef.current = editor

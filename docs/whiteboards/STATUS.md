@@ -21,6 +21,32 @@ commercially, a licence must be purchased and the key supplied to the `Tldraw`
 component — that is a business decision, not a code change we should make
 silently. See https://tldraw.dev/community/license.
 
+## Assets, CSP and the watermark
+
+tldraw loads its fonts, icons and translations from `cdn.tldraw.com` by default.
+This app ships a strict CSP (`default-src 'self'`), so every one of those
+requests was blocked — the fonts never arrived (unreadable canvas text) and the
+blocked translations fetch rejected inside React's commit phase, killing the
+board seconds after it opened.
+
+Fixed by resolving the assets through the bundler
+(`getAssetUrlsByMetaUrl()` from `@tldraw/assets`, passed as `assetUrls`), so
+Vite emits them as same-origin files. **The CSP was not weakened**, and the
+whiteboard now works offline like the rest of this local-first app.
+
+One CDN call remains and is still blocked: the **unlicensed watermark**. Without
+a licence key tldraw fetches its watermark image and pings a tracking URL. That
+ping carries the full page URL — which for this app includes the hub and project
+URNs and the project's name. Leaking internal project names to a third party is
+a poor trade for a local engineering tool, so the CSP deliberately still blocks
+it. The cost is a console warning and an unhandled rejection from tldraw's
+tracker, plus the licensing wrinkle below.
+
+If that trade should go the other way, allow `https://cdn.tldraw.com` in
+`connect-src` and `img-src` in `securityHeaders` (`server/middleware.go`) — but
+see the privacy note above first. Buying a commercial licence removes the
+watermark, the ping and the question.
+
 ## Model
 
 | Concept | What it is |
