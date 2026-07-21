@@ -10,6 +10,7 @@ import {
   ListItemIcon,
   ListItemText,
   Paper,
+  Slide,
   Stack,
   Tab,
   Table,
@@ -25,7 +26,7 @@ import { alpha, useTheme } from '@mui/material/styles'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowsRotate, faBug, faCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   useBOM,
   useClassify,
@@ -47,6 +48,7 @@ import { thumbnailSrc } from '../api/thumbnails'
 import { useNav } from '../state/nav'
 import { useGoToDocument } from '../state/goto'
 import { iconForItem } from './icons'
+import { TAB_SLIDE_TIMEOUT } from './motion'
 import ActivityHeatmap from './ActivityHeatmap'
 import HistoryGraph from './HistoryGraph'
 import PermissionsExplorer from './PermissionsExplorer'
@@ -171,6 +173,32 @@ function SelectedDetails({
     if (!available.includes(tab)) setTab(available[0])
   }, [available, tab])
 
+  // Slide the tab body in the direction moved along the strip, matching the
+  // project tabs. Index is taken from `available` rather than a fixed list
+  // because the tab set varies by item kind (a design has eight, a plain file
+  // two), so only the position actually on screen gives the right direction.
+  const tabIndex = available.indexOf(tab)
+  const prevTabIndex = useRef(tabIndex)
+  const forward = tabIndex >= prevTabIndex.current
+  useEffect(() => {
+    prevTabIndex.current = tabIndex
+  }, [tabIndex])
+
+  // The body mounts only the active tab — every other tab is unrendered, and
+  // each fetches on mount — so this cannot cross-slide the way ProjectPanel
+  // does without firing every tab's APS queries at once. It animates the
+  // entering tab only: `key` remounts the pane on change, and `appear` runs the
+  // transition on that mount.
+  const [tabSlot, setTabSlot] = useState<HTMLDivElement | null>(null)
+
+  // Animate real tab changes only, not the first paint: selecting a document
+  // already slides this whole panel in from BrowserStage, and sliding the body
+  // inside it at the same time reads as two competing animations.
+  const didMount = useRef(false)
+  useEffect(() => {
+    didMount.current = true
+  }, [])
+
   const detailsQ = useItemDetails(hubId, item.id)
   const cvId = item.componentVersionId || detailsQ.data?.rootComponentVersionId
   // Lazy assembly/part classification (cached, shared with the Contents column);
@@ -285,33 +313,47 @@ function SelectedDetails({
         ))}
       </Tabs>
 
-      <Box sx={{ flex: 1, overflowY: 'auto', minHeight: 0, p: 2 }}>
-        {tab === 'preview' && (
-          <ViewerTab item={item} details={detailsQ.data} dmProjectId={projectAltId} />
-        )}
-        {tab === 'history' && (
-          <HistoryTab
-            query={detailsQ.data}
-            loading={detailsQ.isLoading}
-            error={detailsQ.error as Error | null}
-            projectAltId={projectAltId}
-          />
-        )}
-        {tab === 'activity' && (
-          <ActivityTab
-            hubId={hubId}
-            itemId={item.id}
-            cvId={cvId}
-            subtype={subtype}
-            active={tab === 'activity'}
-          />
-        )}
-        {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
-        {tab === 'bom' && <BOMTab cvId={cvId} active />}
-        {tab === 'uses' && <UsesTab item={item} hubId={hubId} cvId={cvId} active />}
-        {tab === 'whereUsed' && <WhereUsedTab item={item} hubId={hubId} cvId={cvId} active />}
-        {tab === 'drawings' && <DrawingsTab hubId={hubId} designItemId={item.id} active />}
-        {tab === 'permissions' && <PermissionsExplorer hubId={hubId} item={item} />}
+      <Box ref={setTabSlot} sx={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+        <Slide
+          key={tab}
+          direction={forward ? 'left' : 'right'}
+          in
+          appear={didMount.current}
+          container={tabSlot}
+          timeout={TAB_SLIDE_TIMEOUT}
+        >
+          {/* Scrolling lives on the sliding pane, not the clipping slot, so each
+              tab keeps its own scroll and the transform never drags a scrollbar
+              across the panel. */}
+          <Box sx={{ position: 'absolute', inset: 0, overflowY: 'auto', p: 2 }}>
+            {tab === 'preview' && (
+              <ViewerTab item={item} details={detailsQ.data} dmProjectId={projectAltId} />
+            )}
+            {tab === 'history' && (
+              <HistoryTab
+                query={detailsQ.data}
+                loading={detailsQ.isLoading}
+                error={detailsQ.error as Error | null}
+                projectAltId={projectAltId}
+              />
+            )}
+            {tab === 'activity' && (
+              <ActivityTab
+                hubId={hubId}
+                itemId={item.id}
+                cvId={cvId}
+                subtype={subtype}
+                active={tab === 'activity'}
+              />
+            )}
+            {tab === 'properties' && <PropertiesTab cvId={cvId} active />}
+            {tab === 'bom' && <BOMTab cvId={cvId} active />}
+            {tab === 'uses' && <UsesTab item={item} hubId={hubId} cvId={cvId} active />}
+            {tab === 'whereUsed' && <WhereUsedTab item={item} hubId={hubId} cvId={cvId} active />}
+            {tab === 'drawings' && <DrawingsTab hubId={hubId} designItemId={item.id} active />}
+            {tab === 'permissions' && <PermissionsExplorer hubId={hubId} item={item} />}
+          </Box>
+        </Slide>
       </Box>
     </>
   )

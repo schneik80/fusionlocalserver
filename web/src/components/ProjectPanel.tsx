@@ -9,6 +9,7 @@ import { TasksApp } from '../tasks/TasksApp'
 import { WhiteboardsApp } from '../whiteboards/WhiteboardsApp'
 import { WikiApp } from '../wiki/WikiApp'
 import { ProjectDashboard } from './Dashboards'
+import { TAB_SLIDE_TIMEOUT } from './motion'
 
 // ProjectPanel is the project-level pane: a tab shell over the dashboard, the
 // wiki, and chat. It replaces the bare <ProjectDashboard/> that used to fill
@@ -38,9 +39,6 @@ type ProjectTab = 'dashboard' | 'wiki' | 'chat' | 'tasks' | 'production' | 'whit
 // sign of the change in index, so this MUST match the <Tab> render order.
 const TAB_ORDER: ProjectTab[] = ['dashboard', 'production', 'tasks', 'whiteboards', 'wiki', 'chat']
 
-// Shorter than MUI's 225/195 default: a tab switch is a far more frequent
-// gesture than a drill-down, and the ask was for something subtle.
-const SLIDE_TIMEOUT = { enter: 180, exit: 150 }
 
 export function ProjectPanel() {
   const nav = useNav()
@@ -90,7 +88,7 @@ export function ProjectPanel() {
       appear={false}
       mountOnEnter={false}
       unmountOnExit={false}
-      timeout={SLIDE_TIMEOUT}
+      timeout={TAB_SLIDE_TIMEOUT}
     >
       <Box sx={{ position: 'absolute', inset: 0, display: 'flex' }}>{node}</Box>
     </Slide>
