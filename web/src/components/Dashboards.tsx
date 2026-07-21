@@ -213,7 +213,12 @@ export function HubDashboard() {
 }
 
 // ── project dashboard ──────────────────────────────────────────────
-export function ProjectDashboard() {
+// `active` follows the same contract as the other project tabs (see
+// ProjectPanel): ProjectPanel keeps every tab mounted and hides them with
+// `display: none`, so without this the dashboard kept fetching — and kept
+// rendering its charts into a 0x0 box, which made recharts log a
+// "width(0) and height(0)" warning on every re-render from any other tab.
+export function ProjectDashboard({ active = true }: { active?: boolean }) {
   const nav = useNav()
   const project = nav.project
   const goTo = useGoToDocument()
@@ -233,7 +238,7 @@ export function ProjectDashboard() {
   // People & groups: effective access at the current container — the deepest
   // layer of the permissions path (the project at root, the folder once inside).
   const folderPath = nav.folderStack.map((f) => ({ id: f.id, name: f.name }))
-  const permQ = usePermissionsPath(nav.hubId, project?.id, project?.name, folderPath, !!project?.id)
+  const permQ = usePermissionsPath(nav.hubId, project?.id, project?.name, folderPath, !!project?.id && active)
   const currentLayer = permQ.data?.[permQ.data.length - 1]
 
   // Pins: all of the project's pins at the root, narrowed to the current folder
@@ -258,6 +263,7 @@ export function ProjectDashboard() {
       queryKey: ['classify', d.componentVersionId],
       queryFn: () => api.classify(d.componentVersionId!),
       staleTime: Infinity,
+      enabled: active,
     })),
   })
   const subtypeByCv = new Map<string, string>()
@@ -291,8 +297,14 @@ export function ProjectDashboard() {
     nav.hubId,
     activityIds[0] ?? null,
     activityIds.slice(1),
-    activityIds.length > 0,
+    activityIds.length > 0 && active,
   )
+
+  // Render nothing while another tab is showing. This must come after every
+  // hook (rules of hooks) and deliberately returns rather than unmounting: the
+  // component stays alive, so `loadAll` and the query caches survive a tab
+  // switch, exactly as the always-mounted tab shell intends.
+  if (!active) return null
 
   return (
     <DashboardShell title={title} subtitle="Select a document to view its details." fill>

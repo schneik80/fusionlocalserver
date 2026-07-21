@@ -20,9 +20,11 @@ import { ProjectDashboard } from './Dashboards'
 //
 // All tabs stay mounted (hidden via display) so switching preserves the
 // dashboard's scroll, the wiki editor's in-progress state, and the chat
-// scroll/draft. `active` gates chat's fetching to the visible tab; the chat
-// SSE stream (below) lives regardless of the tab, keeping the chat caches
-// warm from any tab.
+// scroll/draft. Every tab therefore takes `active`, which gates its fetching
+// (and, for the dashboard, its rendering) to the visible tab — otherwise a
+// hidden tab keeps spending APS quota and, in the dashboard's case, keeps
+// measuring charts inside a zero-sized box. The chat SSE stream (below) lives
+// regardless of the tab, keeping the chat caches warm from any tab.
 
 type ProjectTab = 'dashboard' | 'wiki' | 'chat' | 'tasks' | 'production' | 'whiteboards'
 
@@ -109,7 +111,7 @@ export function ProjectPanel() {
         )}
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'dashboard' ? 'flex' : 'none' }}>
-        <ProjectDashboard />
+        <ProjectDashboard active={effectiveTab === 'dashboard'} />
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'production' ? 'flex' : 'none' }}>
         <ProductionApp active={effectiveTab === 'production'} />
