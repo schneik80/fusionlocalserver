@@ -27,6 +27,7 @@ import (
 	"github.com/schneik80/fusionlocalserver/pins"
 	"github.com/schneik80/fusionlocalserver/production"
 	"github.com/schneik80/fusionlocalserver/tasks"
+	"github.com/schneik80/fusionlocalserver/whiteboards"
 )
 
 // Options configures a server run. Config may be nil when CfgErr is set (no
@@ -132,6 +133,12 @@ type Server struct {
 	// shares chatAuthz, exactly like tasks.
 	production *production.Store
 	prodOpLim  *chat.Limiter
+
+	// whiteboards is the file-backed tldraw board store (nil when the config
+	// dir is unavailable; whiteboard endpoints then reply 503). Authorization
+	// shares chatAuthz, exactly like tasks and production.
+	whiteboards     *whiteboards.Store
+	whiteboardOpLim *chat.Limiter
 
 	// uploads tracks background file-upload jobs (per-session; see uploads.go).
 	uploads *uploadManager
@@ -248,6 +255,18 @@ func Run(opts Options) error {
 		s.production = ps
 	}
 	s.prodOpLim = chat.NewLimiter(2, 10)
+
+	// Whiteboard store (metadata + one tldraw document per board under
+	// <config>/whiteboards/). The limiter covers create/rename only — document
+	// autosaves are already debounced client-side and would trip a 2/s bucket.
+	if dir, derr := config.Dir(); derr != nil {
+		logger.Warn("whiteboards: disabled (config dir unavailable)", "err", derr)
+	} else if ws, werr := whiteboards.NewStore(filepath.Join(dir, "whiteboards")); werr != nil {
+		logger.Warn("whiteboards: disabled (store init failed)", "err", werr)
+	} else {
+		s.whiteboards = ws
+	}
+	s.whiteboardOpLim = chat.NewLimiter(2, 10)
 
 	// Resolve TLS once, before the bind loop spans restarts. A self-signed
 	// cert is generated/cached when -tls is given without a cert pair.

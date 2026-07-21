@@ -1,0 +1,62 @@
+package server
+
+import (
+	"github.com/schneik80/fusionlocalserver/whiteboards"
+)
+
+// WhiteboardUserDTO is a board participant (creator / last editor) on the wire.
+type WhiteboardUserDTO struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
+// WhiteboardDTO is one board's metadata. The tldraw document is deliberately
+// absent — it is fetched separately when a board is opened, so listing a
+// project's boards never ships megabytes of shapes.
+type WhiteboardDTO struct {
+	ID            string            `json:"id"`
+	Num           int64             `json:"num"`
+	ProjectID     string            `json:"projectId"`
+	HubID         string            `json:"hubId"`
+	ProjectName   string            `json:"projectName"`
+	Name          string            `json:"name"`
+	CreatedBy     WhiteboardUserDTO `json:"createdBy"`
+	CreatedAt     string            `json:"createdAt"`
+	UpdatedAt     string            `json:"updatedAt"`
+	UpdatedBy     WhiteboardUserDTO `json:"updatedBy"`
+	SnapshotBytes int64             `json:"snapshotBytes"`
+}
+
+// WhiteboardCapsDTO tells the SPA what the caller may do, so it can present a
+// read-only canvas rather than let edits bounce off a 403.
+type WhiteboardCapsDTO struct {
+	Write    bool `json:"write"`
+	Moderate bool `json:"moderate"`
+}
+
+// WhiteboardListDTO is GET /api/whiteboards.
+type WhiteboardListDTO struct {
+	Whiteboards  []WhiteboardDTO   `json:"whiteboards"`
+	Capabilities WhiteboardCapsDTO `json:"capabilities"`
+}
+
+func whiteboardUserDTO(r whiteboards.UserRef) WhiteboardUserDTO {
+	return WhiteboardUserDTO{ID: r.ID, Name: r.Name, Email: r.Email}
+}
+
+func whiteboardDTO(b whiteboards.Board, projectID, hubID, projectName string) WhiteboardDTO {
+	return WhiteboardDTO{
+		ID:            b.ID,
+		Num:           b.Num,
+		ProjectID:     projectID,
+		HubID:         hubID,
+		ProjectName:   projectName,
+		Name:          b.Name,
+		CreatedBy:     whiteboardUserDTO(b.CreatedBy),
+		CreatedAt:     fmtTime(b.CreatedAt),
+		UpdatedAt:     fmtTime(b.UpdatedAt),
+		UpdatedBy:     whiteboardUserDTO(b.UpdatedBy),
+		SnapshotBytes: b.SnapshotBytes,
+	}
+}
