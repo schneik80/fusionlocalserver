@@ -156,15 +156,24 @@ func (s *Server) handleTasksList(w http.ResponseWriter, r *http.Request) {
 		s.taskError(w, r, err)
 		return
 	}
+	// Same probe pattern as the chat channel list; both hit the cached roster,
+	// so this costs nothing extra. A probe FAILURE is not "no permission",
+	// though: silently reporting false would render the whole tab read-only
+	// with no error shown, then flip back on the next poll. Fail the request
+	// instead, matching taskCan's posture.
 	caps := TaskCapsDTO{}
-	// Same probe pattern as the chat channel list; both hit the cached
-	// roster, so this costs nothing extra.
-	if v, cerr := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapPost); cerr == nil {
-		caps.Write = v
+	write, err := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapPost)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	if v, cerr := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapModerate); cerr == nil {
-		caps.Moderate = v
+	caps.Write = write
+	moderate, err := s.chatAuthz.Can(ctx, c.token, c.id, c.projectID, chat.CapModerate)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
+	caps.Moderate = moderate
 	out := TaskListDTO{Tasks: make([]TaskDTO, 0, len(list)), Capabilities: caps}
 	for _, t := range list {
 		out.Tasks = append(out.Tasks, taskDTO(t, c.projectID, hubID, projectName))
