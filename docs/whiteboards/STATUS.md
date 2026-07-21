@@ -47,6 +47,45 @@ If that trade should go the other way, allow `https://cdn.tldraw.com` in
 see the privacy note above first. Buying a commercial licence removes the
 watermark, the ping and the question.
 
+The tracker ping is **inert**, despite the scary console output.
+`LicenseManager.maybeTrack` (`@tldraw/editor/.../license/LicenseManager.js:126`)
+calls `fetch(url)` and discards the promise, so the CSP rejection can never
+reach the `.catch()` that sets the licence state — it only ever surfaces as an
+unhandled rejection in the console. It is **not** why the board disappears; see
+below.
+
+## The board vanishes after ~5s — tldraw's licence gate, not a bug
+
+Symptom: the canvas mounts and works, then a few seconds later silently
+disappears, with **no error, no React crash and nothing for an ErrorBoundary to
+catch**. This is deliberate tldraw behaviour, not a fault in this app:
+
+```js
+// @tldraw/editor/.../license/LicenseProvider.js
+function shouldHideEditorAfterDelay(s) { return s === 'expired' || s === 'unlicensed-production' }
+const LICENSE_TIMEOUT = 5e3
+// …after 5s: setShowEditor(false)  →  <LicenseGate/>  →  <div style={{display:'none'}}/>
+```
+
+With no key the state is `unlicensed-production` **whenever tldraw decides the
+page is not development**. Its heuristic
+(`LicenseManager.getIsDevelopment`) treats a page as development only if the
+protocol isn't `https:`, **or** the hostname is loopback (`localhost`, `::1`,
+`127.x`), **or** `NODE_ENV !== 'production'`.
+
+This app is served over **HTTPS on a LAN hostname** (`.aps-public-url`, e.g.
+`https://ryzen-nobara.local:8080`) from a production Vite build, so all three
+are false and tldraw classifies a single-user local tool as a production
+deployment. Reaching the same server at `https://localhost:8080` flips the
+loopback clause and the gate never fires — **but** the OAuth callback host must
+match the APS app registration, so changing the host breaks login unless that
+callback is registered too (see the redirect_uri gotcha).
+
+There is no code fix here. The options are: buy a licence key and pass it to
+`<Tldraw licenseKey=…>`, use the app over loopback where that genuinely is
+hobby/development use, or drop the feature. Serving whiteboards to other
+machines on the network is production use and needs a licence.
+
 ## Model
 
 | Concept | What it is |
