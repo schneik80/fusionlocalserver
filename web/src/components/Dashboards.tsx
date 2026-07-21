@@ -260,16 +260,31 @@ export function ProjectDashboard({ active = true }: { active?: boolean }) {
       (atRoot || pinContainerId(p) === nav.currentFolderId),
   )
 
-  // Classify the container's designs so the donut can split them into assemblies
-  // vs parts. useQueries shares the ['classify', cvId] cache the Contents column
-  // already fills, so this adds no fetches — and updates as classification lands.
   const designs = items.filter((i) => (i.kind === 'design' || i.kind === 'configured') && i.componentVersionId)
+
+  // Lifts both fan-out caps below. Declared here because the classify cap needs
+  // it; reset when the container changes, since this pane stays mounted.
+  const [loadAll, setLoadAll] = useState(false)
+  useEffect(() => setLoadAll(false), [project?.id, nav.currentFolderId])
+
+  // Classify the container's designs so the donut can split them into assemblies
+  // vs parts, sharing the ['classify', cvId] cache the Contents column fills.
+  //
+  // Capped like the activity roll-up below, and for the same reason: the column
+  // now classifies only rows near the viewport, so an uncapped fan-out here
+  // would be the burst that change removes — every design in the container at
+  // once, against a per-minute quota that answers the tail with 429. Beyond the
+  // cap a design counts as "Designs" until its row is scrolled into view, which
+  // is the bucket docTypeOf already falls back to.
   const classifyQs = useQueries({
-    queries: designs.map((d) => ({
+    queries: designs.map((d, i) => ({
       queryKey: ['classify', d.componentVersionId],
       queryFn: () => api.classify(d.componentVersionId!),
       staleTime: Infinity,
-      enabled: active,
+      // Subscribe to every design but only FETCH within the cap: past it the
+      // query stays disabled, so a classification the Contents column has
+      // already fetched still lands in the donut without costing a request.
+      enabled: active && (loadAll || i < CLASSIFY_CAP),
     })),
   })
   const subtypeByCv = new Map<string, string>()
@@ -294,11 +309,12 @@ export function ProjectDashboard({ active = true }: { active?: boolean }) {
   // large project doesn't fan out hundreds of GraphQL activity queries (and brush
   // the APS per-minute quota); "Load all" lifts the cap on demand.
   const designIds = designs.map((d) => d.id)
-  const [loadAll, setLoadAll] = useState(false)
-  // Reset the cap when the container changes (this pane stays mounted across them).
-  useEffect(() => setLoadAll(false), [project?.id, nav.currentFolderId])
-  const capped = !loadAll && designIds.length > ACTIVITY_CAP
-  const activityIds = capped ? designIds.slice(0, ACTIVITY_CAP) : designIds
+  const activityCapped = !loadAll && designIds.length > ACTIVITY_CAP
+  const classifyCapped = !loadAll && designs.length > CLASSIFY_CAP
+  // One control lifts both fan-outs, so the notice shows if either is capped —
+  // a cap nobody can see or undo is just silent truncation.
+  const capped = activityCapped || classifyCapped
+  const activityIds = activityCapped ? designIds.slice(0, ACTIVITY_CAP) : designIds
   const rollupQ = useRollupActivity(
     nav.hubId,
     activityIds[0] ?? null,
@@ -343,7 +359,12 @@ export function ProjectDashboard({ active = true }: { active?: boolean }) {
               {capped && (
                 <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1, flexShrink: 0 }}>
                   <Typography variant="caption" color="text.secondary">
-                    Aggregating the first {ACTIVITY_CAP} of {designIds.length} designs.
+                    {activityCapped
+                      ? `Aggregating the first ${ACTIVITY_CAP} of ${designIds.length} designs`
+                      : `Aggregating all ${designIds.length} designs`}
+                    {classifyCapped &&
+                      `; ${designs.length - CLASSIFY_CAP} not yet split into assemblies/parts`}
+                    .
                   </Typography>
                   <Button size="small" onClick={() => setLoadAll(true)} disabled={rollupQ.isFetching}>
                     {rollupQ.isFetching ? 'Loading…' : 'Load all'}
@@ -374,6 +395,11 @@ export function ProjectDashboard({ active = true }: { active?: boolean }) {
 // ── widgets ────────────────────────────────────────────────────────
 // Max root designs aggregated into the project activity chart before "Load all".
 const ACTIVITY_CAP = 50
+
+// Max designs the donut classifies up-front before "Load all". One classify is
+// one GraphQL call against a per-minute quota, so this bounds what opening a
+// large folder costs; the rest resolve as their rows scroll into view.
+const CLASSIFY_CAP = 24
 
 const DONUT_PALETTE = ['#0696d7', '#36b37e', '#ff8b00', '#6554c0', '#ff5630', '#00b8d9', '#8993a4', '#e91e63']
 

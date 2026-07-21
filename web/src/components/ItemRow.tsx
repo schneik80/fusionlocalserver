@@ -16,6 +16,7 @@ import type { Item } from '../api/types'
 import { useNav } from '../state/nav'
 import { isPinnable } from '../state/pins'
 import { iconForItem, typeTag } from './icons'
+import { useInView } from './useInView'
 
 interface ItemRowProps {
   item: Item
@@ -35,10 +36,18 @@ export function ItemRow({
   onTogglePin,
   classifyEnabled,
 }: ItemRowProps) {
+  // Both the classify query and the thumbnail below wait until the row is
+  // near the viewport. The column renders every item with no windowing, so
+  // eagerly refining a 40-design folder fired ~80 APS requests the moment it
+  // opened and the tail came back 429 — visible as missing thumbnails and
+  // unrefined icons. Deferring costs nothing (a row you can't see gains
+  // nothing from a refined icon) and keeps a 500-item folder from melting.
+  const [rowRef, inView] = useInView<HTMLLIElement>()
+
   // Refine an unclassified design's icon to assembly/part. The query is
   // disabled (cvId undefined) for every other row.
   const cvId =
-    classifyEnabled && item.kind === 'design' && !item.subtype
+    inView && classifyEnabled && item.kind === 'design' && !item.subtype
       ? item.componentVersionId
       : undefined
   const classify = useClassify(cvId)
@@ -54,16 +63,19 @@ export function ItemRow({
   // thumbnail, drawings via the Model Derivative preview (keyed by item id + the
   // current project's altId). On a miss/404 fall back to the kind icon.
   const nav = useNav()
-  const thumbSrc = thumbnailSrc({
-    kind: display.kind,
-    cvId: display.componentVersionId,
-    itemId: item.id,
-    projectAltId: nav.project?.altId,
-  })
+  const thumbSrc = inView
+    ? thumbnailSrc({
+        kind: display.kind,
+        cvId: display.componentVersionId,
+        itemId: item.id,
+        projectAltId: nav.project?.altId,
+      })
+    : null
   const [thumbFailed, setThumbFailed] = useState(false)
 
   return (
     <ListItem
+      ref={rowRef}
       disablePadding
       // The pin star stays quiet until wanted: hidden on unpinned rows,
       // revealed on hover or keyboard focus, and kept on permanently once the
