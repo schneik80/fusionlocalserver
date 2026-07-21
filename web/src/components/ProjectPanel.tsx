@@ -4,6 +4,7 @@ import { useChatUnreads } from '../api/queries'
 import { ChatApp } from '../chat/ChatApp'
 import { useChatEvents } from '../chat/useChatEvents'
 import { useNav } from '../state/nav'
+import { ProductionApp } from '../production/ProductionApp'
 import { TasksApp } from '../tasks/TasksApp'
 import { WikiApp } from '../wiki/WikiApp'
 import { ProjectDashboard } from './Dashboards'
@@ -22,7 +23,7 @@ import { ProjectDashboard } from './Dashboards'
 // SSE stream (below) lives regardless of the tab, keeping the chat caches
 // warm from any tab.
 
-type ProjectTab = 'dashboard' | 'wiki' | 'chat' | 'tasks'
+type ProjectTab = 'dashboard' | 'wiki' | 'chat' | 'tasks' | 'production'
 
 export function ProjectPanel() {
   const nav = useNav()
@@ -72,6 +73,7 @@ export function ProjectPanel() {
         }}
       >
         <Tab label="Dashboard" value="dashboard" />
+        {atRoot && <Tab label="Production" value="production" />}
         {atRoot && <Tab label="Tasks" value="tasks" />}
         {atRoot && <Tab label="Wiki" value="wiki" />}
         {atRoot && (
@@ -106,6 +108,9 @@ export function ProjectPanel() {
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'dashboard' ? 'flex' : 'none' }}>
         <ProjectDashboard />
+      </Box>
+      <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'production' ? 'flex' : 'none' }}>
+        <ProductionApp active={effectiveTab === 'production'} />
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, display: effectiveTab === 'tasks' ? 'flex' : 'none' }}>
         <TasksApp active={effectiveTab === 'tasks'} />

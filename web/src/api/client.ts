@@ -38,6 +38,21 @@ import type {
   ChatUnreadList,
 } from '../chat/types'
 import type { MyTasks, Task, TaskDraft, TaskList, TaskPatch } from '../tasks/types'
+import type {
+  BatchDraft,
+  BatchPatch,
+  DocPin,
+  FulfillInput,
+  Job,
+  JobDraft,
+  JobList,
+  JobPatch,
+  PlaceholderDraft,
+  PlaceholderPatch,
+  ProdBatch,
+  StepDraft,
+  StepPatch,
+} from '../production/types'
 
 export class ApiError extends Error {
   status: number
@@ -372,6 +387,137 @@ export const api = {
     }),
 
   myTasks: () => request<MyTasks>('/api/tasks/mine'),
+
+  // Production: per-project job & batch tracker on the local store, chat-authz
+  // roles. GET /api/production/job (singular) hydrates one job's full graph;
+  // steps/edges/placeholders mutate a job in place and return the updated job.
+  prodJobs: (projectId: string) => request<JobList>(`/api/production/jobs${qs({ projectId })}`),
+
+  prodJob: (projectId: string, jobId: string) =>
+    request<Job>(`/api/production/job${qs({ projectId, jobId })}`),
+
+  prodJobCreate: (projectId: string, body: JobDraft) =>
+    request<Job>(`/api/production/jobs${qs({ projectId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodJobUpdate: (projectId: string, jobId: string, body: JobPatch) =>
+    request<Job>(`/api/production/jobs${qs({ projectId, jobId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  prodJobDelete: (projectId: string, jobId: string) =>
+    request<{ deleted: boolean }>(`/api/production/jobs${qs({ projectId, jobId })}`, {
+      method: 'DELETE',
+    }),
+
+  prodStepCreate: (projectId: string, jobId: string, body: StepDraft) =>
+    request<Job>(`/api/production/steps${qs({ projectId, jobId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodStepUpdate: (projectId: string, jobId: string, stepId: string, body: StepPatch) =>
+    request<Job>(`/api/production/steps${qs({ projectId, jobId, stepId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  prodStepDelete: (projectId: string, jobId: string, stepId: string) =>
+    request<Job>(`/api/production/steps${qs({ projectId, jobId, stepId })}`, {
+      method: 'DELETE',
+    }),
+
+  prodEdgeCreate: (projectId: string, jobId: string, from: string, to: string) =>
+    request<Job>(`/api/production/edges${qs({ projectId, jobId })}`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to }),
+    }),
+
+  prodEdgeDelete: (projectId: string, jobId: string, edgeId: string) =>
+    request<Job>(`/api/production/edges${qs({ projectId, jobId, edgeId })}`, {
+      method: 'DELETE',
+    }),
+
+  prodPlaceholderCreate: (projectId: string, jobId: string, stepId: string, body: PlaceholderDraft) =>
+    request<Job>(`/api/production/placeholders${qs({ projectId, jobId, stepId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodPlaceholderUpdate: (
+    projectId: string,
+    jobId: string,
+    stepId: string,
+    placeholderId: string,
+    body: PlaceholderPatch,
+  ) =>
+    request<Job>(`/api/production/placeholders${qs({ projectId, jobId, stepId, placeholderId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  prodPlaceholderDelete: (projectId: string, jobId: string, stepId: string, placeholderId: string) =>
+    request<Job>(`/api/production/placeholders${qs({ projectId, jobId, stepId, placeholderId })}`, {
+      method: 'DELETE',
+    }),
+
+  // Plan documents (version-pinned server-side) return the updated job.
+  prodPlanDocCreate: (projectId: string, jobId: string, stepId: string, body: DocPin) =>
+    request<Job>(`/api/production/plandocs${qs({ projectId, jobId, stepId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodPlanDocDelete: (projectId: string, jobId: string, stepId: string, planDocId: string) =>
+    request<Job>(`/api/production/plandocs${qs({ projectId, jobId, stepId, planDocId })}`, {
+      method: 'DELETE',
+    }),
+
+  // Batches (freeze plan-doc versions on create) and fulfillments (version-
+  // pinned supplied documents) return the affected batch.
+  prodBatchCreate: (projectId: string, jobId: string, body: BatchDraft) =>
+    request<ProdBatch>(`/api/production/batches${qs({ projectId, jobId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodBatchUpdate: (projectId: string, jobId: string, batchId: string, body: BatchPatch) =>
+    request<ProdBatch>(`/api/production/batches${qs({ projectId, jobId, batchId })}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  prodBatchDelete: (projectId: string, jobId: string, batchId: string) =>
+    request<{ deleted: boolean }>(`/api/production/batches${qs({ projectId, jobId, batchId })}`, {
+      method: 'DELETE',
+    }),
+
+  prodFulfillmentCreate: (projectId: string, jobId: string, batchId: string, body: FulfillInput) =>
+    request<ProdBatch>(`/api/production/fulfillments${qs({ projectId, jobId, batchId })}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  prodFulfillmentDelete: (projectId: string, jobId: string, batchId: string, fulfillmentId: string) =>
+    request<ProdBatch>(`/api/production/fulfillments${qs({ projectId, jobId, batchId, fulfillmentId })}`, {
+      method: 'DELETE',
+    }),
+
+  // Batch references — related task / document tokens (not version-pinned).
+  prodBatchRefAdd: (projectId: string, jobId: string, batchId: string, token: string) =>
+    request<ProdBatch>(`/api/production/batchrefs${qs({ projectId, jobId, batchId })}`, {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+
+  prodBatchRefDelete: (projectId: string, jobId: string, batchId: string, token: string) =>
+    request<ProdBatch>(`/api/production/batchrefs${qs({ projectId, jobId, batchId, token })}`, {
+      method: 'DELETE',
+    }),
+
   // Wiki: published markdown pages in a project's root "Wiki" folder. hubId is
   // the GraphQL hub id (the server resolves it to the DM hub id); dmProjectId is
   // the project's altId. itemId is a page's lineage urn.

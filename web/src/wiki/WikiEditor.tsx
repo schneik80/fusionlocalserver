@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBold,
   faCode,
+  faDiagramProject,
   faFileCirclePlus,
   faGlobe,
   faImage,
@@ -36,6 +37,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Item } from '../api/types'
 import { docRefFromItem, docRefMarkdown } from '../components/doccard/docref'
 import { taskRefFromTask, taskRefMarkdown } from '../components/taskcard/taskref'
+import { ProductionRefDialog } from '../production/ProductionRefDialog'
 import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
 import { QuickTaskDialog } from '../tasks/QuickTaskDialog'
 import type { Task } from '../tasks/types'
@@ -153,6 +155,7 @@ export function WikiEditor({
   const [docPickerOpen, setDocPickerOpen] = useState(false)
   const [taskPickerOpen, setTaskPickerOpen] = useState(false)
   const [taskCreateOpen, setTaskCreateOpen] = useState(false)
+  const [prodPickerOpen, setProdPickerOpen] = useState(false)
   // Hold the latest onChange in a ref so the update listener (installed once per
   // document) always calls the current callback without re-creating the editor.
   const onChangeRef = useRef(onChangeMarkdown)
@@ -394,6 +397,13 @@ export function WikiEditor({
             onClick={() => setTaskCreateOpen(true)}
           />
         )}
+        {hubProject && (
+          <ToolBtn
+            title="Insert a job or batch card (this project's production)"
+            icon={faDiagramProject}
+            onClick={() => setProdPickerOpen(true)}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -470,6 +480,18 @@ export function WikiEditor({
           hubId={hubId ?? ''}
           projectName={hubProject.name}
           onCreated={handleTaskPick}
+        />
+      )}
+      {hubProject && prodPickerOpen && (
+        <ProductionRefDialog
+          open={prodPickerOpen}
+          projectId={hubProject.id}
+          hubId={hubId ?? ''}
+          projectName={hubProject.name}
+          onClose={() => setProdPickerOpen(false)}
+          onPick={(token, label) => {
+            if (viewRef.current) insertText(viewRef.current, `[${label.replace(/[[\]]/g, '')}](${token})`)
+          }}
         />
       )}
     </Box>

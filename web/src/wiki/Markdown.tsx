@@ -5,6 +5,8 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeSlug from 'rehype-slug'
 import { DocumentCard } from '../components/doccard/DocumentCard'
 import { parseDocRef } from '../components/doccard/docref'
+import { ProductionCard } from '../components/productioncard/ProductionCard'
+import { parseBatchRef, parseJobRef } from '../components/productioncard/prodref'
 import { TaskCard } from '../components/taskcard/TaskCard'
 import { parseTaskRef } from '../components/taskcard/taskref'
 // highlight.js token theme for fenced code blocks. Light-mode palette for now;
@@ -77,6 +79,10 @@ export function Markdown({ children }: { children: string }) {
             if (docRef) return <DocumentCard docRef={docRef} />
             const taskRef = href ? parseTaskRef(href) : null
             if (taskRef) return <TaskCard taskRef={taskRef} />
+            const batchRef = href ? parseBatchRef(href) : null
+            if (batchRef) return <ProductionCard jobRef={batchRef} batchRef={batchRef} />
+            const jobRef = href ? parseJobRef(href) : null
+            if (jobRef) return <ProductionCard jobRef={jobRef} />
             return (
               <a href={href} {...rest}>
                 {linkChildren}

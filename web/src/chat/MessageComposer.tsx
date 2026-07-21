@@ -1,10 +1,17 @@
-import { faFileCirclePlus, faListCheck, faPaperPlane, faSquarePlus } from '@fortawesome/free-solid-svg-icons'
+import {
+  faDiagramProject,
+  faFileCirclePlus,
+  faListCheck,
+  faPaperPlane,
+  faSquarePlus,
+} from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Box, IconButton, TextField, Tooltip, Typography } from '@mui/material'
 import { useState } from 'react'
 import { encodeDocRef, docRefFromItem } from '../components/doccard/docref'
 import { encodeTaskRef, taskRefFromTask } from '../components/taskcard/taskref'
 import { HubBrowserDialog } from '../components/hubbrowser/HubBrowserDialog'
+import { ProductionRefDialog } from '../production/ProductionRefDialog'
 import { useNav } from '../state/nav'
 import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
 import { QuickTaskDialog } from '../tasks/QuickTaskDialog'
@@ -38,6 +45,7 @@ export function MessageComposer({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [taskPickerOpen, setTaskPickerOpen] = useState(false)
   const [taskCreateOpen, setTaskCreateOpen] = useState(false)
+  const [prodPickerOpen, setProdPickerOpen] = useState(false)
 
   // appendToken drops a card token into the draft, spacing it off whatever
   // is already there so the unfurl regex can find it.
@@ -100,6 +108,21 @@ export function MessageComposer({
               sx={{ color: 'text.secondary' }}
             >
               <FontAwesomeIcon icon={faSquarePlus} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      {nav.project && (
+        <Tooltip title="Link a job or batch">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => setProdPickerOpen(true)}
+              aria-label="link a job or batch"
+              sx={{ color: 'text.secondary' }}
+            >
+              <FontAwesomeIcon icon={faDiagramProject} />
             </IconButton>
           </span>
         </Tooltip>
@@ -183,6 +206,16 @@ export function MessageComposer({
           hubId={nav.hubId ?? ''}
           projectName={nav.project.name}
           onCreated={appendTaskToken}
+        />
+      )}
+      {nav.project && prodPickerOpen && (
+        <ProductionRefDialog
+          open={prodPickerOpen}
+          projectId={nav.project.id}
+          hubId={nav.hubId ?? ''}
+          projectName={nav.project.name}
+          onClose={() => setProdPickerOpen(false)}
+          onPick={appendToken}
         />
       )}
     </Box>

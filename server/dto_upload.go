@@ -18,13 +18,14 @@ type UploadJobDTO struct {
 	DMProjectID string   `json:"dmProjectId,omitempty"`
 	FolderPath  []string `json:"folderPath"`
 	ItemID      string   `json:"itemId,omitempty"`
+	VersionID   string   `json:"versionId,omitempty"` // DM version urn of the created version (for version pinning)
 	CreatedOn   string   `json:"createdOn"`
 }
 
 // uploadJobDTO snapshots a job's current state.
 func uploadJobDTO(j *uploadJob) UploadJobDTO {
 	j.mu.Lock()
-	status, errMsg, itemID := j.status, j.errMsg, j.itemID
+	status, errMsg, itemID, versionID := j.status, j.errMsg, j.itemID, j.versionID
 	j.mu.Unlock()
 	sent := j.bytesSent.Load()
 	if status == uploadDone {
@@ -47,6 +48,7 @@ func uploadJobDTO(j *uploadJob) UploadJobDTO {
 		DMProjectID: j.DMProjectID,
 		FolderPath:  folderPath,
 		ItemID:      itemID,
+		VersionID:   versionID,
 		CreatedOn:   fmtTime(j.CreatedAt),
 	}
 }

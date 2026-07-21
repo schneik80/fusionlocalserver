@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { Avatar, Box, Chip, IconButton, Popover, Stack, Tooltip, Typography } from '@mui/material'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DocumentCard } from '../components/doccard/DocumentCard'
+import { ProductionCard } from '../components/productioncard/ProductionCard'
 import { splitRefTokens } from '../components/reftokens'
 import { TaskCard } from '../components/taskcard/TaskCard'
 import { REACTION_EMOJI, type ChatCaps, type ChatMessage } from './types'
@@ -84,6 +85,10 @@ function ChatBody({ body }: { body: string }) {
           <DocumentCard key={i} docRef={p.doc} />
         ) : 'task' in p ? (
           <TaskCard key={i} taskRef={p.task} />
+        ) : 'batch' in p ? (
+          <ProductionCard key={i} jobRef={p.batch} batchRef={p.batch} />
+        ) : 'job' in p ? (
+          <ProductionCard key={i} jobRef={p.job} />
         ) : (
           <span key={i}>{p.text}</span>
         ),
