@@ -11,6 +11,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import { APP_RAIL_WIDTH } from '../components/Column'
 import type { DraftStatus } from './draftStore'
 
 // A sidebar entry is either a published page (remote), or a local draft — which
@@ -64,7 +65,7 @@ export function WikiSidebar({
   return (
     <Box
       sx={{
-        width: 240,
+        width: APP_RAIL_WIDTH,
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',

@@ -13,6 +13,7 @@ import {
 import { alpha } from '@mui/material/styles'
 import { useState } from 'react'
 import { useProductionMutations } from '../api/queries'
+import { APP_RAIL_WIDTH } from '../components/Column'
 import type { JobSummary, ProdCaps } from './types'
 import { jobDisplayId } from './types'
 
@@ -63,7 +64,7 @@ export function JobList({
   return (
     <Box
       sx={{
-        width: 260,
+        width: APP_RAIL_WIDTH,
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',

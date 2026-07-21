@@ -15,6 +15,7 @@ import {
 import { alpha } from '@mui/material/styles'
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useAuthMe, useWhiteboardMutations, useWhiteboards } from '../api/queries'
+import { APP_RAIL_WIDTH } from '../components/Column'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useNav } from '../state/nav'
 import { boardDisplayId } from './types'
@@ -167,7 +168,7 @@ function BoardRail({
   return (
     <Box
       sx={{
-        width: 240,
+        width: APP_RAIL_WIDTH,
         flexShrink: 0,
         borderRight: 1,
         borderColor: 'divider',

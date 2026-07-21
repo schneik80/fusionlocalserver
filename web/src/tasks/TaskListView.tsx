@@ -1,5 +1,5 @@
 import { Box, ListItem, ListItemButton, Stack, Typography } from '@mui/material'
-import { Column } from '../components/Column'
+import { APP_RAIL_WIDTH, Column } from '../components/Column'
 import { PriorityDot, fmtDue, isOverdue } from './chips'
 import { TaskDetails } from './TaskDetails'
 import { STATUS_LABEL, taskDisplayId, type Task, type TaskCaps } from './types'
@@ -29,7 +29,7 @@ export function TaskListView({
     <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
       <Column
         title="Tasks"
-        width={320}
+        width={APP_RAIL_WIDTH}
         loading={loading}
         error={error}
         empty={!loading && tasks.length === 0}
