@@ -43,8 +43,10 @@ make run                                 # build UI + binary, serve over HTTPS (
 project app). Draw freely and drop **live app cards** (`fls:doc` / `fls:task` /
 `fls:job` / `fls:batch`) onto the canvas: the custom `fls-card` shape stores only
 the token and renders it through the shared `components/RefCard.tsx`, so a card
-is the real task/batch, not a screenshot. tldraw is lazy-loaded (~1.7 MB) so it
-stays out of the entry bundle. **It needs a licence key** (`VITE_TLDRAW_LICENSE_KEY`
+is the real task/batch, not a screenshot. The **Assembly** toolbar button expands
+a picked design into a card tree — root plus one `fls:doc` card per immediate
+child (occurrences), joined by bound arrows; one occurrences call, no recursive
+fan-out. tldraw is lazy-loaded (~1.7 MB) so it stays out of the entry bundle. **It needs a licence key** (`VITE_TLDRAW_LICENSE_KEY`
 in the git-ignored `web/.env.local`; see `web/.env.example`) — without one tldraw
 silently replaces the board with a hidden div 5 s after mount. The current key is
 an **evaluation licence expiring 2026-10-29**; see `docs/whiteboards/STATUS.md`.

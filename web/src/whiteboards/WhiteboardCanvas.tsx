@@ -1,15 +1,18 @@
-import { faDiagramProject, faListCheck, faPaperclip } from '@fortawesome/free-solid-svg-icons'
+import { faDiagramProject, faListCheck, faPaperclip, faSitemap } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Snackbar, Stack, Typography } from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Tldraw,
+  createBindingId,
+  createShapeId,
   createTLStore,
   defaultBindingUtils,
   defaultShapeUtils,
   getSnapshot,
   loadSnapshot,
   type Editor,
+  type TLShapeId,
 } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { getAssetUrlsByMetaUrl } from '@tldraw/assets/urls'
@@ -18,7 +21,7 @@ import { useColorMode } from '../state/colorMode'
 import { useNav } from '../state/nav'
 import { docRefFromItem, encodeDocRef } from '../components/doccard/docref'
 import { encodeTaskRef, taskRefFromTask } from '../components/taskcard/taskref'
-import { HubBrowserDialog } from '../components/hubbrowser/HubBrowserDialog'
+import { HubBrowserDialog, type HubPick } from '../components/hubbrowser/HubBrowserDialog'
 import { AttachTaskDialog } from '../tasks/AttachTaskDialog'
 import { ProductionRefDialog } from '../production/ProductionRefDialog'
 import { CARD_H, CARD_W, FLS_CARD_TYPE, FlsCardShapeUtil } from './cardshape'
@@ -48,7 +51,7 @@ const LICENSE_KEY = import.meta.env.VITE_TLDRAW_LICENSE_KEY
 // a drag isn't a request each, short enough that a closed tab loses little.
 const SAVE_DEBOUNCE_MS = 1500
 
-type Pending = 'task' | 'production' | 'document' | null
+type Pending = 'task' | 'production' | 'document' | 'assembly' | null
 
 // WhiteboardCanvas hosts one tldraw board: it loads the stored document once,
 // autosaves the document scope on a debounce, and adds the app's own card
@@ -82,6 +85,11 @@ export function WhiteboardCanvas({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [pending, setPending] = useState<Pending>(null)
+  // The assembly flow makes two APS calls (details → occurrences), so it shows a
+  // busy state on its button; `notice` surfaces the after-the-fact summary
+  // (children skipped for having no design, or a plain part with none at all).
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const editorRef = useRef<Editor | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -179,6 +187,157 @@ export function WhiteboardCanvas({
     })
   }
 
+  // Drop an assembly and its children as a tree: the root card on top, a card
+  // per child laid out in centered rows beneath, each joined to the root by a
+  // bound arrow (bound, so the arrow follows when the user rearranges a card).
+  const placeAssembly = (rootToken: string, childTokens: string[]) => {
+    const editor = editorRef.current
+    if (!editor || !rootToken) return
+
+    const COL_GAP = 40 // horizontal gap between sibling cards
+    const ROW_GAP = 120 // vertical gap between the root row and each child row
+    const MAX_COLS = 4 // wrap wide fans to rows so a big assembly stays readable
+
+    const { x: cx, y: cy } = editor.getViewportPageBounds().center
+    const rows = Math.max(1, Math.ceil(childTokens.length / MAX_COLS))
+    // Centre the whole cluster on the viewport: root row + child rows.
+    const totalH = CARD_H + (childTokens.length ? ROW_GAP + rows * CARD_H + (rows - 1) * ROW_GAP : 0)
+    const rootY = cy - totalH / 2
+    const rootX = cx - CARD_W / 2
+
+    const rootId = createShapeId()
+    const shapes: {
+      id: TLShapeId
+      type: typeof FLS_CARD_TYPE
+      x: number
+      y: number
+      props: { w: number; h: number; token: string }
+    }[] = [{ id: rootId, type: FLS_CARD_TYPE, x: rootX, y: rootY, props: { w: CARD_W, h: CARD_H, token: rootToken } }]
+
+    const childIds: TLShapeId[] = []
+    childTokens.forEach((token, i) => {
+      const rowIdx = Math.floor(i / MAX_COLS)
+      const colInRow = i % MAX_COLS
+      const countInRow = Math.min(MAX_COLS, childTokens.length - rowIdx * MAX_COLS)
+      const rowWidth = countInRow * CARD_W + (countInRow - 1) * COL_GAP
+      const startX = cx - rowWidth / 2
+      const id = createShapeId()
+      childIds.push(id)
+      shapes.push({
+        id,
+        type: FLS_CARD_TYPE,
+        x: startX + colInRow * (CARD_W + COL_GAP),
+        y: rootY + CARD_H + ROW_GAP + rowIdx * (CARD_H + ROW_GAP),
+        props: { w: CARD_W, h: CARD_H, token },
+      })
+    })
+
+    // One undo step for the whole tree, and leave it selected like a paste.
+    editor.run(() => {
+      editor.createShapes(shapes)
+      if (childIds.length === 0) {
+        editor.select(rootId)
+        return
+      }
+      const arrows = childIds.map((childId) => {
+        const arrowId = createShapeId()
+        const child = shapes.find((s) => s.id === childId)!
+        return {
+          arrowId,
+          childId,
+          // Local coords (shape at 0,0) so these read as page space; the
+          // bindings below refine the exact terminals and keep them attached.
+          start: { x: cx, y: rootY + CARD_H },
+          end: { x: child.x + CARD_W / 2, y: child.y },
+        }
+      })
+      editor.createShapes(
+        arrows.map((a) => ({
+          id: a.arrowId,
+          type: 'arrow' as const,
+          x: 0,
+          y: 0,
+          props: { start: a.start, end: a.end },
+        })),
+      )
+      editor.createBindings(
+        arrows.flatMap((a) => [
+          {
+            id: createBindingId(),
+            type: 'arrow' as const,
+            fromId: a.arrowId,
+            toId: rootId,
+            props: { terminal: 'start' as const, normalizedAnchor: { x: 0.5, y: 1 }, isExact: false, isPrecise: true },
+          },
+          {
+            id: createBindingId(),
+            type: 'arrow' as const,
+            fromId: a.arrowId,
+            toId: a.childId,
+            props: { terminal: 'end' as const, normalizedAnchor: { x: 0.5, y: 0 }, isExact: false, isPrecise: true },
+          },
+        ]),
+      )
+      editor.select(rootId, ...childIds)
+    })
+  }
+
+  // Resolve the picked assembly to a card tree: get its root component version
+  // (the DM hub-browser listing doesn't carry one), fetch its immediate
+  // occurrences, and turn each child with an owning design into an fls:doc card.
+  // Two cached one-shot calls — deliberately NOT a recursive walk, which would
+  // fan out an occurrences call per node against the per-minute quota.
+  const addAssembly = async (pick: HubPick) => {
+    if (!pick.item) return
+    const hubId = pick.hubId
+    const item = pick.item
+    setBusy(true)
+    try {
+      let cvId = item.componentVersionId
+      if (!cvId) {
+        const details = await api.itemDetails(hubId, item.id)
+        cvId = details.rootComponentVersionId
+      }
+      if (!cvId) {
+        setNotice(`Couldn't resolve "${item.name}" — no component version to expand.`)
+        return
+      }
+      const children = await api.uses({ cvId, hubId })
+
+      // One card per distinct child design. Occurrences without an owning design
+      // (in-context bodies never saved as their own document) can't become
+      // fls:doc cards, so they're skipped — and counted, never dropped silently.
+      const seen = new Set<string>()
+      const childTokens: string[] = []
+      let skipped = 0
+      for (const c of children) {
+        if (!c.designItemId) {
+          skipped++
+          continue
+        }
+        if (seen.has(c.designItemId)) continue
+        seen.add(c.designItemId)
+        childTokens.push(
+          encodeDocRef({ hubId, itemId: c.designItemId, name: c.designItemName || c.name, kind: 'design' }),
+        )
+      }
+
+      placeAssembly(encodeDocRef(docRefFromItem(hubId, item)), childTokens)
+
+      if (childTokens.length === 0) {
+        setNotice(`"${item.name}" has no sub-components to expand.`)
+      } else if (skipped > 0) {
+        setNotice(
+          `Placed ${childTokens.length} component${childTokens.length === 1 ? '' : 's'}; skipped ${skipped} with no separate document.`,
+        )
+      }
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Could not expand this assembly.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {canWrite && (
@@ -214,6 +373,21 @@ export function WhiteboardCanvas({
             sx={{ textTransform: 'none' }}
           >
             Document
+          </Button>
+          <Button
+            size="small"
+            disabled={busy}
+            startIcon={
+              busy ? (
+                <CircularProgress size={11} />
+              ) : (
+                <FontAwesomeIcon icon={faSitemap} style={{ fontSize: 11 }} />
+              )
+            }
+            onClick={() => setPending('assembly')}
+            sx={{ textTransform: 'none' }}
+          >
+            Assembly
           </Button>
           <Box sx={{ flex: 1 }} />
           <Typography variant="caption" color="text.disabled" sx={{ transition: 'opacity .2s' }}>
@@ -285,6 +459,30 @@ export function WhiteboardCanvas({
           }}
         />
       )}
+      {pending === 'assembly' && (
+        <HubBrowserDialog
+          open
+          hubId={nav.hubId ?? null}
+          title="Expand an assembly"
+          pickLabel="Expand"
+          initialProject={nav.project ?? null}
+          onClose={() => setPending(null)}
+          onPick={(pick) => {
+            setPending(null)
+            void addAssembly(pick)
+          }}
+        />
+      )}
+      <Snackbar
+        open={!!notice}
+        autoHideDuration={5000}
+        onClose={() => setNotice(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="info" variant="filled" onClose={() => setNotice(null)} sx={{ fontSize: 13 }}>
+          {notice}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }
