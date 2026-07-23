@@ -11,8 +11,9 @@
  * substituted colours no longer had a designed contrast relationship with the
  * ones left alone — text on recoloured panels came out unreadable. tldraw's own
  * light and dark themes are internally consistent, so they are left to do their
- * job; only type, the accent, the canvas background and the tool-palette
- * background alpha are ours, and each is a like-for-like swap made per theme.
+ * job; only type, the accent, the canvas background, the tool-palette
+ * background alpha and the top-left menu-zone surface are ours, and each is a
+ * like-for-like swap made per theme.
  *
  * Two rules if this is ever extended:
  *   1. Use tldraw's real variable names (`--tl-color-*`, see tldraw/tldraw.css).
@@ -49,21 +50,29 @@
    file's header warns about. */
 .fls-tldraw .tl-theme__dark {
   --tl-color-background: #2a3442;
-  --tl-color-panel: hsla(235, 6.8%, 13.5%, 0.34);
+  --tl-color-panel: hsla(235, 6.8%, 13.5%, 0.82);
 }
 
 .fls-tldraw .tl-theme__light {
   --tl-color-background: #f4f4f4;
-  --tl-color-panel: hsla(0, 0%, 99%, 0.34);
+  --tl-color-panel: hsla(0, 0%, 99%, 0.82);
 }
 
 /* Tool palettes (toolbar, style panel, menus) — `--tl-color-panel` is their
    background. Take tldraw's own panel colour for each theme (dark
-   hsl(235,6.8%,13.5%), light hsl(0,0%,99%)) and drop it to 34% opacity (66%
-   transparent) so the canvas shows through and the chrome blends into the app
-   rather than sitting on it as a solid slab. Same hue, only the alpha is ours,
-   so it can't unbalance the palette; button/hover surfaces use
-   `--tl-color-panel-contrast`, left opaque so controls stay legible. */
+   hsl(235,6.8%,13.5%), light hsl(0,0%,99%)) and drop it to 82% opacity so the
+   canvas shows through and the chrome blends into the app rather than sitting on
+   it as a solid slab. Same hue, only the alpha is ours, so it can't unbalance
+   the palette; button/hover surfaces use `--tl-color-panel-contrast`, left
+   opaque so controls stay legible.
+
+   The top-left menu zone is the one panel that paints from `--tl-color-low`, not
+   `--tl-color-panel`, so it stayed opaque while the rest went translucent. Point
+   it at the same variable so it matches — targeted rather than remapping
+   `--tl-color-low`, which also feeds hovers and other surfaces. */
+.fls-tldraw .tlui-menu-zone {
+  background-color: var(--tl-color-panel);
+}
 
 /* An app card on the canvas brings its own border and shadow; don't let the
    shape container paint a surface behind it. */
